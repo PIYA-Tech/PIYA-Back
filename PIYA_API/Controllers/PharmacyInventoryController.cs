@@ -9,18 +9,12 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PharmacyInventoryController : ControllerBase
+public class PharmacyInventoryController(
+    IInventoryService inventoryService,
+    ILogger<PharmacyInventoryController> logger) : ControllerBase
 {
-    private readonly IInventoryService _inventoryService;
-    private readonly ILogger<PharmacyInventoryController> _logger;
-
-    public PharmacyInventoryController(
-        IInventoryService inventoryService,
-        ILogger<PharmacyInventoryController> logger)
-    {
-        _inventoryService = inventoryService;
-        _logger = logger;
-    }
+    private readonly IInventoryService _inventoryService = inventoryService;
+    private readonly ILogger<PharmacyInventoryController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 

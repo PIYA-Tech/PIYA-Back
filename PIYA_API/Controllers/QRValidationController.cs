@@ -7,21 +7,14 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class QRValidationController : ControllerBase
+public class QRValidationController(
+    IQRService qrService,
+    IPrescriptionService prescriptionService,
+    ILogger<QRValidationController> logger) : ControllerBase
 {
-    private readonly IQRService _qrService;
-    private readonly IPrescriptionService _prescriptionService;
-    private readonly ILogger<QRValidationController> _logger;
-
-    public QRValidationController(
-        IQRService qrService,
-        IPrescriptionService prescriptionService,
-        ILogger<QRValidationController> logger)
-    {
-        _qrService = qrService;
-        _prescriptionService = prescriptionService;
-        _logger = logger;
-    }
+    private readonly IQRService _qrService = qrService;
+    private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly ILogger<QRValidationController> _logger = logger;
 
     /// <summary>
     /// Generate QR code for a prescription (Patient only)

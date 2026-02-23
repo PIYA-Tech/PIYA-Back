@@ -5,33 +5,22 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class SearchService : ISearchService
+public class SearchService(
+    IPharmacyService pharmacyService,
+    ICoordinatesService coordinatesService,
+    PharmacyApiDbContext dbContext,
+    IInventoryService inventoryService,
+    IPrescriptionService prescriptionService,
+    IMedicationService medicationService,
+    ILogger<SearchService> logger) : ISearchService
 {
-    private readonly IPharmacyService _pharmacyService;
-    private readonly ICoordinatesService _coordinatesService;
-    private readonly PharmacyApiDbContext _dbContext;
-    private readonly IInventoryService _inventoryService;
-    private readonly IPrescriptionService _prescriptionService;
-    private readonly IMedicationService _medicationService;
-    private readonly ILogger<SearchService> _logger;
-
-    public SearchService(
-        IPharmacyService pharmacyService, 
-        ICoordinatesService coordinatesService, 
-        PharmacyApiDbContext dbContext,
-        IInventoryService inventoryService,
-        IPrescriptionService prescriptionService,
-        IMedicationService medicationService,
-        ILogger<SearchService> logger)
-    {
-        _pharmacyService = pharmacyService;
-        _coordinatesService = coordinatesService;
-        _dbContext = dbContext;
-        _inventoryService = inventoryService;
-        _prescriptionService = prescriptionService;
-        _medicationService = medicationService;
-        _logger = logger;
-    }
+    private readonly IPharmacyService _pharmacyService = pharmacyService;
+    private readonly ICoordinatesService _coordinatesService = coordinatesService;
+    private readonly PharmacyApiDbContext _dbContext = dbContext;
+    private readonly IInventoryService _inventoryService = inventoryService;
+    private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IMedicationService _medicationService = medicationService;
+    private readonly ILogger<SearchService> _logger = logger;
 
     public async Task<List<Pharmacy>> SearchByCity(Coordinates coordinates)
     {

@@ -30,12 +30,7 @@ public class EmailVerificationService : IEmailVerificationService
 
     public async Task<EmailVerificationToken> GenerateVerificationTokenAsync(Guid userId, string ipAddress, string userAgent)
     {
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null)
-        {
-            throw new KeyNotFoundException("User not found");
-        }
-
+        var user = await _context.Users.FindAsync(userId) ?? throw new KeyNotFoundException("User not found");
         if (user.IsEmailVerified)
         {
             throw new InvalidOperationException("Email is already verified");
@@ -117,12 +112,7 @@ public class EmailVerificationService : IEmailVerificationService
 
     public async Task ResendVerificationEmailAsync(Guid userId)
     {
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null)
-        {
-            throw new KeyNotFoundException("User not found");
-        }
-
+        var user = await _context.Users.FindAsync(userId) ?? throw new KeyNotFoundException("User not found");
         if (user.IsEmailVerified)
         {
             throw new InvalidOperationException("Email is already verified");
@@ -171,8 +161,7 @@ public class EmailVerificationService : IEmailVerificationService
 
     private static string HashToken(string token)
     {
-        using var sha256 = SHA256.Create();
-        var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(token));
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToBase64String(hashBytes);
     }
 }

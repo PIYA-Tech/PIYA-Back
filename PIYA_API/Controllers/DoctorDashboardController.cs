@@ -9,27 +9,18 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/doctor")]
 [Authorize(Roles = "Doctor")]
-public class DoctorDashboardController : ControllerBase
+public class DoctorDashboardController(
+    IDoctorProfileService doctorProfileService,
+    IAppointmentService appointmentService,
+    IPrescriptionService prescriptionService,
+    IPermissionService permissionService,
+    ILogger<DoctorDashboardController> logger) : ControllerBase
 {
-    private readonly IDoctorProfileService _doctorProfileService;
-    private readonly IAppointmentService _appointmentService;
-    private readonly IPrescriptionService _prescriptionService;
-    private readonly IPermissionService _permissionService;
-    private readonly ILogger<DoctorDashboardController> _logger;
-
-    public DoctorDashboardController(
-        IDoctorProfileService doctorProfileService,
-        IAppointmentService appointmentService,
-        IPrescriptionService prescriptionService,
-        IPermissionService permissionService,
-        ILogger<DoctorDashboardController> logger)
-    {
-        _doctorProfileService = doctorProfileService;
-        _appointmentService = appointmentService;
-        _prescriptionService = prescriptionService;
-        _permissionService = permissionService;
-        _logger = logger;
-    }
+    private readonly IDoctorProfileService _doctorProfileService = doctorProfileService;
+    private readonly IAppointmentService _appointmentService = appointmentService;
+    private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IPermissionService _permissionService = permissionService;
+    private readonly ILogger<DoctorDashboardController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 

@@ -5,16 +5,10 @@ namespace PIYA_API.Middleware;
 /// <summary>
 /// Middleware for advanced security hardening and threat detection
 /// </summary>
-public class SecurityHardeningMiddleware
+public class SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityHardeningMiddleware> logger)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<SecurityHardeningMiddleware> _logger;
-
-    public SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityHardeningMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
+    private readonly RequestDelegate _next = next;
+    private readonly ILogger<SecurityHardeningMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, ISecurityHardeningService? securityService)
     {

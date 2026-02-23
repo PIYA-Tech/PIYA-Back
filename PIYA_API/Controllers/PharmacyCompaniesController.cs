@@ -7,18 +7,12 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/pharmacy-companies")]
-public class PharmacyCompaniesController : ControllerBase
+public class PharmacyCompaniesController(
+    IPharmacyCompanyService companyService,
+    ILogger<PharmacyCompaniesController> logger) : ControllerBase
 {
-    private readonly IPharmacyCompanyService _companyService;
-    private readonly ILogger<PharmacyCompaniesController> _logger;
-
-    public PharmacyCompaniesController(
-        IPharmacyCompanyService companyService,
-        ILogger<PharmacyCompaniesController> logger)
-    {
-        _companyService = companyService;
-        _logger = logger;
-    }
+    private readonly IPharmacyCompanyService _companyService = companyService;
+    private readonly ILogger<PharmacyCompaniesController> _logger = logger;
 
     /// <summary>
     /// Get all pharmacy companies

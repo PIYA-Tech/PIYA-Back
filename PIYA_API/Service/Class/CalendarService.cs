@@ -22,13 +22,7 @@ public class CalendarService(
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
-            .FirstOrDefaultAsync(a => a.Id == appointmentId);
-
-        if (appointment == null)
-        {
-            throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
-        }
-
+            .FirstOrDefaultAsync(a => a.Id == appointmentId) ?? throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
         var endTime = appointment.ScheduledAt.AddMinutes(appointment.DurationMinutes);
         var doctorName = appointment.Doctor != null 
             ? $"{appointment.Doctor.FirstName} {appointment.Doctor.LastName}" 
@@ -107,13 +101,7 @@ public class CalendarService(
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
-            .FirstOrDefaultAsync(a => a.Id == appointmentId);
-
-        if (appointment == null)
-        {
-            throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
-        }
-
+            .FirstOrDefaultAsync(a => a.Id == appointmentId) ?? throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
         var endTime = appointment.ScheduledAt.AddMinutes(appointment.DurationMinutes);
         var doctorName = appointment.Doctor != null 
             ? $"{appointment.Doctor.FirstName} {appointment.Doctor.LastName}" 
@@ -149,13 +137,7 @@ public class CalendarService(
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
-            .FirstOrDefaultAsync(a => a.Id == appointmentId);
-
-        if (appointment == null)
-        {
-            throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
-        }
-
+            .FirstOrDefaultAsync(a => a.Id == appointmentId) ?? throw new KeyNotFoundException($"Appointment with ID {appointmentId} not found");
         var endTime = appointment.ScheduledAt.AddMinutes(appointment.DurationMinutes);
         var doctorName = appointment.Doctor != null 
             ? $"{appointment.Doctor.FirstName} {appointment.Doctor.LastName}" 

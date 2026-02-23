@@ -106,12 +106,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> UpdateStatusAsync(Guid id, AppointmentStatus status, string? reason = null)
     {
-        var appointment = await GetByIdAsync(id);
-        if (appointment == null)
-        {
-            throw new InvalidOperationException("Appointment not found");
-        }
-
+        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
         appointment.Status = status;
         appointment.UpdatedAt = DateTime.UtcNow;
 
@@ -139,12 +134,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> CancelAppointmentAsync(Guid id, Guid cancelledBy, string? reason)
     {
-        var appointment = await GetByIdAsync(id);
-        if (appointment == null)
-        {
-            throw new InvalidOperationException("Appointment not found");
-        }
-
+        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
         appointment.Status = AppointmentStatus.Cancelled;
         appointment.CancellationReason = reason;
         appointment.CancelledBy = cancelledBy;
@@ -166,11 +156,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> RescheduleAppointmentAsync(Guid id, DateTime newScheduledAt)
     {
-        var appointment = await GetByIdAsync(id);
-        if (appointment == null)
-        {
-            throw new InvalidOperationException("Appointment not found");
-        }
+        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
 
         // Check if new time is available
         var isAvailable = await IsDoctorAvailableAsync(
@@ -204,12 +190,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> CompleteAppointmentAsync(Guid id, string? doctorNotes)
     {
-        var appointment = await GetByIdAsync(id);
-        if (appointment == null)
-        {
-            throw new InvalidOperationException("Appointment not found");
-        }
-
+        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
         appointment.Status = AppointmentStatus.Completed;
         appointment.AppointmentNotes = doctorNotes;
         appointment.ActualEndTime = DateTime.UtcNow;

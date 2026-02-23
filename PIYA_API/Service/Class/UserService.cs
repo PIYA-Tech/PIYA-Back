@@ -70,28 +70,20 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
 
     public async Task Delete(int id)
     {
-        var user = await _dbContext.Users.FindAsync(id);
-        if (user == null)
-            throw new KeyNotFoundException($"User with ID {id} not found");
-
+        var user = await _dbContext.Users.FindAsync(id) ?? throw new KeyNotFoundException($"User with ID {id} not found");
         _dbContext.Users.Remove(user);
         await _dbContext.SaveChangesAsync();
     }
 
     public async Task<User> GetById(int id)
     {
-        var user = await _dbContext.Users.FindAsync(id);
-        if (user == null)
-            throw new KeyNotFoundException($"User with ID {id} not found");
-
+        var user = await _dbContext.Users.FindAsync(id) ?? throw new KeyNotFoundException($"User with ID {id} not found");
         return user;
     }
 
     public async Task Update(User user, string? password = null)
     {
-        var existingUser = await _dbContext.Users.FindAsync(user.Id);
-        if (existingUser == null)
-            throw new KeyNotFoundException($"User with ID {user.Id} not found");
+        var existingUser = await _dbContext.Users.FindAsync(user.Id) ?? throw new KeyNotFoundException($"User with ID {user.Id} not found");
 
         // Update username if changed and not already taken
         if (!string.IsNullOrWhiteSpace(user.Username) && user.Username != existingUser.Username)
@@ -143,10 +135,7 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
 
     public async Task UpdateAsync(User user)
     {
-        var existingUser = await _dbContext.Users.FindAsync(user.Id);
-        if (existingUser == null)
-            throw new KeyNotFoundException($"User with ID {user.Id} not found");
-
+        var existingUser = await _dbContext.Users.FindAsync(user.Id) ?? throw new KeyNotFoundException($"User with ID {user.Id} not found");
         existingUser.Role = user.Role;
         existingUser.UpdatedAt = DateTime.UtcNow;
 

@@ -7,16 +7,10 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class PdfExportService : IPdfExportService
+public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportService> logger) : IPdfExportService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<PdfExportService> _logger;
-
-    public PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<PdfExportService> _logger = logger;
 
     public async Task<byte[]> GeneratePrescriptionPdfAsync(Guid prescriptionId)
     {
@@ -24,10 +18,7 @@ public class PdfExportService : IPdfExportService
             .Include(p => p.Patient)
             .Include(p => p.Doctor)
             .Include(p => p.Items).ThenInclude(i => i.Medication)
-            .FirstOrDefaultAsync(p => p.Id == prescriptionId);
-
-        if (prescription == null)
-            throw new ArgumentException("Prescription not found", nameof(prescriptionId));
+            .FirstOrDefaultAsync(p => p.Id == prescriptionId) ?? throw new ArgumentException("Prescription not found", nameof(prescriptionId));
 
         // Get doctor profile
         var doctorProfile = await _context.DoctorProfiles
@@ -161,11 +152,7 @@ public class PdfExportService : IPdfExportService
         var doctorNote = await _context.DoctorNotes
             .Include(n => n.Patient)
             .Include(n => n.Doctor)
-            .FirstOrDefaultAsync(n => n.Id == doctorNoteId);
-
-        if (doctorNote == null)
-            throw new ArgumentException("Doctor note not found", nameof(doctorNoteId));
-
+            .FirstOrDefaultAsync(n => n.Id == doctorNoteId) ?? throw new ArgumentException("Doctor note not found", nameof(doctorNoteId));
         var doctorProfile = await _context.DoctorProfiles
             .FirstOrDefaultAsync(dp => dp.UserId == doctorNote.DoctorId);
 
@@ -279,11 +266,7 @@ public class PdfExportService : IPdfExportService
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
-            .FirstOrDefaultAsync(a => a.Id == appointmentId);
-
-        if (appointment == null)
-            throw new ArgumentException("Appointment not found", nameof(appointmentId));
-
+            .FirstOrDefaultAsync(a => a.Id == appointmentId) ?? throw new ArgumentException("Appointment not found", nameof(appointmentId));
         var doctorProfile = await _context.DoctorProfiles
             .FirstOrDefaultAsync(dp => dp.UserId == appointment.DoctorId);
 
@@ -391,11 +374,7 @@ public class PdfExportService : IPdfExportService
     public async Task<byte[]> GeneratePatientMedicalSummaryPdfAsync(Guid userId)
     {
         var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Id == userId);
-
-        if (user == null)
-            throw new ArgumentException("User not found", nameof(userId));
-
+            .FirstOrDefaultAsync(u => u.Id == userId) ?? throw new ArgumentException("User not found", nameof(userId));
         var appointments = await _context.Appointments
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)

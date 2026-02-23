@@ -5,24 +5,15 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class AppointmentReminderService : IAppointmentReminderService
+public class AppointmentReminderService(PharmacyApiDbContext context, ILogger<AppointmentReminderService> logger) : IAppointmentReminderService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<AppointmentReminderService> _logger;
-
-    public AppointmentReminderService(PharmacyApiDbContext context, ILogger<AppointmentReminderService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<AppointmentReminderService> _logger = logger;
 
     public async Task<List<AppointmentReminder>> CreateAppointmentRemindersAsync(Guid appointmentId, Guid userId, 
         List<int> minutesBeforeList, List<ReminderDeliveryMethod> deliveryMethods, string? customMessage = null)
     {
-        var appointment = await _context.Appointments.FindAsync(appointmentId);
-        if (appointment == null)
-            throw new ArgumentException("Appointment not found", nameof(appointmentId));
-
+        var appointment = await _context.Appointments.FindAsync(appointmentId) ?? throw new ArgumentException("Appointment not found", nameof(appointmentId));
         var reminders = new List<AppointmentReminder>();
 
         foreach (var minutesBefore in minutesBeforeList)
@@ -162,25 +153,16 @@ public class AppointmentReminderService : IAppointmentReminderService
     }
 }
 
-public class PrescriptionRefillReminderService : IPrescriptionRefillReminderService
+public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILogger<PrescriptionRefillReminderService> logger) : IPrescriptionRefillReminderService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<PrescriptionRefillReminderService> _logger;
-
-    public PrescriptionRefillReminderService(PharmacyApiDbContext context, ILogger<PrescriptionRefillReminderService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<PrescriptionRefillReminderService> _logger = logger;
 
     public async Task<PrescriptionRefillReminder> CreateRefillReminderAsync(Guid prescriptionId, Guid patientId, 
         DateTime estimatedRefillDate, int daysBeforeRefill, List<ReminderDeliveryMethod> deliveryMethods, 
         List<Guid>? medicationItemIds = null)
     {
-        var prescription = await _context.Prescriptions.FindAsync(prescriptionId);
-        if (prescription == null)
-            throw new ArgumentException("Prescription not found", nameof(prescriptionId));
-
+        var prescription = await _context.Prescriptions.FindAsync(prescriptionId) ?? throw new ArgumentException("Prescription not found", nameof(prescriptionId));
         var reminderDate = estimatedRefillDate.AddDays(-daysBeforeRefill);
 
         var reminder = new PrescriptionRefillReminder

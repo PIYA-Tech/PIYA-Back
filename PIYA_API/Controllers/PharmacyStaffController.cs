@@ -9,21 +9,14 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PharmacyStaffController : ControllerBase
+public class PharmacyStaffController(
+    IPharmacyStaffService staffService,
+    IPermissionService permissionService,
+    ILogger<PharmacyStaffController> logger) : ControllerBase
 {
-    private readonly IPharmacyStaffService _staffService;
-    private readonly IPermissionService _permissionService;
-    private readonly ILogger<PharmacyStaffController> _logger;
-
-    public PharmacyStaffController(
-        IPharmacyStaffService staffService,
-        IPermissionService permissionService,
-        ILogger<PharmacyStaffController> logger)
-    {
-        _staffService = staffService;
-        _permissionService = permissionService;
-        _logger = logger;
-    }
+    private readonly IPharmacyStaffService _staffService = staffService;
+    private readonly IPermissionService _permissionService = permissionService;
+    private readonly ILogger<PharmacyStaffController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 

@@ -134,12 +134,7 @@ public class InventoryService(
         Guid? userId = null,
         string? notes = null)
     {
-        var inventory = await _context.PharmacyInventories.FindAsync(inventoryId);
-        if (inventory == null)
-        {
-            throw new InvalidOperationException("Inventory item not found");
-        }
-
+        var inventory = await _context.PharmacyInventories.FindAsync(inventoryId) ?? throw new InvalidOperationException("Inventory item not found");
         int oldQuantity = inventory.QuantityInStock;
         int quantityChanged = newQuantity - oldQuantity;
         
@@ -184,12 +179,7 @@ public class InventoryService(
 
         var inventory = await _context.PharmacyInventories
             .Include(i => i.Batches.Where(b => b.IsActive))
-            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId);
-
-        if (inventory == null)
-        {
-            throw new InvalidOperationException("Inventory item not found");
-        }
+            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found");
 
         // FIFO - use oldest batches first
         var batches = inventory.Batches
@@ -259,13 +249,7 @@ public class InventoryService(
         }
 
         var inventory = await _context.PharmacyInventories
-            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId);
-
-        if (inventory == null)
-        {
-            throw new InvalidOperationException("Inventory item not found. Use AddOrUpdateInventoryAsync to create new inventory.");
-        }
-
+            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found. Use AddOrUpdateInventoryAsync to create new inventory.");
         int oldStock = inventory.QuantityInStock;
         inventory.QuantityInStock += quantity;
         inventory.LastRestockedAt = DateTime.UtcNow;
@@ -296,12 +280,7 @@ public class InventoryService(
 
     public async Task<InventoryBatch> AddBatchAsync(InventoryBatch batch)
     {
-        var inventory = await _context.PharmacyInventories.FindAsync(batch.PharmacyInventoryId);
-        if (inventory == null)
-        {
-            throw new InvalidOperationException("Inventory item not found");
-        }
-
+        var inventory = await _context.PharmacyInventories.FindAsync(batch.PharmacyInventoryId) ?? throw new InvalidOperationException("Inventory item not found");
         batch.Id = Guid.NewGuid();
         batch.OriginalQuantity = batch.Quantity;
         batch.IsActive = true;

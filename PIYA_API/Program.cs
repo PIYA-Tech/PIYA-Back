@@ -123,8 +123,8 @@ builder.Services.AddDbContext<PharmacyApiDbContext>(options =>
 });
 
 // Configure CORS
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() 
-    ?? new[] { "http://localhost:3000", "http://localhost:5173" };
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:3000", "http://localhost:5173"];
 
 builder.Services.AddCors(options =>
 {
@@ -189,19 +189,14 @@ builder.Services.AddAuthentication(options =>
 });
 
 // Configure Authorization with Role-Based Policies
-builder.Services.AddAuthorization(options =>
-{
-    // Role-based policies
-    options.AddPolicy("PatientOnly", policy => policy.RequireRole("Patient"));
-    options.AddPolicy("DoctorOnly", policy => policy.RequireRole("Doctor"));
-    options.AddPolicy("PharmacistOnly", policy => policy.RequireRole("Pharmacist"));
-    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
-    
-    // Combined role policies
-    options.AddPolicy("DoctorOrAdmin", policy => policy.RequireRole("Doctor", "Admin"));
-    options.AddPolicy("PharmacistOrAdmin", policy => policy.RequireRole("Pharmacist", "Admin"));
-    options.AddPolicy("HealthcareProfessional", policy => policy.RequireRole("Doctor", "Pharmacist", "Admin"));
-});
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("PatientOnly", policy => policy.RequireRole("Patient"))
+    .AddPolicy("DoctorOnly", policy => policy.RequireRole("Doctor"))
+    .AddPolicy("PharmacistOnly", policy => policy.RequireRole("Pharmacist"))
+    .AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"))
+    .AddPolicy("DoctorOrAdmin", policy => policy.RequireRole("Doctor", "Admin"))
+    .AddPolicy("PharmacistOrAdmin", policy => policy.RequireRole("Pharmacist", "Admin"))
+    .AddPolicy("HealthcareProfessional", policy => policy.RequireRole("Doctor", "Pharmacist", "Admin"));
 
 // Register Services
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
@@ -260,7 +255,8 @@ builder.Services.AddScoped<ISignalRNotificationService, SignalRNotificationServi
 builder.Services.AddSignalR();
 
 // Push Notification Service (FCM)
-builder.Services.AddSingleton<IFcmService, FcmService>();
+// FCM depends on scoped services (e.g. DbContext or cache), so register as scoped
+builder.Services.AddScoped<IFcmService, FcmService>();
 
 // Access Control & Staff Management Services
 builder.Services.AddScoped<IPharmacyStaffService, PharmacyStaffService>();
@@ -274,8 +270,10 @@ builder.Services.AddScoped<IPrescriptionRefillReminderService, PrescriptionRefil
 
 // Production Readiness Services
 builder.Services.AddScoped<IGdprComplianceService, GdprComplianceService>();
-builder.Services.AddSingleton<IPerformanceMonitoringService, PerformanceMonitoringService>();
-builder.Services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
+// Performance monitoring depends on scoped services like ICacheService; register scoped
+builder.Services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringService>();
+// Security hardening may need scoped services such as IAuditService; register scoped
+builder.Services.AddScoped<ISecurityHardeningService, SecurityHardeningService>();
 
 // Configure Swagger with JWT support
 builder.Services.AddSwaggerGen(c =>
@@ -307,6 +305,12 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+    // Register operation filter to support file uploads in Swagger (IFormFile)
+    builder.Services.Configure<Swashbuckle.AspNetCore.SwaggerGen.SwaggerGeneratorOptions>(opts => { });
+    builder.Services.AddSwaggerGen(c =>
+    {
+        c.OperationFilter<PIYA_API.Swagger.FileUploadOperationFilter>();
+    });
 
 var app = builder.Build();
 
@@ -357,3 +361,6 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+// Make the implicit Program class public for integration testing
+public partial class Program { }

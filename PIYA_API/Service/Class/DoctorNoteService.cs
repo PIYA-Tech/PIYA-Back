@@ -74,12 +74,7 @@ public class DoctorNoteService(
 
     public async Task<DoctorNote> RevokeNoteAsync(Guid id, string? reason)
     {
-        var note = await GetByIdAsync(id);
-        if (note == null)
-        {
-            throw new InvalidOperationException("Doctor note not found");
-        }
-
+        var note = await GetByIdAsync(id) ?? throw new InvalidOperationException("Doctor note not found");
         if (note.Status == DoctorNoteStatus.Revoked)
         {
             throw new InvalidOperationException("Doctor note is already revoked");

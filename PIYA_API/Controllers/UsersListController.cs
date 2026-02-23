@@ -16,16 +16,10 @@ namespace PIYA_API.Controllers;
 [Route("api/v{version:apiVersion}/[controller]")]
 [ApiVersion("1.0")]
 [Authorize]
-public class UsersListController : ControllerBase
+public class UsersListController(PharmacyApiDbContext context, ILogger<UsersListController> logger) : ControllerBase
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<UsersListController> _logger;
-
-    public UsersListController(PharmacyApiDbContext context, ILogger<UsersListController> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<UsersListController> _logger = logger;
 
     /// <summary>
     /// Get all users with pagination, filtering, and sorting

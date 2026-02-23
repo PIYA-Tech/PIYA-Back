@@ -9,21 +9,14 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class HealthController : ControllerBase
+public class HealthController(
+    PharmacyApiDbContext context,
+    IConfiguration configuration,
+    ILogger<HealthController> logger) : ControllerBase
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<HealthController> _logger;
-
-    public HealthController(
-        PharmacyApiDbContext context,
-        IConfiguration configuration,
-        ILogger<HealthController> logger)
-    {
-        _context = context;
-        _configuration = configuration;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IConfiguration _configuration = configuration;
+    private readonly ILogger<HealthController> _logger = logger;
 
     /// <summary>
     /// Basic health check - returns 200 OK if service is running

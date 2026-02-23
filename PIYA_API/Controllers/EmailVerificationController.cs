@@ -7,18 +7,12 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class EmailVerificationController : ControllerBase
+public class EmailVerificationController(
+    IEmailVerificationService emailVerificationService,
+    ILogger<EmailVerificationController> logger) : ControllerBase
 {
-    private readonly IEmailVerificationService _emailVerificationService;
-    private readonly ILogger<EmailVerificationController> _logger;
-
-    public EmailVerificationController(
-        IEmailVerificationService emailVerificationService,
-        ILogger<EmailVerificationController> logger)
-    {
-        _emailVerificationService = emailVerificationService;
-        _logger = logger;
-    }
+    private readonly IEmailVerificationService _emailVerificationService = emailVerificationService;
+    private readonly ILogger<EmailVerificationController> _logger = logger;
 
     /// <summary>
     /// Verify email with token

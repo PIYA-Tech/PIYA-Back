@@ -9,31 +9,19 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class FileUploadController : ControllerBase
+public class FileUploadController(IFileUploadService fileUploadService) : ControllerBase
 {
-    private readonly IFileUploadService _fileUploadService;
-
-    public FileUploadController(IFileUploadService fileUploadService)
-    {
-        _fileUploadService = fileUploadService;
-    }
+    private readonly IFileUploadService _fileUploadService = fileUploadService;
 
     /// <summary>
     /// Upload a medical document
     /// </summary>
     [HttpPost("upload")]
-    public async Task<IActionResult> UploadDocument(
-        [FromForm] IFormFile file,
-        [FromForm] string documentType,
-        [FromForm] Guid userId,
-        [FromForm] string? title = null,
-        [FromForm] string? notes = null,
-        [FromForm] Guid? appointmentId = null,
-        [FromForm] Guid? prescriptionId = null)
+    public async Task<IActionResult> UploadDocument([FromForm] Model.UploadDocumentRequest request)
     {
         try
         {
-            if (file == null || file.Length == 0)
+            if (request.File == null || request.File.Length == 0)
             {
                 return BadRequest(new { message = "No file provided" });
             }
@@ -47,43 +35,43 @@ public class FileUploadController : ControllerBase
 
             // Verify user can upload documents for the specified userId
             // For now, users can only upload their own documents or doctors can upload for patients
-            if (userId != uploadedByUserId)
+            if (request.UserId != uploadedByUserId)
             {
                 // TODO: Add role check - only doctors should be able to upload for other users
                 return Forbid();
             }
 
             // Parse document type
-            if (!Enum.TryParse<MedicalDocumentType>(documentType, true, out var docType))
+            if (!Enum.TryParse<MedicalDocumentType>(request.DocumentType, true, out var docType))
             {
-                return BadRequest(new { message = $"Invalid document type: {documentType}" });
+                return BadRequest(new { message = $"Invalid document type: {request.DocumentType}" });
             }
 
             // Validate file type and size
-            if (!_fileUploadService.IsValidFileType(file.ContentType, file.FileName))
+            if (!_fileUploadService.IsValidFileType(request.File.ContentType, request.File.FileName))
             {
                 return BadRequest(new { message = "Invalid file type. Allowed types: JPEG, PNG, PDF, DICOM, TIFF, BMP" });
             }
 
-            if (!_fileUploadService.IsValidFileSize(file.Length))
+            if (!_fileUploadService.IsValidFileSize(request.File.Length))
             {
                 return BadRequest(new { message = "File size exceeds maximum allowed size" });
             }
 
             // Upload document
-            using (var stream = file.OpenReadStream())
+            using (var stream = request.File.OpenReadStream())
             {
                 var document = await _fileUploadService.UploadDocumentAsync(
                     stream,
-                    file.FileName,
-                    file.ContentType,
-                    userId,
+                    request.File.FileName,
+                    request.File.ContentType,
+                    request.UserId,
                     docType,
                     uploadedByUserId,
-                    title,
-                    notes,
-                    appointmentId,
-                    prescriptionId);
+                    request.Title,
+                    request.Notes,
+                    request.AppointmentId,
+                    request.PrescriptionId);
 
                 return Ok(new
                 {

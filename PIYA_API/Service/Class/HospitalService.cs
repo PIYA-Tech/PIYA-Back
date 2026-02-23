@@ -5,16 +5,10 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class HospitalService : IHospitalService
+public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalService> logger) : IHospitalService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<HospitalService> _logger;
-
-    public HospitalService(PharmacyApiDbContext context, ILogger<HospitalService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<HospitalService> _logger = logger;
 
     public async Task<List<Hospital>> GetAllAsync()
     {
@@ -113,12 +107,7 @@ public class HospitalService : IHospitalService
     {
         try
         {
-            var existing = await _context.Hospitals.FindAsync(hospital.Id);
-            if (existing == null)
-            {
-                throw new InvalidOperationException($"Hospital {hospital.Id} not found");
-            }
-
+            var existing = await _context.Hospitals.FindAsync(hospital.Id) ?? throw new InvalidOperationException($"Hospital {hospital.Id} not found");
             existing.Name = hospital.Name;
             existing.Address = hospital.Address;
             existing.City = hospital.City;

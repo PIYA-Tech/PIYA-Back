@@ -16,9 +16,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
 
     public async Task<(string SecretKey, string QrCodeUri, List<string> BackupCodes)> EnableTwoFactorAsync(Guid userId, TwoFactorMethod method = TwoFactorMethod.TOTP)
     {
-        var user = await _context.Users.Include(u => u.TwoFactorAuth).FirstOrDefaultAsync(u => u.Id == userId);
-        if (user == null)
-            throw new InvalidOperationException("User not found");
+        var user = await _context.Users.Include(u => u.TwoFactorAuth).FirstOrDefaultAsync(u => u.Id == userId) ?? throw new InvalidOperationException("User not found");
 
         // Generate secret key for TOTP
         var secretKey = GenerateSecretKey();
@@ -134,10 +132,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
 
     public async Task<List<string>> RegenerateBackupCodesAsync(Guid userId)
     {
-        var twoFactor = await _context.TwoFactorAuths.FirstOrDefaultAsync(t => t.UserId == userId);
-        if (twoFactor == null)
-            throw new InvalidOperationException("2FA not enabled for this user");
-
+        var twoFactor = await _context.TwoFactorAuths.FirstOrDefaultAsync(t => t.UserId == userId) ?? throw new InvalidOperationException("2FA not enabled for this user");
         var backupCodes = GenerateBackupCodes();
         twoFactor.BackupCodes = backupCodes.Select(c => _passwordHasher.HashPassword(c)).ToList();
         twoFactor.UpdatedAt = DateTime.UtcNow;

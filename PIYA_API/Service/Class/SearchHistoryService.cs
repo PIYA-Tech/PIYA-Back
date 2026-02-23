@@ -5,14 +5,9 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class SearchHistoryService : ISearchHistoryService
+public class SearchHistoryService(PharmacyApiDbContext context) : ISearchHistoryService
 {
-    private readonly PharmacyApiDbContext _context;
-
-    public SearchHistoryService(PharmacyApiDbContext context)
-    {
-        _context = context;
-    }
+    private readonly PharmacyApiDbContext _context = context;
 
     public async Task<SearchHistory> LogSearchAsync(Guid userId, SearchType searchType, string? searchQuery, 
         string? filters, int resultCount, Guid? coordinatesId = null)

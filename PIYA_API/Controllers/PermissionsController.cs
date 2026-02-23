@@ -9,18 +9,12 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PermissionsController : ControllerBase
+public class PermissionsController(
+    IPermissionService permissionService,
+    ILogger<PermissionsController> logger) : ControllerBase
 {
-    private readonly IPermissionService _permissionService;
-    private readonly ILogger<PermissionsController> _logger;
-
-    public PermissionsController(
-        IPermissionService permissionService,
-        ILogger<PermissionsController> logger)
-    {
-        _permissionService = permissionService;
-        _logger = logger;
-    }
+    private readonly IPermissionService _permissionService = permissionService;
+    private readonly ILogger<PermissionsController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 

@@ -37,11 +37,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
 
     public Task Delete(Guid id)
     {
-        var pharmacy = dbContext.Pharmacies.Find(id);
-        if (pharmacy == null)
-        {
-            throw new Exception("Pharmacy not found");
-        }
+        var pharmacy = dbContext.Pharmacies.Find(id) ?? throw new Exception("Pharmacy not found");
         dbContext.Pharmacies.Remove(pharmacy);
         dbContext.SaveChanges();
         return Task.CompletedTask;
@@ -49,11 +45,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
     
     public Task Update(Pharmacy pharmacy)
     {
-        var existingPharmacy = dbContext.Pharmacies.Find(pharmacy.Id);
-        if (existingPharmacy == null)
-        {
-            throw new Exception("Pharmacy not found");
-        }
+        var existingPharmacy = dbContext.Pharmacies.Find(pharmacy.Id) ?? throw new Exception("Pharmacy not found");
         existingPharmacy.Name = pharmacy.Name;
         existingPharmacy.Address = pharmacy.Address;
         existingPharmacy.Country = pharmacy.Country;

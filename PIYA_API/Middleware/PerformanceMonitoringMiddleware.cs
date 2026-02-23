@@ -6,16 +6,10 @@ namespace PIYA_API.Middleware;
 /// <summary>
 /// Middleware to monitor API endpoint performance and collect metrics
 /// </summary>
-public class PerformanceMonitoringMiddleware
+public class PerformanceMonitoringMiddleware(RequestDelegate next, ILogger<PerformanceMonitoringMiddleware> logger)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<PerformanceMonitoringMiddleware> _logger;
-
-    public PerformanceMonitoringMiddleware(RequestDelegate next, ILogger<PerformanceMonitoringMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
+    private readonly RequestDelegate _next = next;
+    private readonly ILogger<PerformanceMonitoringMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, IPerformanceMonitoringService? performanceMonitoring)
     {
@@ -59,9 +53,24 @@ public class PerformanceMonitoringMiddleware
                 }
             }
 
-            // Add performance headers
-            context.Response.Headers.Append("X-Response-Time-Ms", durationMs.ToString());
-            context.Response.Headers.Append("X-Memory-Used-Bytes", memoryUsed.ToString());
+            // Add performance headers if the response hasn't started yet
+            try
+            {
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.Headers["X-Response-Time-Ms"] = durationMs.ToString();
+                    context.Response.Headers["X-Memory-Used-Bytes"] = memoryUsed.ToString();
+                }
+                else
+                {
+                    _logger.LogWarning("Response already started; cannot append performance headers for {Endpoint}", endpoint);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Guard against middleware ordering issues or header write race conditions
+                _logger.LogDebug(ex, "Unable to append performance headers for {Endpoint}", endpoint);
+            }
         }
     }
 }

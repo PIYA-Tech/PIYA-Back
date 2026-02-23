@@ -195,7 +195,7 @@ public class PasswordResetService : IPasswordResetService
             token.RevokedAt = DateTime.UtcNow;
         }
 
-        if (pendingTokens.Any())
+        if (pendingTokens.Count != 0)
         {
             await _context.SaveChangesAsync();
             _logger.LogInformation("Revoked {Count} pending password reset tokens for user {UserId}", 

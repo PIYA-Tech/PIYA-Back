@@ -5,21 +5,14 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class PermissionService : IPermissionService
+public class PermissionService(
+    PharmacyApiDbContext context,
+    IAuditService auditService,
+    ILogger<PermissionService> logger) : IPermissionService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IAuditService _auditService;
-    private readonly ILogger<PermissionService> _logger;
-
-    public PermissionService(
-        PharmacyApiDbContext context,
-        IAuditService auditService,
-        ILogger<PermissionService> logger)
-    {
-        _context = context;
-        _auditService = auditService;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IAuditService _auditService = auditService;
+    private readonly ILogger<PermissionService> _logger = logger;
 
     #region Permission Management
 

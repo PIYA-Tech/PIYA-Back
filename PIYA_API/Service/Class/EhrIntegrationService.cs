@@ -46,12 +46,7 @@ public class EhrIntegrationService : IEhrIntegrationService
     {
         try
         {
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-            {
-                throw new ArgumentException("User not found", nameof(userId));
-            }
-
+            var user = await _context.Users.FindAsync(userId) ?? throw new ArgumentException("User not found", nameof(userId));
             var fhirPatient = new FhirPatientResource
             {
                 Id = user.Id.ToString(),
@@ -228,21 +223,11 @@ public class EhrIntegrationService : IEhrIntegrationService
                 .Include(p => p.Doctor)
                 .Include(p => p.Items)
                     .ThenInclude(i => i.Medication)
-                .FirstOrDefaultAsync(p => p.Id == prescriptionId);
-
-            if (prescription == null)
-            {
-                throw new ArgumentException("Prescription not found", nameof(prescriptionId));
-            }
+                .FirstOrDefaultAsync(p => p.Id == prescriptionId) ?? throw new ArgumentException("Prescription not found", nameof(prescriptionId));
 
             // Note: FHIR MedicationRequest is typically for one medication
             // For multiple medications, create multiple MedicationRequest resources
-            var firstItem = prescription.Items.FirstOrDefault();
-            if (firstItem == null)
-            {
-                throw new InvalidOperationException("Prescription has no items");
-            }
-
+            var firstItem = prescription.Items.FirstOrDefault() ?? throw new InvalidOperationException("Prescription has no items");
             var fhirMedicationRequest = new FhirMedicationRequest
             {
                 Id = prescription.Id.ToString(),

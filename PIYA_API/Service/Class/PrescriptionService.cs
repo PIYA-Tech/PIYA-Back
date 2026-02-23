@@ -85,12 +85,7 @@ public class PrescriptionService(
 
     public async Task<string> GenerateQrCodeAsync(Guid prescriptionId)
     {
-        var prescription = await GetByIdAsync(prescriptionId);
-        if (prescription == null)
-        {
-            throw new InvalidOperationException("Prescription not found");
-        }
-
+        var prescription = await GetByIdAsync(prescriptionId) ?? throw new InvalidOperationException("Prescription not found");
         if (prescription.Status != PrescriptionStatus.Active)
         {
             throw new InvalidOperationException("Cannot generate QR code for inactive prescription");
@@ -132,12 +127,7 @@ public class PrescriptionService(
 
     public async Task<Prescription> FulfillPrescriptionAsync(Guid prescriptionId, Guid pharmacyId)
     {
-        var prescription = await GetByIdAsync(prescriptionId);
-        if (prescription == null)
-        {
-            throw new InvalidOperationException("Prescription not found");
-        }
-
+        var prescription = await GetByIdAsync(prescriptionId) ?? throw new InvalidOperationException("Prescription not found");
         if (prescription.Status != PrescriptionStatus.Active)
         {
             throw new InvalidOperationException("Prescription is not active");
@@ -178,13 +168,7 @@ public class PrescriptionService(
     {
         var item = await _context.PrescriptionItems
             .Include(i => i.Prescription)
-            .FirstOrDefaultAsync(i => i.Id == itemId);
-
-        if (item == null)
-        {
-            throw new InvalidOperationException("Prescription item not found");
-        }
-
+            .FirstOrDefaultAsync(i => i.Id == itemId) ?? throw new InvalidOperationException("Prescription item not found");
         item.IsFulfilled = true;
         item.FulfilledAt = DateTime.UtcNow;
 
@@ -211,12 +195,7 @@ public class PrescriptionService(
 
     public async Task<Prescription> CancelPrescriptionAsync(Guid id, string? reason)
     {
-        var prescription = await GetByIdAsync(id);
-        if (prescription == null)
-        {
-            throw new InvalidOperationException("Prescription not found");
-        }
-
+        var prescription = await GetByIdAsync(id) ?? throw new InvalidOperationException("Prescription not found");
         prescription.Status = PrescriptionStatus.Cancelled;
         prescription.UpdatedAt = DateTime.UtcNow;
 

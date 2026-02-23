@@ -6,32 +6,20 @@ namespace PIYA_API.Service.Class;
 /// <summary>
 /// Google Maps API service implementation
 /// </summary>
-public class GoogleMapsService : IGoogleMapsService
+public class GoogleMapsService(
+    HttpClient httpClient,
+    IConfiguration configuration,
+    ILogger<GoogleMapsService> logger) : IGoogleMapsService
 {
-    private readonly HttpClient _httpClient;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<GoogleMapsService> _logger;
-    private readonly bool _isEnabled;
-    private readonly string _apiKey;
-    private readonly string _geocodeEndpoint;
-    private readonly string _distanceMatrixEndpoint;
-
-    public GoogleMapsService(
-        HttpClient httpClient,
-        IConfiguration configuration,
-        ILogger<GoogleMapsService> logger)
-    {
-        _httpClient = httpClient;
-        _configuration = configuration;
-        _logger = logger;
-
-        _isEnabled = configuration.GetValue<bool>("ExternalApis:GoogleMaps:Enabled");
-        _apiKey = configuration["ExternalApis:GoogleMaps:ApiKey"] ?? string.Empty;
-        _geocodeEndpoint = configuration["ExternalApis:GoogleMaps:GeocodeEndpoint"] 
+    private readonly HttpClient _httpClient = httpClient;
+    private readonly IConfiguration _configuration = configuration;
+    private readonly ILogger<GoogleMapsService> _logger = logger;
+    private readonly bool _isEnabled = configuration.GetValue<bool>("ExternalApis:GoogleMaps:Enabled");
+    private readonly string _apiKey = configuration["ExternalApis:GoogleMaps:ApiKey"] ?? string.Empty;
+    private readonly string _geocodeEndpoint = configuration["ExternalApis:GoogleMaps:GeocodeEndpoint"]
             ?? "https://maps.googleapis.com/maps/api/geocode/json";
-        _distanceMatrixEndpoint = configuration["ExternalApis:GoogleMaps:DistanceMatrixEndpoint"] 
+    private readonly string _distanceMatrixEndpoint = configuration["ExternalApis:GoogleMaps:DistanceMatrixEndpoint"]
             ?? "https://maps.googleapis.com/maps/api/distancematrix/json";
-    }
 
     public async Task<GeocodeResult?> GeocodeAddressAsync(string address)
     {

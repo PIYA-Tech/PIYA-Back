@@ -5,16 +5,10 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class PharmacyRatingService : IPharmacyRatingService
+public class PharmacyRatingService(PharmacyApiDbContext context, IAuditService auditService) : IPharmacyRatingService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IAuditService _auditService;
-
-    public PharmacyRatingService(PharmacyApiDbContext context, IAuditService auditService)
-    {
-        _context = context;
-        _auditService = auditService;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IAuditService _auditService = auditService;
 
     public async Task<PharmacyRating> AddOrUpdateRatingAsync(Guid userId, Guid pharmacyId, int rating, 
         string? reviewText, PharmacyRatingCategories? categories, bool? wouldRecommend, Guid? prescriptionId = null)

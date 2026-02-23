@@ -5,40 +5,25 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class PharmacyStaffService : IPharmacyStaffService
+public class PharmacyStaffService(
+    PharmacyApiDbContext context,
+    IAuditService auditService,
+    ILogger<PharmacyStaffService> logger) : IPharmacyStaffService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IAuditService _auditService;
-    private readonly ILogger<PharmacyStaffService> _logger;
-
-    public PharmacyStaffService(
-        PharmacyApiDbContext context,
-        IAuditService auditService,
-        ILogger<PharmacyStaffService> logger)
-    {
-        _context = context;
-        _auditService = auditService;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IAuditService _auditService = auditService;
+    private readonly ILogger<PharmacyStaffService> _logger = logger;
 
     #region Staff Assignment
 
     public async Task<PharmacyStaff> AssignStaffAsync(Guid pharmacyId, Guid userId, PharmacyStaffRole role, Guid assignedByUserId)
     {
         // Verify pharmacy exists
-        var pharmacy = await _context.Pharmacies.FindAsync(pharmacyId);
-        if (pharmacy == null)
-        {
-            throw new InvalidOperationException($"Pharmacy with ID {pharmacyId} not found");
-        }
+        var pharmacy = await _context.Pharmacies.FindAsync(pharmacyId) ?? throw new InvalidOperationException($"Pharmacy with ID {pharmacyId} not found");
 
         // Verify user exists and has appropriate role
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null)
-        {
-            throw new InvalidOperationException($"User with ID {userId} not found");
-        }
-
+        var user = await _context.Users.FindAsync(userId) ?? throw new InvalidOperationException($"User with ID {userId} not found");
+        
         if (user.Role != UserRole.Pharmacist && user.Role != UserRole.PharmacyManager && user.Role != UserRole.Admin)
         {
             throw new InvalidOperationException($"User must have Pharmacist, PharmacyManager, or Admin role to be assigned as pharmacy staff");
@@ -106,12 +91,8 @@ public class PharmacyStaffService : IPharmacyStaffService
 
     public async Task<PharmacyStaff> UpdateStaffAsync(Guid staffId, PharmacyStaffRole? newRole = null, string? workSchedule = null, List<string>? permissions = null)
     {
-        var staffAssignment = await _context.PharmacyStaff.FindAsync(staffId);
-        if (staffAssignment == null)
-        {
-            throw new InvalidOperationException($"Staff assignment with ID {staffId} not found");
-        }
-
+        var staffAssignment = await _context.PharmacyStaff.FindAsync(staffId) ?? throw new InvalidOperationException($"Staff assignment with ID {staffId} not found");
+        
         if (newRole.HasValue)
         {
             staffAssignment.Role = newRole.Value;

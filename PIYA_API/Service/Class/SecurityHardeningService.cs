@@ -11,10 +11,12 @@ namespace PIYA_API.Service.Class;
 /// <summary>
 /// Security hardening service implementation
 /// </summary>
-public class SecurityHardeningService : ISecurityHardeningService
+public class SecurityHardeningService(
+    ILogger<SecurityHardeningService> logger,
+    IAuditService auditService) : ISecurityHardeningService
 {
-    private readonly ILogger<SecurityHardeningService> _logger;
-    private readonly IAuditService _auditService;
+    private readonly ILogger<SecurityHardeningService> _logger = logger;
+    private readonly IAuditService _auditService = auditService;
     private readonly ConcurrentDictionary<string, BlockedIp> _blockedIps = new();
     private readonly ConcurrentDictionary<string, List<FailedLoginAttempt>> _failedLogins = new();
 
@@ -37,14 +39,6 @@ public class SecurityHardeningService : ISecurityHardeningService
         new Regex(@"<embed", RegexOptions.IgnoreCase),
         new Regex(@"<object", RegexOptions.IgnoreCase)
     };
-
-    public SecurityHardeningService(
-        ILogger<SecurityHardeningService> logger,
-        IAuditService auditService)
-    {
-        _logger = logger;
-        _auditService = auditService;
-    }
 
     public async Task<SuspiciousActivityResult> DetectSuspiciousLoginAsync(string email, string ipAddress, string? userAgent = null)
     {

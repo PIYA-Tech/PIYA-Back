@@ -53,12 +53,7 @@ public class QRService : IQRService
 
             // Verify prescription exists and belongs to user
             var prescription = await _context.Prescriptions
-                .FirstOrDefaultAsync(p => p.Id == prescriptionId && p.PatientId == userId);
-
-            if (prescription == null)
-            {
-                throw new InvalidOperationException($"Prescription {prescriptionId} not found or access denied");
-            }
+                .FirstOrDefaultAsync(p => p.Id == prescriptionId && p.PatientId == userId) ?? throw new InvalidOperationException($"Prescription {prescriptionId} not found or access denied");
 
             // Check if prescription is already used or expired
             if (prescription.Status == PrescriptionStatus.Fulfilled)

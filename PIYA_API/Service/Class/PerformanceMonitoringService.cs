@@ -10,19 +10,13 @@ namespace PIYA_API.Service.Class;
 /// In-memory performance monitoring service
 /// Note: For production, consider using Application Insights, Prometheus, or similar
 /// </summary>
-public class PerformanceMonitoringService : IPerformanceMonitoringService
+public class PerformanceMonitoringService(
+    ILogger<PerformanceMonitoringService> logger,
+    ICacheService? cacheService = null) : IPerformanceMonitoringService
 {
-    private readonly ILogger<PerformanceMonitoringService> _logger;
+    private readonly ILogger<PerformanceMonitoringService> _logger = logger;
     private readonly ConcurrentDictionary<string, List<EndpointMetric>> _endpointMetrics = new();
-    private readonly ICacheService? _cacheService;
-
-    public PerformanceMonitoringService(
-        ILogger<PerformanceMonitoringService> logger,
-        ICacheService? cacheService = null)
-    {
-        _logger = logger;
-        _cacheService = cacheService;
-    }
+    private readonly ICacheService? _cacheService = cacheService;
 
     public async Task RecordEndpointMetricAsync(string endpoint, string method, int statusCode, long durationMs, long? memoryUsed = null)
     {

@@ -148,13 +148,7 @@ public class FileUploadService : IFileUploadService
 
     public async Task<(Stream FileStream, string ContentType, string FileName)> DownloadDocumentAsync(Guid id)
     {
-        var document = await GetDocumentByIdAsync(id);
-        
-        if (document == null)
-        {
-            throw new FileNotFoundException("Document not found");
-        }
-
+        var document = await GetDocumentByIdAsync(id) ?? throw new FileNotFoundException("Document not found");
         if (!File.Exists(document.FilePath))
         {
             throw new FileNotFoundException("Physical file not found");

@@ -4,14 +4,9 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class SignalRNotificationService : ISignalRNotificationService
+public class SignalRNotificationService(IHubContext<NotificationHub> hubContext) : ISignalRNotificationService
 {
-    private readonly IHubContext<NotificationHub> _hubContext;
-
-    public SignalRNotificationService(IHubContext<NotificationHub> hubContext)
-    {
-        _hubContext = hubContext;
-    }
+    private readonly IHubContext<NotificationHub> _hubContext = hubContext;
 
     public async Task SendToUserAsync(Guid userId, string notificationType, object notification)
     {

@@ -5,16 +5,10 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class PharmacyCompanyService : IPharmacyCompanyService
+public class PharmacyCompanyService(PharmacyApiDbContext context, IAuditService auditService) : IPharmacyCompanyService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IAuditService _auditService;
-
-    public PharmacyCompanyService(PharmacyApiDbContext context, IAuditService auditService)
-    {
-        _context = context;
-        _auditService = auditService;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IAuditService _auditService = auditService;
 
     public async Task<PharmacyCompany?> GetByIdAsync(Guid id)
     {
@@ -50,12 +44,7 @@ public class PharmacyCompanyService : IPharmacyCompanyService
 
     public async Task<PharmacyCompany> UpdateAsync(PharmacyCompany company)
     {
-        var existing = await _context.PharmacyCompanies.FindAsync(company.Id);
-        if (existing == null)
-        {
-            throw new InvalidOperationException("Pharmacy company not found");
-        }
-
+        var existing = await _context.PharmacyCompanies.FindAsync(company.Id) ?? throw new InvalidOperationException("Pharmacy company not found");
         existing.Name = company.Name;
         await _context.SaveChangesAsync();
 
@@ -72,11 +61,7 @@ public class PharmacyCompanyService : IPharmacyCompanyService
 
     public async Task DeleteAsync(Guid id)
     {
-        var company = await _context.PharmacyCompanies.FindAsync(id);
-        if (company == null)
-        {
-            throw new InvalidOperationException("Pharmacy company not found");
-        }
+        var company = await _context.PharmacyCompanies.FindAsync(id) ?? throw new InvalidOperationException("Pharmacy company not found");
 
         // Check if company has pharmacies
         var hasPharmacies = await _context.Pharmacies

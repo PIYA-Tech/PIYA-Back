@@ -6,18 +6,12 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class PasswordResetController : ControllerBase
+public class PasswordResetController(
+    IPasswordResetService passwordResetService,
+    ILogger<PasswordResetController> logger) : ControllerBase
 {
-    private readonly IPasswordResetService _passwordResetService;
-    private readonly ILogger<PasswordResetController> _logger;
-
-    public PasswordResetController(
-        IPasswordResetService passwordResetService,
-        ILogger<PasswordResetController> logger)
-    {
-        _passwordResetService = passwordResetService;
-        _logger = logger;
-    }
+    private readonly IPasswordResetService _passwordResetService = passwordResetService;
+    private readonly ILogger<PasswordResetController> _logger = logger;
 
     /// <summary>
     /// Request password reset (sends email)

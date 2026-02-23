@@ -35,23 +35,15 @@ public class ApiResponse<T>
 /// <summary>
 /// Paginated response wrapper
 /// </summary>
-public class PagedResponse<T>
+public class PagedResponse<T>(List<T> items, int pageNumber, int pageSize, int totalCount)
 {
-    public List<T> Items { get; set; } = new();
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-    public int TotalCount { get; set; }
+    public List<T> Items { get; set; } = items;
+    public int PageNumber { get; set; } = pageNumber;
+    public int PageSize { get; set; } = pageSize;
+    public int TotalCount { get; set; } = totalCount;
     public int TotalPages => (int)Math.Ceiling(TotalCount / (double)PageSize);
     public bool HasPreviousPage => PageNumber > 1;
     public bool HasNextPage => PageNumber < TotalPages;
-
-    public PagedResponse(List<T> items, int pageNumber, int pageSize, int totalCount)
-    {
-        Items = items;
-        PageNumber = pageNumber;
-        PageSize = pageSize;
-        TotalCount = totalCount;
-    }
 }
 
 /// <summary>

@@ -19,7 +19,6 @@ public class AzerbaijanPharmaceuticalRegistryService(
     
     private const string ApiBaseUrl = "https://admin.opendata.az/api/3/action";
     private const string DatasetId = "derman-vasitelerinin-dovlet-reyestri";
-    private const string SyncConfigKey = "AzerbaijanPharmaRegistry:LastSync";
 
     public async Task<RegistryMetadata?> GetRegistryMetadataAsync()
     {

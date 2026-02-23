@@ -9,21 +9,14 @@ namespace PIYA_API.Service.Class;
 /// <summary>
 /// GDPR compliance service implementation
 /// </summary>
-public class GdprComplianceService : IGdprComplianceService
+public class GdprComplianceService(
+    PharmacyApiDbContext context,
+    IAuditService auditService,
+    ILogger<GdprComplianceService> logger) : IGdprComplianceService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IAuditService _auditService;
-    private readonly ILogger<GdprComplianceService> _logger;
-
-    public GdprComplianceService(
-        PharmacyApiDbContext context,
-        IAuditService auditService,
-        ILogger<GdprComplianceService> logger)
-    {
-        _context = context;
-        _auditService = auditService;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IAuditService _auditService = auditService;
+    private readonly ILogger<GdprComplianceService> _logger = logger;
 
     public async Task<GdprDataExport> ExportUserDataAsync(Guid userId)
     {
@@ -138,12 +131,7 @@ public class GdprComplianceService : IGdprComplianceService
         {
             _logger.LogInformation("Anonymizing data for user {UserId}, Reason: {Reason}", userId, reason);
 
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-            {
-                throw new InvalidOperationException($"User {userId} not found");
-            }
-
+            var user = await _context.Users.FindAsync(userId) ?? throw new InvalidOperationException($"User {userId} not found");
             var anonymizationDate = DateTime.UtcNow;
             var recordsAnonymized = 0;
             var entitiesAffected = new List<string>();
@@ -224,11 +212,7 @@ public class GdprComplianceService : IGdprComplianceService
             _logger.LogInformation("Deleting data for user {UserId}, Reason: {Reason}, Force: {Force}", 
                 userId, reason, force);
 
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-            {
-                throw new InvalidOperationException($"User {userId} not found");
-            }
+            var user = await _context.Users.FindAsync(userId) ?? throw new InvalidOperationException($"User {userId} not found");
 
             // Check retention policy if not forced
             if (!force)

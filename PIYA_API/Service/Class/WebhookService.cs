@@ -8,20 +8,14 @@ namespace PIYA_API.Service.Class;
 /// <summary>
 /// Webhook service implementation
 /// </summary>
-public class WebhookService : IWebhookService
+public class WebhookService(HttpClient httpClient, ILogger<WebhookService> logger) : IWebhookService
 {
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<WebhookService> _logger;
+    private readonly HttpClient _httpClient = httpClient;
+    private readonly ILogger<WebhookService> _logger = logger;
     
     // In-memory storage - in production, use database
     private static readonly List<WebhookSubscription> _subscriptions = new();
     private static readonly List<WebhookDelivery> _deliveries = new();
-
-    public WebhookService(HttpClient httpClient, ILogger<WebhookService> logger)
-    {
-        _httpClient = httpClient;
-        _logger = logger;
-    }
 
     public Task<Guid> RegisterWebhookAsync(string url, List<WebhookEventType> events, string? secret = null)
     {

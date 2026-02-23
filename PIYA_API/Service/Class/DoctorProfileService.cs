@@ -6,16 +6,10 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class DoctorProfileService : IDoctorProfileService
+public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorProfileService> logger) : IDoctorProfileService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<DoctorProfileService> _logger;
-
-    public DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorProfileService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<DoctorProfileService> _logger = logger;
 
     public async Task<DoctorProfile> CreateProfileAsync(DoctorProfile profile)
     {
@@ -29,11 +23,7 @@ public class DoctorProfileService : IDoctorProfileService
             }
 
             // Validate user exists and has Doctor role
-            var user = await _context.Users.FindAsync(profile.UserId);
-            if (user == null)
-            {
-                throw new InvalidOperationException($"User {profile.UserId} not found");
-            }
+            var user = await _context.Users.FindAsync(profile.UserId) ?? throw new InvalidOperationException($"User {profile.UserId} not found");
             if (user.Role != UserRole.Doctor)
             {
                 throw new InvalidOperationException($"User {profile.UserId} is not a doctor");
@@ -88,11 +78,7 @@ public class DoctorProfileService : IDoctorProfileService
     {
         try
         {
-            var existing = await _context.DoctorProfiles.FindAsync(profile.Id);
-            if (existing == null)
-            {
-                throw new InvalidOperationException($"Doctor profile {profile.Id} not found");
-            }
+            var existing = await _context.DoctorProfiles.FindAsync(profile.Id) ?? throw new InvalidOperationException($"Doctor profile {profile.Id} not found");
 
             // Update fields
             existing.LicenseNumber = profile.LicenseNumber;

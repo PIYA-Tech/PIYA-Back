@@ -8,14 +8,9 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PushNotificationController : ControllerBase
+public class PushNotificationController(IFcmService fcmService) : ControllerBase
 {
-    private readonly IFcmService _fcmService;
-
-    public PushNotificationController(IFcmService fcmService)
-    {
-        _fcmService = fcmService;
-    }
+    private readonly IFcmService _fcmService = fcmService;
 
     /// <summary>
     /// Register a device token for push notifications
