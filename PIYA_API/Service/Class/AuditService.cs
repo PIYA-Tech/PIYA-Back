@@ -1,17 +1,24 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class AuditService(PharmacyApiDbContext context, ILogger<AuditService> logger) : IAuditService
+public class AuditService(PharmacyApiDbContext context, ILogger<AuditService> logger, IOptions<FeaturesOptions> features) : IAuditService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly ILogger<AuditService> _logger = logger;
+    private readonly bool _enabled = features?.Value?.EnableAuditLogging ?? true;
 
     public async Task LogAsync(AuditLog auditLog)
     {
+        // Respect feature flag: if audit logging is disabled in configuration, no-op
+        if (!_enabled)
+            return;
+
         try
         {
             auditLog.CreatedAt = DateTime.UtcNow;
