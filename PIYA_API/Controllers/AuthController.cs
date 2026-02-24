@@ -39,7 +39,7 @@ public class AuthController(
                     Username = string.IsNullOrWhiteSpace(request.Username)
                         ? (request.Email?.Split('@')[0] ?? Guid.NewGuid().ToString())
                         : request.Username,
-                    Email = request.Email,
+                    Email = request.Email ?? throw new ArgumentException("Email is required"),
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
@@ -136,6 +136,20 @@ public class AuthController(
         try
         {
             var identifier = string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username;
+
+            if (string.IsNullOrWhiteSpace(identifier))
+            {
+                await _auditService.LogSecurityEventAsync(
+                    "LoginFailed",
+                    null,
+                    ipAddress,
+                    userAgent,
+                    false,
+                    "Login attempted without username or email"
+                );
+                return BadRequest(new { message = "Username or email is required" });
+            }
+
             var user = await _userService.Authenticate(identifier, request.Password);
 
             if (user == null)
