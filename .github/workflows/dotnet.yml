@@ -73,6 +73,9 @@ jobs:
           ASPNETCORE_ENVIRONMENT: LoadTest
           EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
           ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
+          Features__EnableRateLimiting: "true"
+          RateLimiting__Endpoints__Authentication__PermitLimit: "3"
+          RateLimiting__Endpoints__Authentication__WindowSeconds: "60"
           Jwt__SecretKey: CI_TEST_SECRET_KEY_32_CHARS_MINIMUM__1234
           Jwt__Issuer: PIYA_API_CI
           Jwt__Audience: PIYA_Clients_CI
@@ -95,6 +98,9 @@ jobs:
           ASPNETCORE_ENVIRONMENT: LoadTest
           EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
           ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
+          Features__EnableRateLimiting: "true"
+          RateLimiting__Endpoints__Authentication__PermitLimit: "3"
+          RateLimiting__Endpoints__Authentication__WindowSeconds: "60"
           Jwt__SecretKey: CI_TEST_SECRET_KEY_32_CHARS_MINIMUM__1234
           Jwt__Issuer: PIYA_API_CI
           Jwt__Audience: PIYA_Clients_CI
