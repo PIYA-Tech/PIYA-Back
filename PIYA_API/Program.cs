@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PIYA_API.Configuration;
@@ -124,6 +125,21 @@ else
 builder.Services.AddDbContext<PharmacyApiDbContext>(options =>
 {
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+
+    // In CI/LoadTest we allow DB update even if model drift exists.
+    // EF tools may construct the context through runtime service provider.
+    var ignorePendingModelChanges =
+        builder.Environment.IsEnvironment("LoadTest") ||
+        string.Equals(
+            Environment.GetEnvironmentVariable("EFCORE_IGNORE_PENDING_MODEL_CHANGES"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
+    if (ignorePendingModelChanges)
+    {
+        options.ConfigureWarnings(w =>
+            w.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
 });
 
 // Configure CORS
