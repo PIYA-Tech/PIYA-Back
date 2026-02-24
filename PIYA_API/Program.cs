@@ -12,11 +12,15 @@ using FluentValidation;
 using FluentValidation.AspNetCore;
 using Asp.Versioning;
 
-// Configure Serilog
+// Configure Serilog (do not require appsettings.json at startup)
+var bootstrapConfig = new ConfigurationBuilder()
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+    .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true, reloadOnChange: false)
+    .AddEnvironmentVariables()
+    .Build();
+
 Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(new ConfigurationBuilder()
-        .AddJsonFile("appsettings.json")
-        .Build())
+    .ReadFrom.Configuration(bootstrapConfig)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.File("logs/piya-api-.log", rollingInterval: RollingInterval.Day)
