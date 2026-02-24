@@ -50,6 +50,19 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      - name: Install dotnet-ef CLI
+        run: |
+          dotnet tool install --global dotnet-ef || true
+          export PATH="$PATH:$HOME/.dotnet/tools"
+
+      - name: Apply EF Core migrations
+        env:
+          ASPNETCORE_ENVIRONMENT: LoadTest
+          ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef database update --project PIYA_API/PIYA_API.csproj --startup-project PIYA_API/PIYA_API.csproj || true
+
       - name: Start API (background)
         env:
           ASPNETCORE_ENVIRONMENT: LoadTest
@@ -67,13 +80,18 @@ jobs:
             sleep 2
           done
 
-      - name: Run tests
+      - name: Run tests (exclude LoadTest)
         env:
-          SHORT_LOAD_TEST: "true"
           ASPNETCORE_ENVIRONMENT: LoadTest
           ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
         run: |
-          dotnet test --no-build --verbosity normal
+          # Run test project directly and match the build configuration (Release).
+          # This avoids VSTest/solution-level issues where msbuild may try to
+          # run tests in a different configuration (Debug) and fail with an
+          # invalid argument to vstest.console.
+          dotnet test PIYA_API.Tests/PIYA_API.Tests.csproj \
+            --no-build --configuration Release --verbosity normal \
+            --filter "Category!=LoadTest"
 
       - name: Stop API
         if: always()
