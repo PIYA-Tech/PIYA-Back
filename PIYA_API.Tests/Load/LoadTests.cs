@@ -149,9 +149,32 @@ public class LoadTests
 
     [Fact]
     [Trait("Category", "LoadTest")]
-    public void StressTest_AppointmentBooking_FindBreakingPoint()
+    public async Task StressTest_AppointmentBooking_FindBreakingPoint()
     {
-        var scenario = Scenario.Create("appointment_stress_test", async context =>
+        // Ensure the API is healthy before starting the heavy stress scenario to avoid
+        // a burst of client-side connection timeouts if the server isn't ready.
+        await WaitForHealthAsync(TimeSpan.FromSeconds(60));
+
+    var shortRun = Environment.GetEnvironmentVariable("SHORT_LOAD_TEST") == "true";
+    var simulations = shortRun
+        ? new[]
+        {
+            // small ramp and short steady period for quick verification (used in CI/local quick runs)
+            Simulation.RampingInject(rate: 20, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(10)),
+            Simulation.Inject(rate: 20, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(15)),
+            Simulation.RampingInject(rate: 0, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(5))
+        }
+        : new[]
+        {
+            // Ramp up from 0 to 100 users over 2 minutes
+            Simulation.RampingInject(rate: 100, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(2)),
+            // Keep 100 users for 3 minutes
+            Simulation.Inject(rate: 100, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(3)),
+            // Ramp down
+            Simulation.RampingInject(rate: 0, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(1))
+        };
+
+    var scenario = Scenario.Create("appointment_stress_test", async context =>
         {
             var httpClient = LoadTestHttpClient;
             
@@ -186,14 +209,7 @@ public class LoadTests
                 : Response.Fail();
         })
         .WithoutWarmUp()
-        .WithLoadSimulations(
-            // Ramp up from 0 to 100 users over 2 minutes
-            Simulation.RampingInject(rate: 100, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(2)),
-            // Keep 100 users for 3 minutes
-            Simulation.Inject(rate: 100, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(3)),
-            // Ramp down
-            Simulation.RampingInject(rate: 0, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromMinutes(1))
-        );
+        .WithLoadSimulations(simulations);
 
         var stats = NBomberRunner
             .RegisterScenarios(scenario)
