@@ -24,19 +24,55 @@ public class CoordinatesService(PharmacyApiDbContext dbContext) : ICoordinatesSe
         return pharmacy.Coordinates;
     }
 
-    public Task<int> GetCountry(Coordinates coordinates)
+    public async Task<string> GetCountry(Coordinates coordinates)
     {
-        // This would typically call a reverse geocoding API (Google Maps, OpenStreetMap, etc.)
-        // For now, returning a placeholder
-        // In production, implement actual geocoding service
-        throw new NotImplementedException("Geocoding service integration required - use Google Maps Geocoding API");
+        // Attempt to find the nearest pharmacy and return its Country field as an approximation
+        var pharmacies = await _dbContext.Pharmacies
+            .Include(p => p.Coordinates)
+            .ToListAsync();
+
+        if (pharmacies == null || pharmacies.Count == 0)
+            return string.Empty;
+
+        Pharmacy? nearest = null;
+        var nearestDistance = long.MaxValue;
+        foreach (var p in pharmacies)
+        {
+            if (p.Coordinates == null) continue;
+            var d = await CalculateDistance(coordinates, p.Coordinates);
+            if (d < nearestDistance)
+            {
+                nearestDistance = d;
+                nearest = p;
+            }
+        }
+
+        return nearest?.Country ?? string.Empty;
     }
 
-    public Task<int> GetCity(Coordinates coordinates)
+    public async Task<string> GetCity(Coordinates coordinates)
     {
-        // This would typically call a reverse geocoding API
-        // For now, returning a placeholder
-        throw new NotImplementedException("Geocoding service integration required - use Google Maps Geocoding API");
+        var pharmacies = await _dbContext.Pharmacies
+            .Include(p => p.Coordinates)
+            .ToListAsync();
+
+        if (pharmacies == null || pharmacies.Count == 0)
+            return string.Empty;
+
+        Pharmacy? nearest = null;
+        var nearestDistance = long.MaxValue;
+        foreach (var p in pharmacies)
+        {
+            if (p.Coordinates == null) continue;
+            var d = await CalculateDistance(coordinates, p.Coordinates);
+            if (d < nearestDistance)
+            {
+                nearestDistance = d;
+                nearest = p;
+            }
+        }
+
+        return nearest?.City ?? string.Empty;
     }
 
     public Task<int> CalculateDistance(Coordinates coordinates1, Coordinates coordinates2)

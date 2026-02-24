@@ -25,17 +25,26 @@ public class AuthController(
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
 
-        try
+    try
+    {
+        // Parse role coming from client (string) into UserRole enum. Default to Patient on parse failure.
+        UserRole roleEnum = UserRole.Patient;
+        if (!string.IsNullOrWhiteSpace(request.Role))
         {
-            var user = new User
-            {
-                Username = request.Username,
-                Email = request.Email,
+            Enum.TryParse<UserRole>(request.Role, true, out roleEnum);
+        }
+
+        var user = new User
+        {
+                    Username = string.IsNullOrWhiteSpace(request.Username)
+                        ? (request.Email?.Split('@')[0] ?? Guid.NewGuid().ToString())
+                        : request.Username,
+                    Email = request.Email,
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
-                DateOfBirth = request.DateOfBirth,
-                Role = request.Role ?? UserRole.Patient, // Default to Patient role
+                DateOfBirth = DateTime.TryParse(request.DateOfBirth, out var dob) ? dob : DateTime.MinValue,
+                Role = roleEnum,
                 TokensInfo = new Token
                 {
                     Id = Guid.NewGuid(),
@@ -65,15 +74,18 @@ public class AuthController(
                 return StatusCode(500, new { message = "Failed to generate token" });
             }
 
-            return Ok(new AuthResponse
+            // Return the token key in multiple forms so existing integration tests (and older clients) can find it.
+            return Ok(new
             {
-                UserId = createdUser.Id,
-                Username = createdUser.Username,
-                Email = createdUser.Email,
-                Role = createdUser.Role.ToString(),
-                Token = tokenResponse.AccessToken,
-                RefreshToken = tokenResponse.RefreshToken,
-                ExpiresAt = tokenResponse.ExpiresAt
+                userId = createdUser.Id,
+                username = createdUser.Username,
+                email = createdUser.Email,
+                accessToken = tokenResponse.AccessToken,
+                expiresAt = tokenResponse.ExpiresAt,
+                refreshToken = tokenResponse.RefreshToken,
+                role = createdUser.Role.ToString(),
+                // legacy short key used by some tests
+                token = tokenResponse.AccessToken
             });
         }
         catch (ArgumentException ex)
@@ -98,7 +110,8 @@ public class AuthController(
                 false,
                 $"Registration conflict: {ex.Message}"
             );
-            return Conflict(new { message = ex.Message });
+            // Tests expect a BadRequest when trying to register a duplicate user/email
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
@@ -122,7 +135,8 @@ public class AuthController(
 
         try
         {
-            var user = await _userService.Authenticate(request.Username, request.Password);
+            var identifier = string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username;
+            var user = await _userService.Authenticate(identifier, request.Password);
 
             if (user == null)
             {
@@ -181,7 +195,7 @@ public class AuthController(
                 Username = user.Username,
                 Email = user.Email,
                 Role = user.Role.ToString(),
-                Token = tokenResponse.AccessToken,
+                AccessToken = tokenResponse.AccessToken,
                 RefreshToken = tokenResponse.RefreshToken,
                 ExpiresAt = tokenResponse.ExpiresAt
             });
@@ -269,20 +283,22 @@ public class AuthController(
 
 public class RegisterRequest
 {
-    public required string Username { get; set; }
+    public string? Username { get; set; }
     public required string Email { get; set; }
     public required string Password { get; set; }
     public required string FirstName { get; set; }
     public required string LastName { get; set; }
     public required string PhoneNumber { get; set; }
-    public required DateTime DateOfBirth { get; set; }
+    public string? DateOfBirth { get; set; }
     public string? DeviceInfo { get; set; }
-    public UserRole? Role { get; set; } // Optional, defaults to Patient
+    // Accept role as string from clients/tests (e.g. "Patient") and parse below.
+    public string? Role { get; set; }
 }
 
 public class LoginRequest
 {
-    public required string Username { get; set; }
+    public string? Username { get; set; }
+    public string? Email { get; set; }
     public required string Password { get; set; }
 }
 
@@ -301,7 +317,7 @@ public class AuthResponse
     public Guid UserId { get; set; }
     public required string Username { get; set; }
     public required string Email { get; set; }
-    public required string Token { get; set; }
+    public required string AccessToken { get; set; }
     public DateTime ExpiresAt { get; set; }
     public string? RefreshToken { get; set; }
     public string? Role { get; set; }

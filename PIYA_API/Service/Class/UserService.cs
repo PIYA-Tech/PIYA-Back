@@ -13,13 +13,13 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
     public async Task<User> Authenticate(string username, string password)
     {
         if (string.IsNullOrWhiteSpace(username))
-            throw new ArgumentException("Username is required");
+            throw new ArgumentException("Username or email is required");
 
         if (string.IsNullOrWhiteSpace(password))
             throw new ArgumentException("Password is required");
 
         var user = await _dbContext.Users
-            .SingleOrDefaultAsync(x => x.Username == username);
+            .SingleOrDefaultAsync(x => x.Username == username || x.Email == username);
 
         // User not found
         if (user == null)

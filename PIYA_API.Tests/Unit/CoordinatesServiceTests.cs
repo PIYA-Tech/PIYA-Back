@@ -83,17 +83,51 @@ public class CoordinatesServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetCountry_ThrowsNotImplemented()
+    public async Task GetCountry_ExistingPharmacy_ReturnsCountry()
     {
-        var coords = new Coordinates { Latitude = 40.4093, Longitude = 49.8671 };
-    await Assert.ThrowsAsync<NotImplementedException>(async () => await _coordinatesService.GetCountry(coords));
+        // Arrange - create a pharmacy with coordinates and country/city
+        var pharmacy = new Pharmacy
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Pharmacy",
+            Address = "123 Test St",
+            Country = "Azerbaijan",
+            City = "Baku",
+            Coordinates = new Coordinates { Id = Guid.NewGuid(), Latitude = 40.4093, Longitude = 49.8671 },
+            Company = new PharmacyCompany { Id = Guid.NewGuid(), Name = "TestCo" }
+        };
+        await _context.Pharmacies.AddAsync(pharmacy);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _coordinatesService.GetCountry(new Coordinates { Latitude = 40.4093, Longitude = 49.8671 });
+
+        // Assert
+        result.Should().Be("Azerbaijan");
     }
 
     [Fact]
-    public async Task GetCity_ThrowsNotImplemented()
+    public async Task GetCity_ExistingPharmacy_ReturnsCity()
     {
-        var coords = new Coordinates { Latitude = 40.6828, Longitude = 46.3606 };
-    await Assert.ThrowsAsync<NotImplementedException>(async () => await _coordinatesService.GetCity(coords));
+        // Arrange
+        var pharmacy = new Pharmacy
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Pharmacy",
+            Address = "123 Test St",
+            Country = "Azerbaijan",
+            City = "Ganja",
+            Coordinates = new Coordinates { Id = Guid.NewGuid(), Latitude = 40.6828, Longitude = 46.3606 },
+            Company = new PharmacyCompany { Id = Guid.NewGuid(), Name = "TestCo" }
+        };
+        await _context.Pharmacies.AddAsync(pharmacy);
+        await _context.SaveChangesAsync();
+
+        // Act
+        var result = await _coordinatesService.GetCity(new Coordinates { Latitude = 40.6828, Longitude = 46.3606 });
+
+        // Assert
+        result.Should().Be("Ganja");
     }
 
     public void Dispose()

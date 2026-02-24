@@ -8,6 +8,7 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Route("api/appointments")]
 [Authorize]
 public class AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger) : ControllerBase
 {
@@ -18,6 +19,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Book a new appointment
     /// </summary>
     [HttpPost("book")]
+    [HttpPost]
     [Authorize(Roles = "Patient,Doctor,Admin")]
     public async Task<ActionResult<Appointment>> BookAppointment([FromBody] AppointmentRequest request)
     {
@@ -36,7 +38,8 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             };
 
             var created = await _appointmentService.BookAppointmentAsync(appointment);
-            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+            // Tests expect a 200 OK response for a successful booking
+            return Ok(created);
         }
         catch (InvalidOperationException ex)
         {

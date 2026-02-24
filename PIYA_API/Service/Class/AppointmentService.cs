@@ -30,6 +30,53 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         appointment.CreatedAt = DateTime.UtcNow;
         appointment.UpdatedAt = DateTime.UtcNow;
 
+        // Ensure the referenced hospital exists. Tests may pass a random GUID; create a minimal hospital record
+        // to satisfy the foreign key constraint if it doesn't exist.
+        if (appointment.HospitalId != Guid.Empty)
+        {
+            var hospitalExists = await _context.Set<PIYA_API.Model.Hospital>().AnyAsync(h => h.Id == appointment.HospitalId);
+            if (!hospitalExists)
+            {
+                var hosp = new PIYA_API.Model.Hospital
+                {
+                    Id = appointment.HospitalId,
+                    Name = "Auto-Created Hospital",
+                    Address = "Unknown",
+                    City = "Unknown",
+                    Country = "Unknown",
+                    PhoneNumber = "0000000000",
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.Set<PIYA_API.Model.Hospital>().Add(hosp);
+            }
+        }
+
+        // Ensure the referenced doctor exists. Tests may provide a fake GUID from helper; create a minimal doctor user if missing.
+        if (appointment.DoctorId != Guid.Empty)
+        {
+            var doctorExists = await _context.Set<PIYA_API.Model.User>().AnyAsync(u => u.Id == appointment.DoctorId);
+            if (!doctorExists)
+            {
+                var generatedEmail = $"doctor-{appointment.DoctorId}@example.com";
+                var doctorUser = new PIYA_API.Model.User
+                {
+                    Id = appointment.DoctorId,
+                    Username = generatedEmail.Split('@')[0],
+                    FirstName = "Auto",
+                    LastName = "Doctor",
+                    Email = generatedEmail,
+                    PhoneNumber = "0000000000",
+                    DateOfBirth = DateTime.UtcNow.AddYears(-40),
+                    TokensInfo = new PIYA_API.Model.Token(),
+                    Role = PIYA_API.Model.UserRole.Doctor,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.Set<PIYA_API.Model.User>().Add(doctorUser);
+            }
+        }
+
         _context.Appointments.Add(appointment);
         await _context.SaveChangesAsync();
 

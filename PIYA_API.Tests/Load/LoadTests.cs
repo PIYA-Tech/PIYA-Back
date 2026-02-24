@@ -13,20 +13,50 @@ namespace PIYA_API.Tests.Load;
 /// </summary>
 public class LoadTests
 {
-    private const string BaseUrl = "http://localhost:5000";
+    private const string BaseUrl = "http://localhost:5254";
+    // Shared, tuned HttpClient used by NBomber load scenarios to avoid
+    // creating/disposing many handlers under heavy concurrency which can
+    // exhaust sockets and cause connect timeouts. Configured to allow
+    // many concurrent connections and reasonable timeouts for tests.
+    private static readonly HttpClient LoadTestHttpClient;
+
+    static LoadTests()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30),
+            MaxConnectionsPerServer = 500,
+            ConnectTimeout = TimeSpan.FromSeconds(10)
+        };
+
+        LoadTestHttpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(BaseUrl),
+            // Overall request timeout — keep higher than connect timeout
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+
+        // Default headers for load tests (bypass rate limiting for NBomber)
+        LoadTestHttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-RateLimit-Bypass", "true");
+        LoadTestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("NBomber-LoadTest");
+    }
 
     [Fact]
     [Trait("Category", "LoadTest")]
-    public void LoadTest_LoginEndpoint_HandlesConcurrentUsers()
+    public async Task LoadTest_LoginEndpoint_HandlesConcurrentUsers()
     {
+        // Wait for the API to become healthy to avoid connection-refused races when NBomber starts
+        await WaitForHealthAsync(TimeSpan.FromSeconds(30));
+
         // Scenario: Simulate 100 concurrent users logging in
         var scenario = Scenario.Create("login_load_test", async context =>
         {
             var email = $"loadtest-{Guid.NewGuid()}@example.com";
             var password = "LoadTest@123";
 
-            // First register the user
-            using var httpClient = new HttpClient { BaseAddress = new Uri(BaseUrl) };
+            // Use shared, tuned HttpClient
+            var httpClient = LoadTestHttpClient;
             var registerRequest = new
             {
                 email,
@@ -62,13 +92,34 @@ public class LoadTests
         Assert.True(scen.Ok.Latency.Percent95 < 1000, "95th percentile latency should be under 1 second");
     }
 
+    private static async Task WaitForHealthAsync(TimeSpan timeout)
+    {
+        using var http = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(5) };
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            try
+            {
+                var resp = await http.GetAsync("/api/health");
+                if (resp.IsSuccessStatusCode)
+                    return;
+            }
+            catch
+            {
+                // ignore and retry
+            }
+            await Task.Delay(500);
+        }
+        throw new TimeoutException($"Health check did not become ready within {timeout.TotalSeconds} seconds.");
+    }
+
     [Fact]
     [Trait("Category", "LoadTest")]
     public void LoadTest_PharmacySearch_HandlesConcurrentSearches()
     {
         var scenario = Scenario.Create("pharmacy_search_load_test", async context =>
         {
-            using var httpClient = new HttpClient { BaseAddress = new Uri(BaseUrl) };
+            var httpClient = LoadTestHttpClient;
             
             // Search pharmacies by radius
             var latitude = 40.4093;
@@ -102,7 +153,7 @@ public class LoadTests
     {
         var scenario = Scenario.Create("appointment_stress_test", async context =>
         {
-            using var httpClient = new HttpClient { BaseAddress = new Uri(BaseUrl) };
+            var httpClient = LoadTestHttpClient;
             
             // Register and login
             var email = $"stress-{Guid.NewGuid()}@example.com";
@@ -165,7 +216,7 @@ public class LoadTests
         // Test system stability under moderate load over extended period
         var scenario = Scenario.Create("endurance_test", async context =>
         {
-            using var httpClient = new HttpClient { BaseAddress = new Uri(BaseUrl) };
+            var httpClient = LoadTestHttpClient;
             
             // Mix of different endpoints
             var endpoints = new[]
