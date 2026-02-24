@@ -11,18 +11,73 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
+    # Start a Postgres service so tests that use the DB can run in CI
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: piya
+          POSTGRES_PASSWORD: piya
+          POSTGRES_DB: piya_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready -U piya -d piya_db
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 9.0.x
-    - name: Restore dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet build --no-restore
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Wait for Postgres to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1 && break
+            echo "Waiting for Postgres... ($i)"
+            sleep 2
+          done
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Start API (background)
+        env:
+          ASPNETCORE_ENVIRONMENT: LoadTest
+          ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
+        run: |
+          dotnet run --project PIYA_API/PIYA_API.csproj --urls http://localhost:5254 &
+          echo $! > api_pid
+          # wait for health endpoint
+          for i in $(seq 1 60); do
+            if curl -sSf http://localhost:5254/api/health >/dev/null; then
+              echo "API healthy"
+              break
+            fi
+            echo "Waiting for API... ($i)"
+            sleep 2
+          done
+
+      - name: Run tests
+        env:
+          SHORT_LOAD_TEST: "true"
+          ASPNETCORE_ENVIRONMENT: LoadTest
+          ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
+        run: |
+          dotnet test --no-build --verbosity normal
+
+      - name: Stop API
+        if: always()
+        run: |
+          if [ -f api_pid ]; then
+            kill $(cat api_pid) || true
+          fi
