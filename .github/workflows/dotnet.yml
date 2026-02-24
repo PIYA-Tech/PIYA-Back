@@ -52,7 +52,7 @@ jobs:
 
       - name: Install dotnet-ef CLI
         run: |
-          dotnet tool install --global dotnet-ef || true
+          dotnet tool install --global dotnet-ef --version 9.* || dotnet tool update --global dotnet-ef --version 9.*
           export PATH="$PATH:$HOME/.dotnet/tools"
 
       - name: Apply EF Core migrations

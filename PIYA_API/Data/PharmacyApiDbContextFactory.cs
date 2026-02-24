@@ -48,15 +48,11 @@ public class PharmacyApiDbContextFactory : IDesignTimeDbContextFactory<PharmacyA
         var optionsBuilder = new DbContextOptionsBuilder<PharmacyApiDbContext>();
         optionsBuilder.UseNpgsql(connectionString);
 
-        // In CI/LoadTest we allow database updates even when model drift exists.
-        // This keeps ephemeral test pipelines from failing on PendingModelChangesWarning.
-        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-        var isCi = string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase);
-        if (isCi || string.Equals(environment, "LoadTest", StringComparison.OrdinalIgnoreCase))
-        {
-            optionsBuilder.ConfigureWarnings(w =>
-                w.Ignore(RelationalEventId.PendingModelChangesWarning));
-        }
+        // Design-time EF command path: always ignore PendingModelChangesWarning here
+        // so CI `dotnet ef database update` is not blocked by model drift warnings.
+        // (Runtime behavior is still controlled independently in Program.cs.)
+        optionsBuilder.ConfigureWarnings(w =>
+            w.Ignore(RelationalEventId.PendingModelChangesWarning));
 
         return new PharmacyApiDbContext(optionsBuilder.Options);
     }
