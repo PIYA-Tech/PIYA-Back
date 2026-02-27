@@ -11,12 +11,12 @@ namespace PIYA_API.Tests.Integration;
 /// <summary>
 /// Integration tests for Appointment booking flow
 /// </summary>
-public class AppointmentIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly PiyaWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
-    public AppointmentIntegrationTests(WebApplicationFactory<Program> factory)
+    public AppointmentIntegrationTests(PiyaWebApplicationFactory factory)
     {
         _factory = factory;
         _client = _factory.CreateClient();

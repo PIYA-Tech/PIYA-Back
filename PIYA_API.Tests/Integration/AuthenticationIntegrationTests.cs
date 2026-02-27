@@ -11,12 +11,12 @@ namespace PIYA_API.Tests.Integration;
 /// <summary>
 /// Integration tests for Authentication flow
 /// </summary>
-public class AuthenticationIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+public class AuthenticationIntegrationTests : IClassFixture<PiyaWebApplicationFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly PiyaWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
-    public AuthenticationIntegrationTests(WebApplicationFactory<Program> factory)
+    public AuthenticationIntegrationTests(PiyaWebApplicationFactory factory)
     {
         _factory = factory;
         _client = _factory.CreateClient();

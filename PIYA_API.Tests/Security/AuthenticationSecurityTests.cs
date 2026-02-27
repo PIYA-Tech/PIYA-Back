@@ -1,6 +1,8 @@
 using Xunit;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -8,18 +10,36 @@ using System.Text.Json;
 namespace PIYA_API.Tests.Security;
 
 /// <summary>
-/// Security tests for authentication endpoints
+/// Factory variant that also enables per-endpoint rate limiting so
+/// brute-force protection tests work correctly.
+/// </summary>
+public class RateLimitingWebApplicationFactory : PiyaWebApplicationFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureAppConfiguration((_, config) =>
+        {
+            config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Features:EnableRateLimiting"] = "true",
+                ["RateLimiting:EnableGlobal"] = "false",
+                ["RateLimiting:Endpoints:Authentication:PermitLimit"] = "3",
+                ["RateLimiting:Endpoints:Authentication:WindowSeconds"] = "60",
+            });
+        });
+    }
+}
+
+/// <summary>
+/// Security tests for authentication endpoints.
 /// Tests for common vulnerabilities: SQL injection, XSS, brute force, etc.
 /// </summary>
 [Trait("Category", "Security")]
-public class AuthenticationSecurityTests : IClassFixture<WebApplicationFactory<Program>>
+public class AuthenticationSecurityTests(RateLimitingWebApplicationFactory factory)
+    : IClassFixture<RateLimitingWebApplicationFactory>
 {
-    private readonly HttpClient _client;
-
-    public AuthenticationSecurityTests(WebApplicationFactory<Program> factory)
-    {
-        _client = factory.CreateClient();
-    }
+    private readonly HttpClient _client = factory.CreateClient();
 
     [Theory]
     [InlineData("admin' OR '1'='1")]
@@ -39,8 +59,13 @@ public class AuthenticationSecurityTests : IClassFixture<WebApplicationFactory<P
         // Act
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginRequest);
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        // Assert — SQL injection must never result in a successful login (2xx).
+        // Acceptable responses: 400 (validation), 401 (not found / bad creds).
+        response.IsSuccessStatusCode.Should().BeFalse(
+            "SQL injection payloads must not produce a successful login response");
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.Unauthorized);
     }
 
     [Theory]

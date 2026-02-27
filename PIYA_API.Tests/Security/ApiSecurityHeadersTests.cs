@@ -8,14 +8,9 @@ namespace PIYA_API.Tests.Security;
 /// Tests for security headers (HSTS, CSP, X-Frame-Options, etc.)
 /// </summary>
 [Trait("Category", "Security")]
-public class ApiSecurityHeadersTests : IClassFixture<WebApplicationFactory<Program>>
+public class ApiSecurityHeadersTests(PiyaWebApplicationFactory factory) : IClassFixture<PiyaWebApplicationFactory>
 {
-    private readonly HttpClient _client;
-
-    public ApiSecurityHeadersTests(WebApplicationFactory<Program> factory)
-    {
-        _client = factory.CreateClient();
-    }
+    private readonly HttpClient _client = factory.CreateClient();
 
     [Fact]
     public async Task ApiResponse_ShouldIncludeSecurityHeaders()
