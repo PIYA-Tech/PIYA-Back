@@ -4,11 +4,11 @@ namespace PIYA_API.Service.Interface;
 public interface IUserService
 {
     public Task<User> Authenticate(string username, string password);
-    public Task<User> GetById(int id);
+    public Task<User> GetById(Guid id);
     public Task<User?> GetByIdAsync(Guid id);
     public Task<User> Create(User user, string password);
     public Task Update(User user, string? password = null);
     public Task UpdateAsync(User user);
-    public Task Delete(int id);
+    public Task Delete(Guid id);
     public Task<List<User>> GetUsersByRoleAsync(UserRole role);
 }

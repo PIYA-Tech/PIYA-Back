@@ -6,12 +6,6 @@ public class User
     public required string Username { get; set; }
     
     /// <summary>
-    /// Deprecated: Use PasswordHash instead
-    /// </summary>
-    [Obsolete("Use PasswordHash instead")]
-    public string? Password { get; set; }
-    
-    /// <summary>
     /// BCrypt hashed password
     /// </summary>
     public string PasswordHash { get; set; } = string.Empty;

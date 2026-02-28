@@ -43,6 +43,7 @@ try
         .AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+            options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         });
     
     // Add FluentValidation
@@ -359,7 +360,11 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// app.UseHttpsRedirection(); // Commented out for development
+// Enable HTTPS redirection in production/staging
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
     app.UseAuthentication(); // Add this before UseAuthorization
     app.UseAuthorization();
     

@@ -8,7 +8,6 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Route("api/appointments")]
 [Authorize]
 public class AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger) : ControllerBase
 {

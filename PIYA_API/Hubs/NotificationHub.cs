@@ -57,9 +57,9 @@ public class NotificationHub : Hub
     /// <summary>
     /// Send a message to all connected clients (admin only)
     /// </summary>
+    [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,SystemAdmin")]
     public async Task BroadcastMessage(string message)
     {
-        // TODO: Add admin role check
         await Clients.All.SendAsync("ReceiveBroadcast", message, DateTime.UtcNow);
     }
 }

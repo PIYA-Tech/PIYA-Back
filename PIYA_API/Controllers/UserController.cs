@@ -13,7 +13,7 @@ public class UserController(IUserService userService) : ControllerBase
     private readonly IUserService _userService = userService;
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(int id)
+    public async Task<IActionResult> GetById(Guid id)
     {
         try
         {
@@ -29,6 +29,7 @@ public class UserController(IUserService userService) : ControllerBase
                 LastName = user.LastName,
                 PhoneNumber = user.PhoneNumber,
                 DateOfBirth = user.DateOfBirth,
+                Role = user.Role.ToString(),
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt
             });
@@ -44,13 +45,13 @@ public class UserController(IUserService userService) : ControllerBase
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(int id, [FromBody] UpdateUserRequest request)
+    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserRequest request)
     {
         try
         {
             var user = new User
             {
-                Id = Guid.Parse(id.ToString()),
+                Id = id,
                 Username = request.Username,
                 Email = request.Email,
                 FirstName = request.FirstName,
@@ -90,7 +91,7 @@ public class UserController(IUserService userService) : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(int id)
+    public async Task<IActionResult> Delete(Guid id)
     {
         try
         {
@@ -108,7 +109,7 @@ public class UserController(IUserService userService) : ControllerBase
     }
 
     [HttpPost("{id}/change-password")]
-    public async Task<IActionResult> ChangePassword(int id, [FromBody] ChangePasswordRequest request)
+    public async Task<IActionResult> ChangePassword(Guid id, [FromBody] ChangePasswordRequest request)
     {
         try
         {
@@ -262,6 +263,7 @@ public class UserResponse
     public required string LastName { get; set; }
     public required string PhoneNumber { get; set; }
     public DateTime DateOfBirth { get; set; }
+    public string? Role { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

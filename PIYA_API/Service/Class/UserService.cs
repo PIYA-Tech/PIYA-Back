@@ -68,14 +68,14 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         return user;
     }
 
-    public async Task Delete(int id)
+    public async Task Delete(Guid id)
     {
         var user = await _dbContext.Users.FindAsync(id) ?? throw new KeyNotFoundException($"User with ID {id} not found");
         _dbContext.Users.Remove(user);
         await _dbContext.SaveChangesAsync();
     }
 
-    public async Task<User> GetById(int id)
+    public async Task<User> GetById(Guid id)
     {
         var user = await _dbContext.Users.FindAsync(id) ?? throw new KeyNotFoundException($"User with ID {id} not found");
         return user;
