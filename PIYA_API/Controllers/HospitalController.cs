@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -117,10 +118,11 @@ public class HospitalController(IHospitalService hospitalService, ILogger<Hospit
     /// </summary>
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<Hospital>> Create([FromBody] Hospital hospital)
+    public async Task<ActionResult<Hospital>> Create([FromBody] HospitalUpsertDto dto)
     {
         try
         {
+            var hospital = DtoToHospital(dto);
             var created = await _hospitalService.CreateAsync(hospital);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
@@ -136,10 +138,11 @@ public class HospitalController(IHospitalService hospitalService, ILogger<Hospit
     /// </summary>
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<Hospital>> Update(Guid id, [FromBody] Hospital hospital)
+    public async Task<ActionResult<Hospital>> Update(Guid id, [FromBody] HospitalUpsertDto dto)
     {
         try
         {
+            var hospital = DtoToHospital(dto);
             hospital.Id = id;
             var updated = await _hospitalService.UpdateAsync(hospital);
             return Ok(updated);
@@ -154,6 +157,25 @@ public class HospitalController(IHospitalService hospitalService, ILogger<Hospit
             return StatusCode(500, new { error = "Failed to update hospital" });
         }
     }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static Hospital DtoToHospital(HospitalUpsertDto dto) => new()
+    {
+        Name             = dto.Name,
+        Address          = dto.Address,
+        City             = dto.City,
+        Country          = dto.Country,
+        PhoneNumber      = dto.PhoneNumber,
+        Email            = dto.Email,
+        Website          = dto.Website,
+        Departments      = dto.Departments ?? [],
+        EmergencyContact = dto.EmergencyContact,
+        OperatingHours   = dto.OperatingHours,
+        Coordinates      = dto.Coordinates is { } c
+            ? new Coordinates { Latitude = c.Lat, Longitude = c.Lng }
+            : null,
+    };
 
     /// <summary>
     /// Delete hospital (Admin only)

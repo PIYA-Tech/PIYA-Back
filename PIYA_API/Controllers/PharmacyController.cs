@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -36,22 +37,20 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
 
     [HttpPost("create")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> CreatePharmacy([FromBody] Pharmacy pharmacy)
+    public async Task<IActionResult> CreatePharmacy([FromBody] PharmacyUpsertDto dto)
     {
-        if (pharmacy == null)
-        {
-            return BadRequest("Pharmacy cannot be null.");
-        }
+        var pharmacy = DtoToPharmacy(dto);
         var createdPharmacy = await _pharmacyService.Create(pharmacy);
         return CreatedAtAction(nameof(GetPharmacy), new { id = createdPharmacy.Id }, createdPharmacy);
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> UpdatePharmacy(Guid id, [FromBody] Pharmacy pharmacy)
+    public async Task<IActionResult> UpdatePharmacy(Guid id, [FromBody] PharmacyUpsertDto dto)
     {
         try
         {
+            var pharmacy = DtoToPharmacy(dto);
             pharmacy.Id = id;
             var updated = await _pharmacyService.Update(pharmacy);
             return Ok(updated);
@@ -351,6 +350,29 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
             return StatusCode(500, new { error = "Failed to perform smart search", details = ex.Message });
         }
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static Pharmacy DtoToPharmacy(PharmacyUpsertDto dto) => new()
+    {
+        Name             = dto.Name,
+        Country          = dto.Country,
+        Address          = dto.Address,
+        City             = dto.City,
+        PhoneNumber      = dto.PhoneNumber,
+        Email            = dto.Email,
+        Website          = dto.Website,
+        EmergencyContact = dto.EmergencyContact,
+        Services         = dto.Services ?? [],
+        OperatingHours   = dto.OperatingHours,
+        // Coordinates is required on the entity; create a stub if none provided
+        Coordinates      = dto.Coordinates is { } c
+            ? new Coordinates { Latitude = c.Lat, Longitude = c.Lng }
+            : new Coordinates { Latitude = 0, Longitude = 0 },
+        // Company is required on the entity; the service's Update() ignores it,
+        // and Create() should be preceded by a company association — stub for now.
+        Company          = new PIYA_API.Model.PharmacyCompany { Name = string.Empty },
+    };
 }
 
 // DTOs for request bodies
