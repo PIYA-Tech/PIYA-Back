@@ -165,7 +165,7 @@ public class HospitalController(IHospitalService hospitalService, ILogger<Hospit
         try
         {
             await _hospitalService.DeleteAsync(id);
-            return NoContent();
+            return Ok(new { message = "Hospital deleted successfully" });
         }
         catch (KeyNotFoundException)
         {
