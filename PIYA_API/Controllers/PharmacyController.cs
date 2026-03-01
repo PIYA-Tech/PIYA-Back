@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -10,6 +11,17 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
 {
     private readonly ISearchService _searchService = searchService;
     private readonly IPharmacyService _pharmacyService = pharmacyService;
+
+    /// <summary>
+    /// Get all pharmacies (Admin only)
+    /// </summary>
+    [HttpGet]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAll()
+    {
+        var pharmacies = await _pharmacyService.GetAll();
+        return Ok(pharmacies);
+    }
 
     [HttpGet("getBtId")]
     public async Task<IActionResult> GetPharmacy([FromQuery] Guid id)
@@ -23,6 +35,7 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
     }
 
     [HttpPost("create")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CreatePharmacy([FromBody] Pharmacy pharmacy)
     {
         if (pharmacy == null)
@@ -31,6 +44,37 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
         }
         var createdPharmacy = await _pharmacyService.Create(pharmacy);
         return CreatedAtAction(nameof(GetPharmacy), new { id = createdPharmacy.Id }, createdPharmacy);
+    }
+
+    [HttpPut("{id}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UpdatePharmacy(Guid id, [FromBody] Pharmacy pharmacy)
+    {
+        try
+        {
+            pharmacy.Id = id;
+            var updated = await _pharmacyService.Update(pharmacy);
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Pharmacy not found" });
+        }
+    }
+
+    [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeletePharmacy(Guid id)
+    {
+        try
+        {
+            await _pharmacyService.Delete(id);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Pharmacy not found" });
+        }
     }
 
     [HttpGet("searchByCountry")]
