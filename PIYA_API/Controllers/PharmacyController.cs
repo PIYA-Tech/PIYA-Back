@@ -13,10 +13,10 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
     private readonly IPharmacyService _pharmacyService = pharmacyService;
 
     /// <summary>
-    /// Get all pharmacies (Admin only)
+    /// Get all pharmacies (public)
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "Admin")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetAll()
     {
         var pharmacies = await _pharmacyService.GetAll();
