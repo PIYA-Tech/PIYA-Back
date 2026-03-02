@@ -18,7 +18,6 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Book a new appointment
     /// </summary>
     [HttpPost("book")]
-    [HttpPost]
     [Authorize(Roles = "Patient,Doctor,Admin")]
     public async Task<ActionResult<Appointment>> BookAppointment([FromBody] AppointmentRequest request)
     {

@@ -8,9 +8,10 @@ namespace PIYA_API.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-public class UserController(IUserService userService) : ControllerBase
+public class UserController(IUserService userService, ILogger<UserController> logger) : ControllerBase
 {
     private readonly IUserService _userService = userService;
+    private readonly ILogger<UserController> _logger = logger;
 
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id)
@@ -40,7 +41,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while retrieving the user", error = ex.Message });
+            _logger.LogError(ex, "Error retrieving user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while retrieving the user" });
         }
     }
 
@@ -58,7 +60,7 @@ public class UserController(IUserService userService) : ControllerBase
                 MiddleName = request.MiddleName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
-                DateOfBirth = DateTime.UtcNow,
+                DateOfBirth = request.DateOfBirth,
                 TokensInfo = new Token
                 {
                     AccessToken = string.Empty,
@@ -86,7 +88,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while updating the user", error = ex.Message });
+            _logger.LogError(ex, "Error updating user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while updating the user" });
         }
     }
 
@@ -104,7 +107,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while deleting the user", error = ex.Message });
+            _logger.LogError(ex, "Error deleting user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while deleting the user" });
         }
     }
 
@@ -136,7 +140,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while changing password", error = ex.Message });
+            _logger.LogError(ex, "Error changing password for user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while changing password" });
         }
     }
 
@@ -168,7 +173,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while assigning role", error = ex.Message });
+            _logger.LogError(ex, "Error assigning role to user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while assigning role" });
         }
     }
 
@@ -190,7 +196,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while retrieving role", error = ex.Message });
+            _logger.LogError(ex, "Error retrieving role for user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while retrieving role" });
         }
     }
 
@@ -226,7 +233,8 @@ public class UserController(IUserService userService) : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while retrieving users", error = ex.Message });
+            _logger.LogError(ex, "Error retrieving users by role {Role}", role);
+            return StatusCode(500, new { message = "An error occurred while retrieving users" });
         }
     }
 }
@@ -239,6 +247,7 @@ public class UpdateUserRequest
     public string? MiddleName { get; set; }
     public required string LastName { get; set; }
     public required string PhoneNumber { get; set; }
+    public DateTime DateOfBirth { get; set; }
     public string? Password { get; set; }
 }
 

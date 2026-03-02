@@ -11,13 +11,15 @@ public class AuthController(
     IJwtService jwtService,
     IConfiguration configuration,
     IAuditService auditService,
-    ITwoFactorAuthService twoFactorService) : ControllerBase
+    ITwoFactorAuthService twoFactorService,
+    ILogger<AuthController> logger) : ControllerBase
 {
     private readonly IUserService _userService = userService;
     private readonly IJwtService _jwtService = jwtService;
     private readonly IConfiguration _configuration = configuration;
     private readonly IAuditService _auditService = auditService;
     private readonly ITwoFactorAuthService _twoFactorService = twoFactorService;
+    private readonly ILogger<AuthController> _logger = logger;
 
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
@@ -123,7 +125,7 @@ public class AuthController(
                 false,
                 $"Registration error: {ex.Message}"
             );
-            return StatusCode(500, new { message = "An error occurred during registration", error = ex.Message });
+            return StatusCode(500, new { message = "An error occurred during registration" });
         }
     }
 
@@ -236,7 +238,7 @@ public class AuthController(
                 false,
                 $"Login error: {ex.Message}"
             );
-            return StatusCode(500, new { message = "An error occurred during login", error = ex.Message });
+            return StatusCode(500, new { message = "An error occurred during login" });
         }
     }
 
@@ -264,7 +266,8 @@ public class AuthController(
         }
         catch (Exception ex)
         {
-            return BadRequest(new { message = "Token validation failed", error = ex.Message });
+            _logger.LogError(ex, "Token validation error");
+            return BadRequest(new { message = "Token validation failed" });
         }
     }
 
@@ -290,7 +293,8 @@ public class AuthController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred during token refresh", error = ex.Message });
+            _logger.LogError(ex, "Error during token refresh");
+            return StatusCode(500, new { message = "An error occurred during token refresh" });
         }
     }
 }

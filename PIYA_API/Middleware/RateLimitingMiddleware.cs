@@ -22,6 +22,7 @@ public class RateLimitingMiddleware
     private readonly TimeSpan _globalTimeWindow;
     private readonly List<string> _whitelistedPaths;
     private readonly IConfiguration _configuration;
+    private readonly string? _bypassSecret;
 
     public RateLimitingMiddleware(
         RequestDelegate next,
@@ -31,13 +32,15 @@ public class RateLimitingMiddleware
         _next = next;
         _logger = logger;
         _configuration = configuration;
-        _globalRequestLimit = int.Parse(configuration["RateLimit:RequestLimit"] ?? "100");
-        _globalTimeWindow = TimeSpan.FromMinutes(int.Parse(configuration["RateLimit:TimeWindowMinutes"] ?? "1"));
-        _whitelistedPaths = configuration.GetSection("RateLimit:WhitelistedPaths").Get<List<string>>() ?? new List<string>
+        _globalRequestLimit = int.Parse(configuration["RateLimiting:PermitLimit"] ?? "100");
+        _globalTimeWindow = TimeSpan.FromSeconds(int.Parse(configuration["RateLimiting:WindowSeconds"] ?? "60"));
+        _whitelistedPaths = configuration.GetSection("RateLimiting:WhitelistedPaths").Get<List<string>>() ?? new List<string>
         {
             "/api/Health",
             "/swagger"
         };
+        // Secret token required for bypass headers — must be set via env/config to be usable
+        _bypassSecret = configuration["RateLimiting:BypassSecret"];
 
         // Cleanup task - runs every 5 minutes
         Task.Run(async () =>
@@ -76,39 +79,33 @@ public class RateLimitingMiddleware
             return;
         }
 
-        // Support a header-based bypass so test/load runners (NBomber) can opt-out of rate limiting.
-        // This is safer than auto-exempting loopback addresses because security tests that run
-        // locally should still be able to validate rate limiting behavior.
-        if (context.Request.Headers.TryGetValue("X-RateLimit-Bypass", out var bypassValues))
+        // Support a header-based bypass for test/load runners, but ONLY when the caller
+        // presents the correct secret configured in RateLimiting:BypassSecret.
+        // If no secret is configured, bypass headers are completely disabled.
+        if (!string.IsNullOrEmpty(_bypassSecret))
         {
-            var bypassVal = bypassValues.FirstOrDefault();
-            if (!string.IsNullOrEmpty(bypassVal) && bool.TryParse(bypassVal, out var bypass) && bypass)
+            if (context.Request.Headers.TryGetValue("X-RateLimit-Bypass", out var bypassValues))
             {
-                await _next(context);
-                return;
+                var bypassVal = bypassValues.FirstOrDefault();
+                if (bypassVal == _bypassSecret)
+                {
+                    await _next(context);
+                    return;
+                }
+            }
+
+            if (context.Request.Headers.TryGetValue("X-NBomber-Bypass", out var nbomberVals))
+            {
+                var v = nbomberVals.FirstOrDefault();
+                if (v == _bypassSecret)
+                {
+                    await _next(context);
+                    return;
+                }
             }
         }
 
-        // Additional friendly bypass checks for common test/load runners. These are opt-in by the test client
-        // (for example NBomber) - they must explicitly send a header or include NBomber user-agent.
-        if (context.Request.Headers.TryGetValue("X-NBomber-Bypass", out var nbomberVals))
-        {
-            var v = nbomberVals.FirstOrDefault();
-            if (!string.IsNullOrEmpty(v) && bool.TryParse(v, out var bypass) && bypass)
-            {
-                await _next(context);
-                return;
-            }
-        }
-
-        if (context.Request.Headers.TryGetValue("User-Agent", out var ua))
-        {
-            if (ua.ToString().Contains("NBomber", StringComparison.OrdinalIgnoreCase))
-            {
-                await _next(context);
-                return;
-            }
-        }
+        // NBomber User-Agent bypass is intentionally removed — it can be trivially spoofed.
 
         var clientId = GetClientIdentifier(context);
 
