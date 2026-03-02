@@ -47,6 +47,42 @@ public class MedicationService(
             .ToListAsync();
     }
 
+    public async Task<(List<Medication> Items, int TotalCount)> GetAllAdminAsync(
+        string? search,
+        bool? requiresPrescription,
+        bool? isAvailable,
+        int page,
+        int pageSize)
+    {
+        var query = _context.Medications.AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var q = search.ToLower();
+            query = query.Where(m =>
+                m.BrandName.ToLower().Contains(q) ||
+                m.GenericName.ToLower().Contains(q) ||
+                m.Form.ToLower().Contains(q) ||
+                (m.Manufacturer != null && m.Manufacturer.ToLower().Contains(q)));
+        }
+
+        if (requiresPrescription.HasValue)
+            query = query.Where(m => m.RequiresPrescription == requiresPrescription.Value);
+
+        if (isAvailable.HasValue)
+            query = query.Where(m => m.IsAvailable == isAvailable.Value);
+
+        var totalCount = await query.CountAsync();
+
+        var items = await query
+            .OrderBy(m => m.BrandName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return (items, totalCount);
+    }
+
     public async Task<List<Medication>> SearchByNameAsync(string searchTerm)
     {
         searchTerm = searchTerm.ToLower();

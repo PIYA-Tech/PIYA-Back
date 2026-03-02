@@ -18,9 +18,19 @@ public interface IMedicationService
     Task<Medication?> GetByIdAsync(Guid id);
     
     /// <summary>
-    /// Get all medications
+    /// Get all medications (available only — for public/patient use)
     /// </summary>
     Task<List<Medication>> GetAllAsync();
+
+    /// <summary>
+    /// Get all medications for admin (no availability filter, supports search/filter/paging)
+    /// </summary>
+    Task<(List<Medication> Items, int TotalCount)> GetAllAdminAsync(
+        string? search,
+        bool? requiresPrescription,
+        bool? isAvailable,
+        int page,
+        int pageSize);
     
     /// <summary>
     /// Search medications by name (brand or generic)

@@ -56,6 +56,40 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     }
 
     /// <summary>
+    /// Get all medications for admin — no availability filter, supports search/filter/paging
+    /// </summary>
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAllAdmin(
+        [FromQuery] string? search = null,
+        [FromQuery] bool? requiresPrescription = null,
+        [FromQuery] bool? isAvailable = null,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        try
+        {
+            pageSize = Math.Min(pageSize, 200);
+            var (items, total) = await _medicationService.GetAllAdminAsync(
+                search, requiresPrescription, isAvailable, pageNumber, pageSize);
+
+            return Ok(new
+            {
+                items,
+                totalCount = total,
+                pageNumber,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving medications (admin)");
+            return StatusCode(500, new { error = "Failed to retrieve medications" });
+        }
+    }
+
+    /// <summary>
     /// Get medication by ID
     /// </summary>
     [HttpGet("{id}")]
