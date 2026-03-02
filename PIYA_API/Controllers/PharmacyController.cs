@@ -68,7 +68,7 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
         try
         {
             await _pharmacyService.Delete(id);
-            return NoContent();
+            return Ok(new { message = "Pharmacy deleted successfully" });
         }
         catch (KeyNotFoundException)
         {
