@@ -77,6 +77,7 @@ public class InventoryService(
         return await _context.PharmacyInventories
             .Include(i => i.Medication)
             .Include(i => i.Pharmacy)
+                .ThenInclude(p => p.Coordinates)
             .Where(i => i.MedicationId == medicationId)
             .Where(i => i.QuantityInStock >= minimumQuantity)
             .Where(i => i.IsAvailable)

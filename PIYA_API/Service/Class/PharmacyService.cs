@@ -10,6 +10,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
     public Task<List<Pharmacy>> GetAll()
     {
         return dbContext.Pharmacies
+            .Include(p => p.Coordinates)
             .Include(p => p.Company)
             .Include(p => p.Manager)
             .ToListAsync();
@@ -18,6 +19,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
     public async Task<Pharmacy?> GetById(Guid id)
     {
         var pharmacy = await dbContext.Pharmacies
+            .Include(p => p.Coordinates)
             .Include(p => p.Company)
             .Include(p => p.Manager)
             .Include(p => p.Staff)
@@ -53,7 +55,10 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
     
     public Task<Pharmacy> Update(Pharmacy pharmacy)
     {
-        var existingPharmacy = dbContext.Pharmacies.Find(pharmacy.Id) ?? throw new KeyNotFoundException("Pharmacy not found");
+        var existingPharmacy = dbContext.Pharmacies
+            .Include(p => p.Coordinates)
+            .FirstOrDefault(p => p.Id == pharmacy.Id)
+            ?? throw new KeyNotFoundException("Pharmacy not found");
         existingPharmacy.Name = pharmacy.Name;
         existingPharmacy.Address = pharmacy.Address;
         existingPharmacy.City = pharmacy.City;
@@ -62,7 +67,21 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
         existingPharmacy.Email = pharmacy.Email;
         existingPharmacy.Website = pharmacy.Website;
         existingPharmacy.IsActive = pharmacy.IsActive;
-        existingPharmacy.Coordinates = pharmacy.Coordinates;
+
+        // Update coordinates in-place to avoid inserting a duplicate Coordinates row
+        if (pharmacy.Coordinates != null)
+        {
+            if (existingPharmacy.Coordinates != null)
+            {
+                existingPharmacy.Coordinates.Latitude  = pharmacy.Coordinates.Latitude;
+                existingPharmacy.Coordinates.Longitude = pharmacy.Coordinates.Longitude;
+            }
+            else
+            {
+                existingPharmacy.Coordinates = pharmacy.Coordinates;
+            }
+        }
+
         dbContext.SaveChanges();
         return Task.FromResult(existingPharmacy);
     }

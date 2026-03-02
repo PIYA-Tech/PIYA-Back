@@ -429,6 +429,7 @@ public class PharmacyInventoryController(
     /// Find pharmacies with medication in stock
     /// </summary>
     [HttpGet("medication/{medicationId}/pharmacies")]
+    [AllowAnonymous]
     public async Task<ActionResult<List<PharmacyInventory>>> FindPharmaciesWithMedication(
         Guid medicationId,
         [FromQuery] int minimumQuantity = 1)

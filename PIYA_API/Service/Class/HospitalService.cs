@@ -14,7 +14,9 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
     {
         try
         {
-            return await _context.Hospitals.ToListAsync();
+            return await _context.Hospitals
+                .Include(h => h.Coordinates)
+                .ToListAsync();
         }
         catch (Exception ex)
         {
@@ -27,7 +29,9 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
     {
         try
         {
-            return await _context.Hospitals.FindAsync(id);
+            return await _context.Hospitals
+                .Include(h => h.Coordinates)
+                .FirstOrDefaultAsync(h => h.Id == id);
         }
         catch (Exception ex)
         {
@@ -41,6 +45,7 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
         try
         {
             return await _context.Hospitals
+                .Include(h => h.Coordinates)
                 .Where(h => h.City.ToLower() == city.ToLower())
                 .ToListAsync();
         }
@@ -56,6 +61,7 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
         try
         {
             return await _context.Hospitals
+                .Include(h => h.Coordinates)
                 .Where(h => h.Departments != null && h.Departments.Contains(department))
                 .ToListAsync();
         }
@@ -71,6 +77,7 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
         try
         {
             return await _context.Hospitals
+                .Include(h => h.Coordinates)
                 .Where(h => h.IsActive)
                 .ToListAsync();
         }
@@ -107,7 +114,11 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
     {
         try
         {
-            var existing = await _context.Hospitals.FindAsync(hospital.Id) ?? throw new InvalidOperationException($"Hospital {hospital.Id} not found");
+            var existing = await _context.Hospitals
+                .Include(h => h.Coordinates)
+                .FirstOrDefaultAsync(h => h.Id == hospital.Id)
+                ?? throw new InvalidOperationException($"Hospital {hospital.Id} not found");
+
             existing.Name = hospital.Name;
             existing.Address = hospital.Address;
             existing.City = hospital.City;
@@ -117,9 +128,26 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
             existing.Website = hospital.Website;
             existing.Departments = hospital.Departments;
             existing.EmergencyContact = hospital.EmergencyContact;
-            existing.Coordinates = hospital.Coordinates;
             existing.OperatingHours = hospital.OperatingHours;
             existing.UpdatedAt = DateTime.UtcNow;
+
+            // Update coordinates in-place to avoid inserting a new Coordinates row
+            if (hospital.Coordinates != null)
+            {
+                if (existing.Coordinates != null)
+                {
+                    existing.Coordinates.Latitude  = hospital.Coordinates.Latitude;
+                    existing.Coordinates.Longitude = hospital.Coordinates.Longitude;
+                }
+                else
+                {
+                    existing.Coordinates = hospital.Coordinates;
+                }
+            }
+            else
+            {
+                existing.Coordinates = null;
+            }
 
             await _context.SaveChangesAsync();
 
