@@ -98,104 +98,143 @@ public class AzerbaijanPharmaceuticalRegistryService(
 
     public async Task<int> ImportMedicationsFromCsvAsync(Stream csvStream)
     {
+        // Real CSV column indices (confirmed from live data — 2025-12-04):
+        // 0  №                                   row number         (skip)
+        // 1  Dərmanın adı                         brand name
+        // 2  BPA                                  generic + strength e.g. "Ibuprofen - 200 mg/5 ml"
+        // 3  Köməkçi maddə                        excipients         (skip)
+        // 4  Buraxılış forması və qablaşdırma     form + packaging   — fields contain embedded newlines
+        // 5  İstehsalçı firma                     manufacturer
+        // 6  Ərizəçi firma                        applicant          (skip)
+        // 7  Buraxılış qaydası                    Rx flag            "Reseptsiz buraxılır" = OTC
+        // 8  ATC                                  ATC code
+        // 9+ registration details                 (skip)
+        const int brandNameIdx    = 1;
+        const int bpaIdx          = 2;
+        const int formIdx         = 4;
+        const int manufacturerIdx = 5;
+        const int releaseOrderIdx = 7;
+        const int atcIdx          = 8;
+
         var importedCount = 0;
-        var errors = new List<string>();
-        
+        var errorCount    = 0;
+
         try
         {
-            using var reader = new StreamReader(csvStream, Encoding.UTF8);
-            
-            // Read header
-            var headerLine = await reader.ReadLineAsync();
-            if (string.IsNullOrEmpty(headerLine))
+            // Read entire stream into memory so the RFC-4180 tokeniser can handle
+            // quoted fields that span multiple physical lines.
+            var content = await new StreamReader(csvStream, detectEncodingFromByteOrderMarks: true)
+                              .ReadToEndAsync();
+
+            var rows = ParseCsvRows(content);
+            if (rows.Count < 2)
             {
-                _logger.LogError("CSV file is empty or has no header");
+                _logger.LogError("CSV file is empty or has only a header");
                 return 0;
             }
 
-            var headers = ParseCsvLine(headerLine);
-            _logger.LogInformation($"CSV Headers: {string.Join(", ", headers)}");
-            
-            // Expected columns (adjust based on actual CSV structure)
-            var tradeNameIdx = FindHeaderIndex(headers, "Ticarət adı", "Trade Name", "TradeName");
-            var genericNameIdx = FindHeaderIndex(headers, "Beynəlxalq qeyri-patent adı", "Generic Name", "GenericName");
-            var manufacturerIdx = FindHeaderIndex(headers, "İstehsalçı", "Manufacturer");
-            var formIdx = FindHeaderIndex(headers, "Dərman forması", "Dosage Form", "Form");
-            var dosageIdx = FindHeaderIndex(headers, "Dozası", "Dosage", "Strength");
+            _logger.LogInformation("CSV import started — {Total} data rows", rows.Count - 1);
 
-            var lineNumber = 1;
-            while (!reader.EndOfStream)
+            // Bulk-load existing keys to avoid per-row DB round-trips
+            var existingKeys = await _context.Medications
+                .Select(m => m.BrandName + "||" + (m.Manufacturer ?? ""))
+                .ToHashSetAsync();
+
+            var toAdd      = new List<Medication>();
+            var rowNumber  = 0;
+
+            foreach (var v in rows.Skip(1))   // skip header row
             {
-                lineNumber++;
-                var line = await reader.ReadLineAsync();
-                if (string.IsNullOrWhiteSpace(line)) continue;
-
+                rowNumber++;
                 try
                 {
-                    var values = ParseCsvLine(line);
-                    
-                    var medication = new Medication
-                    {
-                        Id = Guid.NewGuid(),
-                        BrandName = GetValue(values, tradeNameIdx) ?? "Unknown",
-                        GenericName = GetValue(values, genericNameIdx) ?? "Unknown",
-                        Manufacturer = GetValue(values, manufacturerIdx),
-                        Form = GetValue(values, formIdx) ?? "Unknown",
-                        Strength = GetValue(values, dosageIdx) ?? "Unknown",
-                        
-                        // Default values (can be enhanced with more CSV columns)
-                        ActiveIngredients = [GetValue(values, genericNameIdx) ?? "Unknown"],
-                        RequiresPrescription = true, // Conservative default
-                        AtcCode = string.Empty,
-                        GenericAlternatives = [],
-                        IsAvailable = true,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
+                    var brandName = GetCol(v, brandNameIdx);
+                    if (string.IsNullOrWhiteSpace(brandName)) continue;
 
-                    // Check if medication already exists (by brand name + manufacturer)
-                    var existing = await _context.Medications
-                        .FirstOrDefaultAsync(m => 
-                            m.BrandName == medication.BrandName && 
-                            m.Manufacturer == medication.Manufacturer);
-
-                    if (existing == null)
+                    // BPA: "GenericName - Strength"  OR just "GenericName"
+                    var bpaRaw = GetCol(v, bpaIdx);
+                    string genericName, strength;
+                    var dashIdx = bpaRaw.IndexOf(" - ", StringComparison.Ordinal);
+                    if (dashIdx > 0)
                     {
-                        await _context.Medications.AddAsync(medication);
-                        importedCount++;
+                        genericName = bpaRaw[..dashIdx].Trim();
+                        strength    = bpaRaw[(dashIdx + 3)..].Trim();
+                        // Strength may have a second "ingredient - dose" part; keep only first segment
+                        var semicolonIdx = strength.IndexOf(';');
+                        if (semicolonIdx > 0) strength = strength[..semicolonIdx].Trim();
                     }
                     else
                     {
-                        // Update existing medication
-                        existing.GenericName = medication.GenericName;
-                        existing.Form = medication.Form;
-                        existing.Strength = medication.Strength;
-                        existing.UpdatedAt = DateTime.UtcNow;
-                        _context.Medications.Update(existing);
+                        genericName = bpaRaw;
+                        strength    = string.Empty;
                     }
 
-                    // Batch save every 100 records
-                    if (importedCount % 100 == 0)
+                    // Form: first segment before newline / ';' / ','  (strip packaging info)
+                    var formRaw = GetCol(v, formIdx);
+                    var form    = Normalise(formRaw.Split(['\n', ';', ','])[0]);
+
+                    // Manufacturer: first segment before newline / ';'
+                    var mfrRaw       = GetCol(v, manufacturerIdx);
+                    var manufacturer = Normalise(mfrRaw.Split(['\n', ';'])[0]);
+                    // Strip trailing comma artefacts like "Berlin-Chemie AG,,"
+                    manufacturer = manufacturer.TrimEnd(',', ' ');
+                    if (string.IsNullOrWhiteSpace(manufacturer)) manufacturer = null;
+
+                    // Rx flag
+                    var releaseOrder = GetCol(v, releaseOrderIdx);
+                    var requiresRx   = !releaseOrder.Contains("Reseptsiz", StringComparison.OrdinalIgnoreCase);
+
+                    // ATC: first value before ';'
+                    var atcCode = Normalise(GetCol(v, atcIdx).Split(';')[0]);
+
+                    // Deduplication key
+                    var key = brandName + "||" + (manufacturer ?? "");
+                    if (existingKeys.Contains(key)) continue;
+                    existingKeys.Add(key);
+
+                    toAdd.Add(new Medication
                     {
+                        Id                   = Guid.NewGuid(),
+                        BrandName            = brandName,
+                        GenericName          = string.IsNullOrWhiteSpace(genericName) ? brandName : genericName,
+                        Strength             = strength,
+                        Form                 = string.IsNullOrWhiteSpace(form) ? "Unknown" : form,
+                        Manufacturer         = manufacturer,
+                        AtcCode              = string.IsNullOrWhiteSpace(atcCode) ? null : atcCode,
+                        RequiresPrescription = requiresRx,
+                        ActiveIngredients    = string.IsNullOrWhiteSpace(genericName) ? [brandName] : [genericName],
+                        GenericAlternatives  = [],
+                        IsAvailable          = true,
+                        Country              = "Azerbaijan",
+                        CreatedAt            = DateTime.UtcNow,
+                        UpdatedAt            = DateTime.UtcNow,
+                    });
+
+                    importedCount++;
+
+                    if (toAdd.Count >= 500)
+                    {
+                        await _context.Medications.AddRangeAsync(toAdd);
                         await _context.SaveChangesAsync();
-                        _logger.LogInformation($"Imported {importedCount} medications...");
+                        _logger.LogInformation("[Registry] Saved batch (running total: {Total})...", importedCount);
+                        toAdd.Clear();
                     }
                 }
                 catch (Exception ex)
                 {
-                    errors.Add($"Line {lineNumber}: {ex.Message}");
-                    _logger.LogWarning($"Error parsing line {lineNumber}: {ex.Message}");
+                    errorCount++;
+                    _logger.LogWarning("Error on CSV row {Row}: {Error}", rowNumber, ex.Message);
                 }
             }
 
-            // Final save
-            await _context.SaveChangesAsync();
-            
-            _logger.LogInformation($"Import completed: {importedCount} medications imported/updated");
-            if (errors.Count > 0)
+            if (toAdd.Count > 0)
             {
-                _logger.LogWarning($"Import had {errors.Count} errors");
+                await _context.Medications.AddRangeAsync(toAdd);
+                await _context.SaveChangesAsync();
             }
+
+            _logger.LogInformation("[Registry] Import complete — {Imported} medications added ({Errors} parse errors)",
+                importedCount, errorCount);
 
             return importedCount;
         }
@@ -205,6 +244,15 @@ public class AzerbaijanPharmaceuticalRegistryService(
             throw;
         }
     }
+
+    /// <summary>
+    /// Collapse whitespace (including embedded newlines from multi-line fields) into a single space.
+    /// </summary>
+    private static string Normalise(string s) =>
+        System.Text.RegularExpressions.Regex.Replace(s.Trim(), @"\s+", " ").Trim();
+
+    private static string GetCol(List<string> row, int idx) =>
+        idx < row.Count ? row[idx].Trim() : string.Empty;
 
     public async Task<MedicationSyncResult> SyncMedicationsAsync()
     {
@@ -295,35 +343,74 @@ public class AzerbaijanPharmaceuticalRegistryService(
 
     #region Helper Methods
 
-    private static List<string> ParseCsvLine(string line)
+    /// <summary>
+    /// RFC 4180-compliant CSV parser. Handles:
+    ///   - Quoted fields containing commas, double-quotes ("") and embedded newlines.
+    /// Returns all rows (including the header as row 0).
+    /// </summary>
+    private static List<List<string>> ParseCsvRows(string content)
     {
-        var values = new List<string>();
-        var inQuotes = false;
-        var currentValue = new StringBuilder();
+        var rows    = new List<List<string>>();
+        var current = new List<string>();
+        var field   = new StringBuilder();
+        var inQuote = false;
+        var i       = 0;
 
-        for (int i = 0; i < line.Length; i++)
+        while (i < content.Length)
         {
-            var c = line[i];
+            var c = content[i];
 
-            if (c == '"')
+            if (inQuote)
             {
-                inQuotes = !inQuotes;
-            }
-            else if (c == ',' && !inQuotes)
-            {
-                values.Add(currentValue.ToString().Trim());
-                currentValue.Clear();
+                if (c == '"')
+                {
+                    // Peek: escaped quote "" → emit one "
+                    if (i + 1 < content.Length && content[i + 1] == '"')
+                    {
+                        field.Append('"');
+                        i += 2;
+                        continue;
+                    }
+                    inQuote = false;   // closing quote
+                }
+                else
+                {
+                    field.Append(c);   // content inside quotes (including \n)
+                }
             }
             else
             {
-                currentValue.Append(c);
+                if (c == '"')
+                {
+                    inQuote = true;
+                }
+                else if (c == ',')
+                {
+                    current.Add(field.ToString());
+                    field.Clear();
+                }
+                else if (c == '\n')
+                {
+                    current.Add(field.ToString());
+                    field.Clear();
+                    if (current.Count > 0)
+                        rows.Add(current);
+                    current = [];
+                }
+                else if (c != '\r')
+                {
+                    field.Append(c);
+                }
             }
+            i++;
         }
 
-        // Add last value
-        values.Add(currentValue.ToString().Trim());
+        // Last field / row (file may not end with newline)
+        current.Add(field.ToString());
+        if (current.Any(f => f.Length > 0))
+            rows.Add(current);
 
-        return values;
+        return rows;
     }
 
     private static int FindHeaderIndex(List<string> headers, params string[] possibleNames)

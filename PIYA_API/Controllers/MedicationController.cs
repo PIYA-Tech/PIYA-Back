@@ -92,7 +92,7 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// <summary>
     /// Get medication by ID
     /// </summary>
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [AllowAnonymous]
     public async Task<ActionResult<Medication>> GetById(Guid id)
     {
