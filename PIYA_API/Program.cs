@@ -376,6 +376,9 @@ if (!app.Environment.IsDevelopment())
     // Map SignalR Hubs
     app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub");
 
+    // Seed demo users (no-op if they already exist)
+    await DataSeeder.SeedAsync(app.Services);
+
     app.Run();
 }
 catch (Exception ex)
