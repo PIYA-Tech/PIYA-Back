@@ -74,7 +74,8 @@ namespace PIYA_API.Migrations
                 name: "Services",
                 table: "Pharmacies",
                 type: "text[]",
-                nullable: false);
+                nullable: false,
+                defaultValue: new List<string>());
 
             migrationBuilder.AddColumn<int>(
                 name: "TotalRatings",
