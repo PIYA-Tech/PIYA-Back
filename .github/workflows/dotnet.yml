@@ -66,7 +66,10 @@ jobs:
           Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
         run: |
           export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet ef database update --project PIYA_API/PIYA_API.csproj --startup-project PIYA_API/PIYA_API.csproj
+          dotnet ef database update \
+            --project PIYA_API/PIYA_API.csproj \
+            --startup-project PIYA_API/PIYA_API.csproj \
+            -- --environment LoadTest
 
       - name: Run tests (unit + integration + security; exclude LoadTest)
         env:

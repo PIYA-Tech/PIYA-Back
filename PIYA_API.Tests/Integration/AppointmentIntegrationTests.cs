@@ -93,8 +93,8 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
             reason    = "Regular checkup"
         };
 
-        // AppointmentController is registered at api/appointment (singular — [Route("api/[controller]")])
-        var bookResponse = await _client.PostAsJsonAsync("/api/appointment", appointment);
+        // AppointmentController: [Route("api/[controller]")] + [HttpPost("book")]  →  POST /api/appointment/book
+        var bookResponse = await _client.PostAsJsonAsync("/api/appointment/book", appointment);
 
         // Assert
         bookResponse.StatusCode.Should().Be(
@@ -119,10 +119,29 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         return new Dictionary<string, string>
         {
             ["accessToken"]  = data["accessToken"].GetString()!,
-            ["refreshToken"] = data["refreshToken"].GetString()!,
+            ["refreshToken"] = data.TryGetValue("refreshToken", out var rt) && rt.ValueKind == JsonValueKind.String
+                                   ? rt.GetString()! : string.Empty,
             // The register endpoint returns userId directly — no JWT decoding needed
             ["userId"]       = data["userId"].GetString()!,
         };
+    }
+
+    /// <summary>
+    /// Parses a login or register response and returns just the Bearer access token.
+    /// Accepts either "accessToken" or the legacy "token" field name.
+    /// </summary>
+    private static async Task<string> ParseAccessToken(HttpResponseMessage response)
+    {
+        var json = await response.Content.ReadAsStringAsync();
+        var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
+        if (data.TryGetValue("accessToken", out var at) && at.ValueKind == JsonValueKind.String)
+            return at.GetString()!;
+        if (data.TryGetValue("token", out var t) && t.ValueKind == JsonValueKind.String)
+            return t.GetString()!;
+
+        throw new InvalidOperationException($"No access token field found in response: {json}");
     }
 
     /// <summary>
@@ -159,10 +178,10 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         var adminLoginResponse = await _client.PostAsJsonAsync("/api/auth/login", adminLogin);
         adminLoginResponse.StatusCode.Should().Be(HttpStatusCode.OK,
             "seeded admin_piya login must succeed — ensure DataSeeder ran on startup");
-        var adminData = await ParseRegisterResponse(adminLoginResponse);
+        var adminToken = await ParseAccessToken(adminLoginResponse);
 
         _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", adminData["accessToken"]);
+            new AuthenticationHeaderValue("Bearer", adminToken);
 
         var hospitalPayload = new
         {
