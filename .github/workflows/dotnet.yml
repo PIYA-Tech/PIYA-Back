@@ -82,6 +82,9 @@ jobs:
           Jwt__Issuer: PIYA_API_CI
           Jwt__Audience: PIYA_Clients_CI
           Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
+          # Enable demo-user seeding so admin_piya exists for integration tests.
+          # The seeder is idempotent — safe to run on every CI invocation.
+          ENABLE_DEMO_SEEDING: "true"
         run: |
           # Run test project directly with Release configuration.
           # WebApplicationFactory boots the API in-process — no separate server needed.
