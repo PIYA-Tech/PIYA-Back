@@ -148,20 +148,18 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
                 return Guid.Parse(hospitals[0]["id"].GetString()!);
         }
 
-        // No hospitals yet — register an Admin and create one
-        var adminEmail = $"admin-{Guid.NewGuid()}@example.com";
-        var adminRegister = new
+        // No hospitals yet — log in as the seeded admin_piya demo user (Role=Admin)
+        // and create one.  We cannot self-register an Admin because /api/auth/register
+        // always assigns the Patient role regardless of the 'role' field in the body.
+        var adminLogin = new
         {
-            email     = adminEmail,
-            password  = "Admin@123",
-            firstName = "Test",
-            lastName  = "Admin",
-            phoneNumber = "+994503333333",
-            dateOfBirth = "1970-01-01",
-            role = "Admin"
+            username = "admin_piya",
+            password = "Test@1234"
         };
-        var adminRegisterResponse = await _client.PostAsJsonAsync("/api/auth/register", adminRegister);
-        var adminData = await ParseRegisterResponse(adminRegisterResponse);
+        var adminLoginResponse = await _client.PostAsJsonAsync("/api/auth/login", adminLogin);
+        adminLoginResponse.StatusCode.Should().Be(HttpStatusCode.OK,
+            "seeded admin_piya login must succeed — ensure DataSeeder ran on startup");
+        var adminData = await ParseRegisterResponse(adminLoginResponse);
 
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", adminData["accessToken"]);

@@ -64,8 +64,11 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
             MaybeOverride(config, "Security:QrSigningKey",  "Security__QrSigningKey");
         });
 
-        // Run under the "Test" environment so production-only middleware stays off.
-        builder.UseEnvironment("Test");
+        // Run under "LoadTest" — matches ASPNETCORE_ENVIRONMENT in CI and means
+        // appsettings.LoadTest.json (which exists) is loaded instead of the
+        // missing appsettings.Test.json that used to cause Serilog to crash
+        // the host before any test could run.
+        builder.UseEnvironment("LoadTest");
     }
 
     /// <summary>
