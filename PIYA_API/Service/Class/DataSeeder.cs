@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -31,19 +32,23 @@ public static class DataSeeder
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
         // ── Users ──────────────────────────────────────────────────────────────
+        // Batch-preload all demo emails in a single query to minimise the race
+        // window and avoid N individual round-trips.
+        var demoEmails = DemoUsers.Select(u => u.Email).ToArray();
+
+        var existing = await db.Users
+            .Where(u => demoEmails.Contains(u.Email))
+            .ToDictionaryAsync(u => u.Email);
+
         foreach (var (username, first, last, email, phone, role) in DemoUsers)
         {
-            // Use email as the canonical lookup key (it has the unique index).
-            // This survives re-runs, username renames, and test-created collisions.
-            var user = await db.Users.SingleOrDefaultAsync(u => u.Email == email);
-
-            if (user == null)
+            if (!existing.TryGetValue(email, out var user))
             {
+                // Not in DB yet — create and track in both EF and our local dict.
                 user = new User
                 {
                     Id              = Guid.NewGuid(),
                     Email           = email,
-                    // Required members — overwritten by the reconcile block below
                     Username        = username,
                     FirstName       = first,
                     LastName        = last,
@@ -66,6 +71,7 @@ public static class DataSeeder
                     },
                 };
                 db.Users.Add(user);
+                existing[email] = user;
             }
 
             // Always reconcile mutable fields so repeated runs stay consistent.
@@ -79,7 +85,20 @@ public static class DataSeeder
             if (!hasher.VerifyPassword(DemoPassword, user.PasswordHash))
                 user.PasswordHash = DemoHash;
         }
-        await db.SaveChangesAsync();
+
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException pg && pg.SqlState == "23505")
+        {
+            // Another instance seeded concurrently (e.g. parallel CI jobs).
+            // The row already exists — swallow and continue.
+            logger.LogWarning(ex,
+                "[DataSeeder] Unique-constraint conflict while seeding demo users — " +
+                "a concurrent startup already inserted the row. Continuing.");
+        }
 
         // ── Medications from Azerbaijan Pharmaceutical Registry ─────────────────
         // Only runs when the DB is empty — subsequent startups skip this entirely.

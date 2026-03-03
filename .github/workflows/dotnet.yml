@@ -58,6 +58,7 @@ jobs:
       - name: Apply EF Core migrations
         env:
           ASPNETCORE_ENVIRONMENT: LoadTest
+          ENABLE_DEMO_SEEDING: "false"
           EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
           ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
           Jwt__SecretKey: CI_TEST_SECRET_KEY_32_CHARS_MINIMUM__1234
