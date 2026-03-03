@@ -24,7 +24,8 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
         return Ok(pharmacies);
     }
 
-    [HttpGet("getBtId")]
+    [HttpGet("getById")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetPharmacy([FromQuery] Guid id)
     {
         var pharmacy = await _pharmacyService.GetById(id);

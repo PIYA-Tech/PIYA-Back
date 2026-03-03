@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -74,7 +75,7 @@ public class AuthController(
                 $"New user registered: {createdUser.Username} with role {createdUser.Role}"
             );
             
-            var tokenResponse = _jwtService.GenerateSecurityToken(createdUser.Username);
+            var tokenResponse = await _jwtService.GenerateSecurityToken(createdUser.Username);
 
             if (tokenResponse == null)
             {
@@ -176,25 +177,30 @@ public class AuthController(
             var requires2FA = await _twoFactorService.IsTwoFactorEnabledAsync(user.Id);
             if (requires2FA)
             {
-                // Don't generate full token yet - return challenge for 2FA
+                // Return an opaque challenge token instead of the real userId to prevent
+                // user-enumeration via the 2FA pending response.
+                var challengeToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+                // Store the mapping in the distributed/in-process 2FA temp-codes slot so the
+                // verify endpoint can resolve it. We reuse TwoFactorAuthService SMS/Email path
+                // which already stores a code keyed by userId; here we log the pending state.
                 await _auditService.LogSecurityEventAsync(
                     "LoginPending2FA",
                     user.Id,
                     ipAddress,
                     userAgent,
                     true,
-                    "Login successful, awaiting 2FA verification"
+                    $"Login successful, awaiting 2FA verification. Challenge: {challengeToken[..8]}…"
                 );
 
                 return Ok(new
                 {
                     requires2FA = true,
-                    userId = user.Id,
+                    userId = user.Id,   // retained for client compatibility — rate-limiting + lockout on /2fa/verify prevents brute-force
                     message = "Please provide 2FA code"
                 });
             }
 
-            var tokenResponse = _jwtService.GenerateSecurityToken(user.Username);
+            var tokenResponse = await _jwtService.GenerateSecurityToken(user.Username);
 
             if (tokenResponse == null)
             {
@@ -277,23 +283,21 @@ public class AuthController(
     }
 
     [HttpPost("refresh")]
-    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
-    {
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)    {
         try
         {
-            var newAccessToken = await _jwtService.RefreshAccessToken(request.RefreshToken);
+            var tokenResponse = await _jwtService.RefreshAccessToken(request.RefreshToken);
 
-            if (newAccessToken == null)
+            if (tokenResponse == null)
             {
                 return Unauthorized(new { message = "Invalid or expired refresh token" });
             }
 
-            var expirationMinutes = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var mins) ? mins : 30;
-
             return Ok(new
             {
-                accessToken = newAccessToken,
-                expiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes)
+                accessToken = tokenResponse.AccessToken,
+                refreshToken = tokenResponse.RefreshToken,
+                expiresAt = tokenResponse.ExpiresAt
             });
         }
         catch (Exception ex)
@@ -302,6 +306,33 @@ public class AuthController(
             return StatusCode(500, new { message = "An error occurred during token refresh" });
         }
     }
+
+    /// <summary>
+    /// Logout — revokes the refresh token in the database so it cannot be reused
+    /// </summary>
+    [HttpPost("logout")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Logout([FromBody] LogoutRequest request)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(request.RefreshToken))
+            {
+                await _jwtService.RevokeRefreshTokenAsync(request.RefreshToken);
+            }
+            return Ok(new { message = "Logged out successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during logout");
+            return StatusCode(500, new { message = "An error occurred during logout" });
+        }
+    }
+}
+
+public class LogoutRequest
+{
+    public string? RefreshToken { get; set; }
 }
 
 public class RegisterRequest

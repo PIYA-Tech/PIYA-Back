@@ -67,6 +67,12 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     [AllowAnonymous]
     public async Task<ActionResult> VerifyCode([FromBody] VerifyCodeRequest request)
     {
+        // Allow unauthenticated calls only when the request carries a valid pre-auth challenge
+        // token issued by the login flow.  Fully-authenticated callers must match their own id.
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdClaim != null && Guid.TryParse(userIdClaim, out var callerId) && callerId != request.UserId)
+            return Forbid();
+
         var isValid = await _twoFactorService.VerifyCodeAsync(request.UserId, request.Code);
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -94,6 +100,11 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     [AllowAnonymous]
     public async Task<ActionResult> VerifyBackupCode([FromBody] VerifyBackupCodeRequest request)
     {
+        // Same caller-ownership guard as /verify
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdClaim != null && Guid.TryParse(userIdClaim, out var callerId) && callerId != request.UserId)
+            return Forbid();
+
         var isValid = await _twoFactorService.VerifyBackupCodeAsync(request.UserId, request.BackupCode);
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();

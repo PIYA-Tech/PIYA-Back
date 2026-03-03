@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,21 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
     private readonly PharmacyApiDbContext _context = context;
     private readonly IPasswordHasher _passwordHasher = passwordHasher;
     private readonly ILogger<TwoFactorAuthService> _logger = logger;
-    private readonly Dictionary<Guid, (string Code, DateTime ExpiresAt)> _tempCodes = new();
+
+    // Thread-safe in-memory store for SMS/Email OTP codes.
+    // Note: for multi-instance deployments replace this with IDistributedCache (Redis).
+    private static readonly ConcurrentDictionary<Guid, (string Code, DateTime ExpiresAt)> _tempCodes = new();
+
+    /// <summary>Purge expired entries from <see cref="_tempCodes"/> to prevent unbounded growth.</summary>
+    private static void PurgeExpiredTempCodes()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var key in _tempCodes.Keys)
+        {
+            if (_tempCodes.TryGetValue(key, out var entry) && entry.ExpiresAt <= now)
+                _tempCodes.TryRemove(key, out _);
+        }
+    }
 
     public async Task<(string SecretKey, string QrCodeUri, List<string> BackupCodes)> EnableTwoFactorAsync(Guid userId, TwoFactorMethod method = TwoFactorMethod.TOTP)
     {
@@ -147,6 +162,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         if (user?.TwoFactorAuth == null || !user.TwoFactorAuth.IsEnabled)
             return false;
 
+        PurgeExpiredTempCodes();
         var code = GenerateNumericCode();
         _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
 
@@ -162,6 +178,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         if (user?.TwoFactorAuth == null || !user.TwoFactorAuth.IsEnabled)
             return false;
 
+        PurgeExpiredTempCodes();
         var code = GenerateNumericCode();
         _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
 
@@ -219,7 +236,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         {
             if (tempCode.ExpiresAt > DateTime.UtcNow && tempCode.Code == code)
             {
-                _tempCodes.Remove(userId);
+                _tempCodes.TryRemove(userId, out _);
                 return true;
             }
         }

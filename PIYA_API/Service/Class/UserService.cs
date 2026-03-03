@@ -42,6 +42,13 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         if (password.Length < 8)
             throw new ArgumentException("Password must be at least 8 characters long");
 
+        // Require at least one digit and one non-alphanumeric character
+        if (!password.Any(char.IsDigit))
+            throw new ArgumentException("Password must contain at least one digit");
+
+        if (password.All(char.IsLetterOrDigit))
+            throw new ArgumentException("Password must contain at least one special character");
+
         if (string.IsNullOrWhiteSpace(user.Username))
             throw new ArgumentException("Username is required");
 

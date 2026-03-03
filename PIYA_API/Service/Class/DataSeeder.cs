@@ -44,6 +44,12 @@ public static class DataSeeder
                 continue;
             }
 
+            // Guard against a pre-existing row with the same email but a different username
+            // (e.g. a user manually created during testing) to avoid violating IX_Users_Email.
+            var existingByEmail = await db.Users.AnyAsync(u => u.Email == email);
+            if (existingByEmail)
+                continue;
+
             db.Users.Add(new User
             {
                 Id              = Guid.NewGuid(),

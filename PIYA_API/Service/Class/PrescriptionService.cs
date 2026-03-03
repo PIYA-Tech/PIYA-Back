@@ -216,11 +216,8 @@ public class PrescriptionService(
 
     public async Task<bool> IsExpiredAsync(Guid id)
     {
-        var prescription = await _context.Prescriptions.FindAsync(id);
-        if (prescription == null)
-        {
-            return true;
-        }
+        var prescription = await _context.Prescriptions.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Prescription {id} not found");
 
         return prescription.ExpiresAt < DateTime.UtcNow;
     }

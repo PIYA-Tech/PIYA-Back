@@ -33,12 +33,15 @@ public class FileUploadController(IFileUploadService fileUploadService) : Contro
                 return Unauthorized(new { message = "Invalid user token" });
             }
 
-            // Verify user can upload documents for the specified userId
-            // For now, users can only upload their own documents or doctors can upload for patients
+            // Verify user can upload documents for the specified userId:
+            // - Own documents always allowed
+            // - Doctors may upload on behalf of patients
+            // - Admins may upload for anyone
             if (request.UserId != uploadedByUserId)
             {
-                // TODO: Add role check - only doctors should be able to upload for other users
-                return Forbid();
+                var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+                if (callerRole != "Doctor" && callerRole != "Admin")
+                    return Forbid();
             }
 
             // Parse document type
@@ -114,10 +117,14 @@ public class FileUploadController(IFileUploadService fileUploadService) : Contro
                 return NotFound(new { message = "Document not found" });
             }
 
-            // Check access - user owns the document or is the uploader
-            if (document.UserId != userId && document.UploadedByUserId != userId)
+            // Check access:
+            // - Owner of the document
+            // - The person who uploaded it (e.g. doctor who uploaded for a patient)
+            // - Any Doctor or Admin (doctors need to view patient documents)
+            var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (document.UserId != userId && document.UploadedByUserId != userId
+                && callerRole != "Doctor" && callerRole != "Admin")
             {
-                // TODO: Add role check - doctors should be able to view patient documents
                 return Forbid();
             }
 
@@ -289,8 +296,10 @@ public class FileUploadController(IFileUploadService fileUploadService) : Contro
                 return Unauthorized(new { message = "Invalid user token" });
             }
 
-            // TODO: Add role check to ensure user is a doctor
-            // For now, any authenticated user can verify
+            // Only Doctors and Admins may verify documents
+            var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (callerRole != "Doctor" && callerRole != "Admin")
+                return Forbid();
 
             var success = await _fileUploadService.VerifyDocumentAsync(id, doctorUserId);
             

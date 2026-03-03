@@ -11,12 +11,20 @@ namespace PIYA_API.Controllers;
 [Authorize]
 public class PharmacyInventoryController(
     IInventoryService inventoryService,
+    IPharmacyStaffService pharmacyStaffService,
     ILogger<PharmacyInventoryController> logger) : ControllerBase
 {
     private readonly IInventoryService _inventoryService = inventoryService;
+    private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
     private readonly ILogger<PharmacyInventoryController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+    /// <summary>
+    /// Returns true when the caller is an Admin OR is active staff at the given pharmacy.
+    /// </summary>
+    private async Task<bool> CanAccessPharmacy(Guid pharmacyId) =>
+        User.IsInRole("Admin") || await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, GetUserId());
 
     #region Inventory Management
 
@@ -27,6 +35,8 @@ public class PharmacyInventoryController(
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<List<PharmacyInventory>>> GetPharmacyInventory(Guid pharmacyId)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
         try
         {
             var inventory = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
@@ -70,6 +80,8 @@ public class PharmacyInventoryController(
     public async Task<ActionResult<PharmacyInventory>> AddOrUpdateInventory(
         [FromBody] PharmacyInventoryRequest request)
     {
+        if (!await CanAccessPharmacy(request.PharmacyId))
+            return Forbid();
         try
         {
             var inventory = new PharmacyInventory
@@ -154,6 +166,8 @@ public class PharmacyInventoryController(
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<PharmacyInventory>> Restock([FromBody] RestockRequest request)
     {
+        if (!await CanAccessPharmacy(request.PharmacyId))
+            return Forbid();
         try
         {
             var userId = GetUserId();
@@ -184,6 +198,8 @@ public class PharmacyInventoryController(
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<PharmacyInventory>> DecreaseStock([FromBody] DecreaseStockRequest request)
     {
+        if (!await CanAccessPharmacy(request.PharmacyId))
+            return Forbid();
         try
         {
             var userId = GetUserId();
@@ -346,6 +362,8 @@ public class PharmacyInventoryController(
         [FromQuery] DateTime? startDate = null,
         [FromQuery] DateTime? endDate = null)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
         try
         {
             var history = await _inventoryService.GetPharmacyStockHistoryAsync(pharmacyId, startDate, endDate);
@@ -369,6 +387,8 @@ public class PharmacyInventoryController(
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<List<PharmacyInventory>>> GetLowStockItems(Guid pharmacyId)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
         try
         {
             var items = await _inventoryService.GetLowStockItemsAsync(pharmacyId);
@@ -390,6 +410,8 @@ public class PharmacyInventoryController(
         Guid pharmacyId,
         [FromQuery] int days = 30)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
         try
         {
             var items = await _inventoryService.GetExpiringItemsAsync(pharmacyId, days);
@@ -409,6 +431,8 @@ public class PharmacyInventoryController(
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<Dictionary<Guid, int>>> GetReorderSuggestions(Guid pharmacyId)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
         try
         {
             var suggestions = await _inventoryService.GetReorderSuggestionsAsync(pharmacyId);

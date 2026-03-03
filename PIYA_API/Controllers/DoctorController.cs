@@ -7,10 +7,22 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class DoctorController(IDoctorProfileService doctorProfileService, ILogger<DoctorController> logger) : ControllerBase
 {
     private readonly IDoctorProfileService _doctorProfileService = doctorProfileService;
     private readonly ILogger<DoctorController> _logger = logger;
+
+    /// <summary>
+    /// Strips sensitive license fields from a <see cref="DoctorProfile"/> before returning it
+    /// to unauthenticated / public callers.
+    /// </summary>
+    private static DoctorProfile StripSensitiveFields(DoctorProfile doctor)
+    {
+        doctor.LicenseNumber = string.Empty;
+        doctor.LicenseAuthority = string.Empty;
+        return doctor;
+    }
 
     /// <summary>
     /// Search doctors by specialization
@@ -22,7 +34,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.SearchBySpecializationAsync(specialization);
-            return Ok(doctors);
+            return Ok(doctors.Select(StripSensitiveFields).ToList());
         }
         catch (Exception ex)
         {
@@ -41,7 +53,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.GetAvailableDoctorsAsync(specialization);
-            return Ok(doctors);
+            return Ok(doctors.Select(StripSensitiveFields).ToList());
         }
         catch (Exception ex)
         {
@@ -65,7 +77,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
                 return NotFound(new { error = "Doctor profile not found" });
             }
 
-            return Ok(doctor);
+            return Ok(StripSensitiveFields(doctor));
         }
         catch (Exception ex)
         {
@@ -84,7 +96,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(hospitalId);
-            return Ok(doctors);
+            return Ok(doctors.Select(StripSensitiveFields).ToList());
         }
         catch (Exception ex)
         {

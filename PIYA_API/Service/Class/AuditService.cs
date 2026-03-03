@@ -106,34 +106,53 @@ public class AuditService(PharmacyApiDbContext context, ILogger<AuditService> lo
 
     public async Task<List<AuditLog>> GetLogsByActionAsync(string action, int pageNumber = 1, int pageSize = 50)
     {
-        return await _context.AuditLogs
+        var logs = await _context.AuditLogs
+            .Include(a => a.User)
             .Where(a => a.Action == action)
             .OrderByDescending(a => a.CreatedAt)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
-            .Include(a => a.User)
+            .AsNoTracking()
             .ToListAsync();
+
+        // Strip sensitive fields from loaded User navigation before returning
+        foreach (var log in logs.Where(l => l.User != null))
+            log.User!.PasswordHash = string.Empty;
+
+        return logs;
     }
 
     public async Task<List<AuditLog>> GetLogsInDateRangeAsync(DateTime startDate, DateTime endDate, int pageNumber = 1, int pageSize = 50)
     {
-        return await _context.AuditLogs
+        var logs = await _context.AuditLogs
+            .Include(a => a.User)
             .Where(a => a.CreatedAt >= startDate && a.CreatedAt <= endDate)
             .OrderByDescending(a => a.CreatedAt)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
-            .Include(a => a.User)
+            .AsNoTracking()
             .ToListAsync();
+
+        foreach (var log in logs.Where(l => l.User != null))
+            log.User!.PasswordHash = string.Empty;
+
+        return logs;
     }
 
     public async Task<List<AuditLog>> GetFailedSecurityEventsAsync(int pageNumber = 1, int pageSize = 50)
     {
-        return await _context.AuditLogs
+        var logs = await _context.AuditLogs
+            .Include(a => a.User)
             .Where(a => !a.IsSuccess && (a.Action.Contains("Login") || a.Action.Contains("Auth") || a.Action.Contains("2FA")))
             .OrderByDescending(a => a.CreatedAt)
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
-            .Include(a => a.User)
+            .AsNoTracking()
             .ToListAsync();
+
+        foreach (var log in logs.Where(l => l.User != null))
+            log.User!.PasswordHash = string.Empty;
+
+        return logs;
     }
 }

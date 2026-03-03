@@ -51,6 +51,14 @@ namespace PIYA_API.Data
                 .HasForeignKey<TwoFactorAuth>(t => t.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // Index on Token.RefreshToken for fast refresh lookups
+            modelBuilder.Entity<Token>()
+                .HasIndex(t => t.RefreshToken);
+
+            // Index on Token.UserId so per-user purge on login is O(log n) not a full-table scan
+            modelBuilder.Entity<Token>()
+                .HasIndex(t => t.UserId);
+
             // User - DoctorProfile (One-to-One)
             modelBuilder.Entity<DoctorProfile>()
                 .HasOne(dp => dp.User)

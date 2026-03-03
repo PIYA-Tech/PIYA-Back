@@ -9,6 +9,9 @@ public class Token
     public DateTime CreationTime { get; set; }
     public string DeviceInfo { get; set; } = string.Empty;
 
+    /// <summary>FK to the owning User — enables O(1) purge on login without parsing every JWT row.</summary>
+    public Guid? UserId { get; set; }
+
     public bool IsExpired()
     {
         return DateTime.UtcNow >= ExpiresAt;

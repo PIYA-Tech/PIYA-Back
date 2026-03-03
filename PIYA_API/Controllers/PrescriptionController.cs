@@ -12,10 +12,12 @@ namespace PIYA_API.Controllers;
 public class PrescriptionController(
     IPrescriptionService prescriptionService,
     IQRService qrService,
+    IPharmacyStaffService pharmacyStaffService,
     ILogger<PrescriptionController> logger) : ControllerBase
 {
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
     private readonly IQRService _qrService = qrService;
+    private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
     private readonly ILogger<PrescriptionController> _logger = logger;
 
     /// <summary>
@@ -235,6 +237,14 @@ public class PrescriptionController(
     {
         try
         {
+            // Ensure the calling pharmacist is actually staff at the requested pharmacy
+            if (!User.IsInRole("Admin"))
+            {
+                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(request.PharmacyId, callerId))
+                    return Forbid();
+            }
+
             var fulfilled = await _prescriptionService.FulfillPrescriptionAsync(id, request.PharmacyId);
             return Ok(fulfilled);
         }

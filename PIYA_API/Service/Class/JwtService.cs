@@ -26,9 +26,9 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         return tokenObj == null ? Guid.Empty : tokenObj.Id;
     }
 
-    public TokenResponse? GenerateSecurityToken(string username)
+    public async Task<TokenResponse?> GenerateSecurityToken(string username)
     {
-        var user = _dbContext.Users.FirstOrDefault(u => u.Username == username);
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
         if (user == null)
         {
             return null;
@@ -70,40 +70,22 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
 
         var jwtToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
 
-        // Remove all previous tokens for this user to prevent unbounded table growth
-        var oldTokens = _dbContext.Tokens
-            .Where(t => t.AccessToken != null &&
-                        _dbContext.Users.Any(u => u.Username == username &&
-                            _dbContext.Tokens.Any(ot => ot.AccessToken == t.AccessToken)))
-            .ToList();
-        // Simpler: remove tokens whose JWT sub matches this user
-        // We store token linked to user via JWT claim — purge by parsing the sub claim
-        var existingTokens = _dbContext.Tokens
-            .AsEnumerable()
-            .Where(t =>
-            {
-                try
-                {
-                    var handler2 = new JwtSecurityTokenHandler();
-                    if (!handler2.CanReadToken(t.AccessToken)) return false;
-                    var parsed = handler2.ReadJwtToken(t.AccessToken);
-                    var sub = parsed.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-                    return sub == user.Id.ToString();
-                }
-                catch { return false; }
-            })
-            .ToList();
+        // Remove all previous tokens for this user via the indexed UserId column (O(log n))
+        var existingTokens = await _dbContext.Tokens
+            .Where(t => t.UserId == user.Id)
+            .ToListAsync();
 
         if (existingTokens.Count > 0)
         {
             _dbContext.Tokens.RemoveRange(existingTokens);
         }
 
-        // Save new token
+        // Save new token — stamp UserId so future purges are index-driven
         var refreshToken = GenerateRefreshToken();
         var tokenEntity = new Token
         {
             Id = Guid.NewGuid(),
+            UserId = user.Id,
             AccessToken = jwtToken,
             RefreshToken = refreshToken,
             ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
@@ -112,7 +94,7 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         };
 
         _dbContext.Tokens.Add(tokenEntity);
-        _dbContext.SaveChanges();
+        await _dbContext.SaveChangesAsync();
 
         return new TokenResponse
         {
@@ -130,7 +112,7 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         return Convert.ToBase64String(randomBytes);
     }
 
-    public async Task<string?> RefreshAccessToken(string refreshToken)
+    public async Task<TokenResponse?> RefreshAccessToken(string refreshToken)
     {
         var tokenEntity = await _dbContext.Tokens
             .FirstOrDefaultAsync(t => t.RefreshToken == refreshToken);
@@ -146,17 +128,13 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
             return null;
         }
 
-        // Find user by old token
-        var handler = new JwtSecurityTokenHandler();
-        var jwtToken = handler.ReadJwtToken(tokenEntity.AccessToken);
-        var username = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value;
-
-        if (string.IsNullOrEmpty(username))
-        {
-            return null;
-        }
-
-        var user = _dbContext.Users.FirstOrDefault(u => u.Username == username);
+        // Find user — prefer the indexed UserId FK, fall back to JWT claim for legacy rows without UserId
+        User? user = tokenEntity.UserId.HasValue
+            ? await _dbContext.Users.FindAsync(tokenEntity.UserId.Value)
+            : await _dbContext.Users.FirstOrDefaultAsync(u =>
+                u.Username == new JwtSecurityTokenHandler()
+                    .ReadJwtToken(tokenEntity.AccessToken)
+                    .Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)!.Value);
         if (user == null) return null;
 
         // Build a new access token directly (without inserting a new Token row)
@@ -192,17 +170,39 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         var newAccessToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
         var newExpiry = DateTime.UtcNow.AddMinutes(expirationMinutes);
 
-        // Update the existing token row in place — no orphaned rows
+        // Rotate the refresh token — generate a fresh one so the old value is invalidated
+        var newRefreshToken = GenerateRefreshToken();
+
+        // Update the existing token row in place — new access token + rotated refresh token
+        tokenEntity.UserId = user.Id;   // backfill for legacy rows that predate the UserId column
         tokenEntity.AccessToken = newAccessToken;
+        tokenEntity.RefreshToken = newRefreshToken;
         tokenEntity.ExpiresAt = newExpiry;
+        // Reset creation time so the 7-day refresh window starts fresh
+        tokenEntity.CreationTime = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
 
-        return newAccessToken;
+        return new TokenResponse
+        {
+            AccessToken = newAccessToken,
+            RefreshToken = newRefreshToken,
+            ExpiresAt = newExpiry
+        };
     }
 
-    public string? ValidateToken(string token)
+    public async Task RevokeRefreshTokenAsync(string refreshToken)
     {
+        var tokenEntity = await _dbContext.Tokens
+            .FirstOrDefaultAsync(t => t.RefreshToken == refreshToken);
+        if (tokenEntity != null)
+        {
+            _dbContext.Tokens.Remove(tokenEntity);
+            await _dbContext.SaveChangesAsync();
+        }
+    }
+
+    public string? ValidateToken(string token)    {
         try
         {
             var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
