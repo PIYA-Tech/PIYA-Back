@@ -33,48 +33,51 @@ public static class DataSeeder
         // ── Users ──────────────────────────────────────────────────────────────
         foreach (var (username, first, last, email, phone, role) in DemoUsers)
         {
-            var existing = await db.Users.SingleOrDefaultAsync(u => u.Username == username);
-            if (existing != null)
+            // Use email as the canonical lookup key (it has the unique index).
+            // This survives re-runs, username renames, and test-created collisions.
+            var user = await db.Users.SingleOrDefaultAsync(u => u.Email == email);
+
+            if (user == null)
             {
-                if (!hasher.VerifyPassword(DemoPassword, existing.PasswordHash))
+                user = new User
                 {
-                    existing.PasswordHash = DemoHash;
-                    existing.UpdatedAt    = DateTime.UtcNow;
-                }
-                continue;
+                    Id              = Guid.NewGuid(),
+                    Email           = email,
+                    // Required members — overwritten by the reconcile block below
+                    Username        = username,
+                    FirstName       = first,
+                    LastName        = last,
+                    PhoneNumber     = phone,
+                    Role            = role,
+                    PasswordHash    = DemoHash,
+                    DateOfBirth     = new DateTime(1990, 1, 1),
+                    IsActive        = true,
+                    IsEmailVerified = true,
+                    IsPhoneVerified = true,
+                    CreatedAt       = DateTime.UtcNow,
+                    UpdatedAt       = DateTime.UtcNow,
+                    TokensInfo = new Token
+                    {
+                        Id           = Guid.NewGuid(),
+                        AccessToken  = string.Empty,
+                        RefreshToken = string.Empty,
+                        ExpiresAt    = DateTime.UtcNow,
+                        DeviceInfo   = "Seed",
+                    },
+                };
+                db.Users.Add(user);
             }
 
-            // Guard against a pre-existing row with the same email but a different username
-            // (e.g. a user manually created during testing) to avoid violating IX_Users_Email.
-            var existingByEmail = await db.Users.AnyAsync(u => u.Email == email);
-            if (existingByEmail)
-                continue;
+            // Always reconcile mutable fields so repeated runs stay consistent.
+            user.Username    = username;
+            user.FirstName   = first;
+            user.LastName    = last;
+            user.PhoneNumber = phone;
+            user.Role        = role;
+            user.UpdatedAt   = DateTime.UtcNow;
 
-            db.Users.Add(new User
-            {
-                Id              = Guid.NewGuid(),
-                Username        = username,
-                FirstName       = first,
-                LastName        = last,
-                Email           = email,
-                PhoneNumber     = phone,
-                DateOfBirth     = new DateTime(1990, 1, 1),
-                Role            = role,
-                PasswordHash    = DemoHash,
-                IsActive        = true,
-                IsEmailVerified = true,
-                IsPhoneVerified = true,
-                CreatedAt       = DateTime.UtcNow,
-                UpdatedAt       = DateTime.UtcNow,
-                TokensInfo = new Token
-                {
-                    Id           = Guid.NewGuid(),
-                    AccessToken  = string.Empty,
-                    RefreshToken = string.Empty,
-                    ExpiresAt    = DateTime.UtcNow,
-                    DeviceInfo   = "Seed",
-                },
-            });
+            if (!hasher.VerifyPassword(DemoPassword, user.PasswordHash))
+                user.PasswordHash = DemoHash;
         }
         await db.SaveChangesAsync();
 

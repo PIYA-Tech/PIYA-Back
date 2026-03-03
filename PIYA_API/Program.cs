@@ -370,8 +370,13 @@ app.MapControllers();
     // Map SignalR Hubs
     app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub");
 
-    // Seed demo users (no-op if they already exist)
-    await DataSeeder.SeedAsync(app.Services);
+    // Seed demo users only when explicitly enabled.
+    // Set ENABLE_DEMO_SEEDING=true in CI test steps and local dev; never in production.
+    var seedEnabled = string.Equals(
+        Environment.GetEnvironmentVariable("ENABLE_DEMO_SEEDING"), "true",
+        StringComparison.OrdinalIgnoreCase);
+    if (seedEnabled)
+        await DataSeeder.SeedAsync(app.Services);
 
     app.Run();
 }
