@@ -29,11 +29,16 @@ public class AuthController(
 
     try
     {
-        // Parse role coming from client (string) into UserRole enum. Default to Patient on parse failure.
+        // Role is always Patient on self-registration. Admins use POST /{id}/assign-role.
         UserRole roleEnum = UserRole.Patient;
-        if (!string.IsNullOrWhiteSpace(request.Role))
+
+        // Validate DateOfBirth if provided
+        DateTime? parsedDob = null;
+        if (!string.IsNullOrWhiteSpace(request.DateOfBirth))
         {
-            Enum.TryParse<UserRole>(request.Role, true, out roleEnum);
+            if (!DateTime.TryParse(request.DateOfBirth, out var dob))
+                return BadRequest(new { message = "Invalid DateOfBirth format. Expected ISO 8601 (yyyy-MM-dd)." });
+            parsedDob = dob;
         }
 
         var user = new User
@@ -45,7 +50,7 @@ public class AuthController(
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
-                DateOfBirth = DateTime.TryParse(request.DateOfBirth, out var dob) ? dob : DateTime.MinValue,
+                DateOfBirth = parsedDob ?? DateTime.UtcNow.AddYears(-18),
                 Role = roleEnum,
                 TokensInfo = new Token
                 {

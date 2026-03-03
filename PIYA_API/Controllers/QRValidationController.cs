@@ -10,10 +10,12 @@ namespace PIYA_API.Controllers;
 public class QRValidationController(
     IQRService qrService,
     IPrescriptionService prescriptionService,
+    IPharmacyStaffService pharmacyStaffService,
     ILogger<QRValidationController> logger) : ControllerBase
 {
     private readonly IQRService _qrService = qrService;
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
     private readonly ILogger<QRValidationController> _logger = logger;
 
     /// <summary>
@@ -102,6 +104,28 @@ public class QRValidationController(
             if (prescription == null)
             {
                 return NotFound(new { error = "Prescription not found" });
+            }
+
+            // Resolve the pharmacist's pharmacy and fulfill the prescription
+            var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(pharmacistId, activeOnly: true);
+            var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
+            if (pharmacyId.HasValue)
+            {
+                try
+                {
+                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
+                        prescriptionId, ex.Message);
+                    // Non-fatal: return the prescription details even if fulfillment failed (e.g. already fulfilled)
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Pharmacist {PharmacistId} has no active pharmacy assignment; prescription {PrescriptionId} not marked fulfilled",
+                    pharmacistId, prescriptionId);
             }
 
             return Ok(new PrescriptionScanResponse

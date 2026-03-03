@@ -3,7 +3,7 @@ namespace PIYA_API.Service.Interface;
 
 public interface IUserService
 {
-    public Task<User> Authenticate(string username, string password);
+    public Task<User?> Authenticate(string username, string password);
     public Task<User> GetById(Guid id);
     public Task<User?> GetByIdAsync(Guid id);
     public Task<User> Create(User user, string password);

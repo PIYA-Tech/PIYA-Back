@@ -24,10 +24,20 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
         try
         {
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
-            
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            // Patients can only book for themselves; only Admins may override the PatientId
+            Guid patientId;
+            if (userRole == "Patient")
+                patientId = userId;
+            else if (userRole == "Admin" && request.PatientId.HasValue)
+                patientId = request.PatientId.Value;
+            else
+                patientId = request.PatientId ?? userId;
+
             var appointment = new Appointment
             {
-                PatientId = request.PatientId ?? userId, // If patient books, use their ID
+                PatientId = patientId,
                 DoctorId = request.DoctorId,
                 HospitalId = request.HospitalId,
                 ScheduledAt = request.ScheduledAt,
@@ -124,16 +134,24 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     }
 
     /// <summary>
-    /// Get doctor's schedule for a specific date
+    /// Get doctor's schedule for a specific date (authenticated users only)
     /// </summary>
     [HttpGet("doctor/{doctorId}/schedule")]
-    [AllowAnonymous]
-    public async Task<ActionResult<List<Appointment>>> GetDoctorSchedule(Guid doctorId, [FromQuery] DateTime? date = null)
+    [Authorize]
+    public async Task<ActionResult<List<object>>> GetDoctorSchedule(Guid doctorId, [FromQuery] DateTime? date = null)
     {
         try
         {
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(doctorId, date ?? DateTime.UtcNow);
-            return Ok(appointments);
+            // Return only availability-relevant fields — never expose patient details
+            var slots = appointments.Select(a => new
+            {
+                a.Id,
+                a.ScheduledAt,
+                a.DurationMinutes,
+                a.Status
+            }).ToList();
+            return Ok(slots);
         }
         catch (Exception ex)
         {

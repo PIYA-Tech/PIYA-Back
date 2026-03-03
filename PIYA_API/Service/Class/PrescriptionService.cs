@@ -11,11 +11,13 @@ public class PrescriptionService(
     PharmacyApiDbContext context,
     IAuditService auditService,
     IQRService qrService,
+    IConfiguration configuration,
     ILogger<PrescriptionService> logger) : IPrescriptionService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IAuditService _auditService = auditService;
     private readonly IQRService _qrService = qrService;
+    private readonly IConfiguration _configuration = configuration;
     private readonly ILogger<PrescriptionService> _logger = logger;
 
     public async Task<Prescription> CreatePrescriptionAsync(Prescription prescription)
@@ -128,9 +130,9 @@ public class PrescriptionService(
     public async Task<Prescription> FulfillPrescriptionAsync(Guid prescriptionId, Guid pharmacyId)
     {
         var prescription = await GetByIdAsync(prescriptionId) ?? throw new InvalidOperationException("Prescription not found");
-        if (prescription.Status != PrescriptionStatus.Active)
+        if (prescription.Status != PrescriptionStatus.Active && prescription.Status != PrescriptionStatus.PartiallyFulfilled)
         {
-            throw new InvalidOperationException("Prescription is not active");
+            throw new InvalidOperationException($"Cannot fulfill a prescription with status '{prescription.Status}'");
         }
 
         prescription.Status = PrescriptionStatus.Fulfilled;
@@ -239,7 +241,10 @@ public class PrescriptionService(
     private string GenerateDigitalSignature(Prescription prescription)
     {
         var data = $"{prescription.Id}|{prescription.PatientId}|{prescription.DoctorId}|{prescription.IssuedAt:O}";
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes("PRESCRIPTION_SIGNATURE_KEY"));
+        // Use the configured QR signing key so the signature differs per environment
+        var signingKey = _configuration["Security:QrSigningKey"]
+            ?? throw new InvalidOperationException("Security:QrSigningKey is not configured");
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(signingKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
         return Convert.ToBase64String(hash);
     }

@@ -70,7 +70,36 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
 
         var jwtToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
 
-        // Save token to database
+        // Remove all previous tokens for this user to prevent unbounded table growth
+        var oldTokens = _dbContext.Tokens
+            .Where(t => t.AccessToken != null &&
+                        _dbContext.Users.Any(u => u.Username == username &&
+                            _dbContext.Tokens.Any(ot => ot.AccessToken == t.AccessToken)))
+            .ToList();
+        // Simpler: remove tokens whose JWT sub matches this user
+        // We store token linked to user via JWT claim — purge by parsing the sub claim
+        var existingTokens = _dbContext.Tokens
+            .AsEnumerable()
+            .Where(t =>
+            {
+                try
+                {
+                    var handler2 = new JwtSecurityTokenHandler();
+                    if (!handler2.CanReadToken(t.AccessToken)) return false;
+                    var parsed = handler2.ReadJwtToken(t.AccessToken);
+                    var sub = parsed.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+                    return sub == user.Id.ToString();
+                }
+                catch { return false; }
+            })
+            .ToList();
+
+        if (existingTokens.Count > 0)
+        {
+            _dbContext.Tokens.RemoveRange(existingTokens);
+        }
+
+        // Save new token
         var refreshToken = GenerateRefreshToken();
         var tokenEntity = new Token
         {
@@ -79,7 +108,7 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
             RefreshToken = refreshToken,
             ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
             CreationTime = DateTime.UtcNow,
-            DeviceInfo = "Web" // Can be enhanced to capture actual device info
+            DeviceInfo = "Web"
         };
 
         _dbContext.Tokens.Add(tokenEntity);
@@ -127,21 +156,49 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
             return null;
         }
 
-        // Generate new access token
-        var newTokenResponse = GenerateSecurityToken(username);
+        var user = _dbContext.Users.FirstOrDefault(u => u.Username == username);
+        if (user == null) return null;
 
-        if (newTokenResponse == null)
+        // Build a new access token directly (without inserting a new Token row)
+        var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
+        var issuer = _configuration["Jwt:Issuer"] ?? DefaultIssuer;
+        var audience = _configuration["Jwt:Audience"] ?? DefaultAudience;
+        var expirationMinutes = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var mins)
+            ? mins : DefaultExpirationMinutes;
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
         {
-            return null;
-        }
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.Username),
+            new Claim(ClaimTypes.Email, user.Email),
+            new Claim(ClaimTypes.Role, user.Role.ToString()),
+            new Claim("firstName", user.FirstName),
+            new Claim("lastName", user.LastName),
+            new Claim("role", user.Role.ToString())
+        };
 
-        // Update token entity with new access token
-        tokenEntity.AccessToken = newTokenResponse.AccessToken;
-        tokenEntity.ExpiresAt = newTokenResponse.ExpiresAt;
+        var tokenDescriptor = new JwtSecurityToken(
+            issuer: issuer,
+            audience: audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
+            signingCredentials: credentials
+        );
+
+        var newAccessToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
+        var newExpiry = DateTime.UtcNow.AddMinutes(expirationMinutes);
+
+        // Update the existing token row in place — no orphaned rows
+        tokenEntity.AccessToken = newAccessToken;
+        tokenEntity.ExpiresAt = newExpiry;
 
         await _dbContext.SaveChangesAsync();
 
-        return newTokenResponse.AccessToken;
+        return newAccessToken;
     }
 
     public string? ValidateToken(string token)

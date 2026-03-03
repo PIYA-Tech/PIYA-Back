@@ -9,9 +9,13 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PrescriptionController(IPrescriptionService prescriptionService, ILogger<PrescriptionController> logger) : ControllerBase
+public class PrescriptionController(
+    IPrescriptionService prescriptionService,
+    IQRService qrService,
+    ILogger<PrescriptionController> logger) : ControllerBase
 {
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IQRService _qrService = qrService;
     private readonly ILogger<PrescriptionController> _logger = logger;
 
     /// <summary>
@@ -19,18 +23,31 @@ public class PrescriptionController(IPrescriptionService prescriptionService, IL
     /// </summary>
     [HttpPost]
     [Authorize(Roles = "Doctor,Admin")]
-    public async Task<ActionResult<Prescription>> Create([FromBody] Prescription prescription)
+    public async Task<ActionResult<Prescription>> Create([FromBody] CreatePrescriptionDto dto)
     {
         try
         {
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            // If doctor, set their ID as prescriber
-            if (userRole == "Doctor")
+            var prescription = new Prescription
             {
-                prescription.DoctorId = userId;
-            }
+                PatientId = dto.PatientId,
+                AppointmentId = dto.AppointmentId,
+                DoctorId = userRole == "Doctor" ? userId : dto.DoctorId,
+                Diagnosis = dto.Diagnosis,
+                Instructions = dto.Instructions,
+                ExpiresAt = dto.ExpiresAt,
+                Items = dto.Items?.Select(i => new PrescriptionItem
+                {
+                    MedicationId = i.MedicationId,
+                    Dosage = i.Dosage,
+                    Frequency = i.Frequency,
+                    Duration = i.Duration,
+                    Instructions = i.Instructions,
+                    Quantity = i.Quantity
+                }).ToList() ?? []
+            };
 
             var created = await _prescriptionService.CreatePrescriptionAsync(prescription);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
@@ -173,7 +190,7 @@ public class PrescriptionController(IPrescriptionService prescriptionService, IL
     }
 
     /// <summary>
-    /// Validate QR code (Pharmacist only)
+    /// Validate QR code and mark it as used (Pharmacist only — one-time scan)
     /// </summary>
     [HttpPost("validate-qr")]
     [Authorize(Roles = "Pharmacist,Admin")]
@@ -181,10 +198,23 @@ public class PrescriptionController(IPrescriptionService prescriptionService, IL
     {
         try
         {
-            var prescription = await _prescriptionService.ValidateQrCodeAsync(request.QrToken);
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            // ValidateAndUsePrescriptionQrTokenAsync marks the token as used (anti-replay)
+            var (isValid, prescriptionId, errorMessage) = await _qrService.ValidateAndUsePrescriptionQrTokenAsync(
+                request.QrToken, userId, ipAddress, userAgent);
+
+            if (!isValid)
+            {
+                return BadRequest(new { error = errorMessage });
+            }
+
+            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
             if (prescription == null)
             {
-                return NotFound(new { error = "Invalid or expired QR code" });
+                return NotFound(new { error = "Prescription not found" });
             }
 
             return Ok(prescription);
@@ -339,3 +369,25 @@ public class PrescriptionController(IPrescriptionService prescriptionService, IL
 public record ValidateQrRequest(string QrToken);
 
 public record FulfillPrescriptionRequest(Guid PharmacyId);
+
+public class CreatePrescriptionDto
+{
+    public Guid PatientId { get; set; }
+    public Guid? AppointmentId { get; set; }
+    /// <summary>Only used when caller is Admin. Ignored for Doctor role (their ID is used).</summary>
+    public Guid DoctorId { get; set; }
+    public string? Diagnosis { get; set; }
+    public string? Instructions { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public List<CreatePrescriptionItemDto>? Items { get; set; }
+}
+
+public class CreatePrescriptionItemDto
+{
+    public Guid MedicationId { get; set; }
+    public required string Dosage { get; set; }
+    public required string Frequency { get; set; }
+    public required string Duration { get; set; }
+    public int Quantity { get; set; }
+    public string? Instructions { get; set; }
+}

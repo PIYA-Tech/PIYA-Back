@@ -150,4 +150,26 @@ public class MedicationController(IMedicationService medicationService, ILogger<
             return StatusCode(500, new { error = "Failed to search by ingredient" });
         }
     }
+
+    /// <summary>
+    /// Soft-delete (deactivate) a medication — Admin only
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        try
+        {
+            var success = await _medicationService.DeleteAsync(id);
+            if (!success)
+                return NotFound(new { error = "Medication not found" });
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting medication {MedicationId}", id);
+            return StatusCode(500, new { error = "Failed to delete medication" });
+        }
+    }
 }

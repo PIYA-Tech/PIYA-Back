@@ -177,14 +177,10 @@ public class QRService : IQRService
                 return (false, Guid.Empty, "Failed to mark token as used");
             }
 
-            // Update prescription status to Fulfilled
-            var prescription = await _context.Prescriptions.FindAsync(entityId);
-            if (prescription != null)
-            {
-                prescription.Status = PrescriptionStatus.Fulfilled;
-                prescription.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-            }
+            // NOTE: The caller (QRValidationController) is responsible for calling
+            // IPrescriptionService.FulfillPrescriptionAsync to update the prescription status,
+            // trigger item-level fulfillment, and write the audit trail.
+            // We intentionally do NOT update prescription.Status here to avoid a duplicate save.
 
             // Audit log
             await _auditService.LogEntityActionAsync("PRESCRIPTION_QR_SCANNED", "Prescription", entityId.ToString(), pharmacistUserId, 
@@ -248,12 +244,7 @@ public class QRService : IQRService
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Token not found in database");
             }
 
-            // Increment validation attempts
-            dbToken.ValidationAttempts++;
-            dbToken.LastValidationAttempt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            // Check if revoked
+            // Check if revoked before touching the counter
             if (dbToken.IsRevoked)
             {
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token has been revoked: {dbToken.RevocationReason}");
@@ -270,6 +261,11 @@ public class QRService : IQRService
             {
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token expired at {expiresAt:yyyy-MM-dd HH:mm:ss} UTC");
             }
+
+            // Only increment validation attempts on structurally-valid, non-revoked, non-expired tokens
+            dbToken.ValidationAttempts++;
+            dbToken.LastValidationAttempt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
 
             return (true, entityId, entityType, expiresAt, string.Empty);
         }

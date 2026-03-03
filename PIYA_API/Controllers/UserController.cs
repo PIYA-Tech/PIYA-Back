@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using System.Security.Claims;
 
 namespace PIYA_API.Controllers;
 
@@ -51,6 +52,9 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     {
         try
         {
+            var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            if (callerId != id && !User.IsInRole("Admin"))
+                return Forbid();
             var user = new User
             {
                 Id = id,
@@ -98,6 +102,9 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     {
         try
         {
+            var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            if (callerId != id && !User.IsInRole("Admin"))
+                return Forbid();
             await _userService.Delete(id);
             return Ok(new { message = "User deleted successfully" });
         }
@@ -117,6 +124,10 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     {
         try
         {
+            var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            if (callerId != id && !User.IsInRole("Admin"))
+                return Forbid();
+
             var user = await _userService.GetById(id);
             
             // Verify old password

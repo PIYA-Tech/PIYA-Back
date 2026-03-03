@@ -3,9 +3,11 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace PIYA_API.Middleware;
@@ -41,16 +43,6 @@ public class RateLimitingMiddleware
         };
         // Secret token required for bypass headers — must be set via env/config to be usable
         _bypassSecret = configuration["RateLimiting:BypassSecret"];
-
-        // Cleanup task - runs every 5 minutes
-        Task.Run(async () =>
-        {
-            while (true)
-            {
-                await Task.Delay(TimeSpan.FromMinutes(5));
-                CleanupExpiredEntries();
-            }
-        });
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -315,7 +307,7 @@ public class RateLimitingMiddleware
         return $"ip:{ip}";
     }
 
-    private static void CleanupExpiredEntries()
+    internal static void CleanupExpiredEntries()
     {
         var keysToRemove = _clients
             .Where(kvp => !kvp.Value.Requests.Any())
@@ -332,4 +324,25 @@ public class RateLimitingMiddleware
 public class ClientRateLimitInfo
 {
     public List<DateTime> Requests { get; } = new();
+}
+
+/// <summary>
+/// Hosted service that periodically purges stale entries from the rate-limit in-memory store.
+/// Replaces the fire-and-forget Task.Run loop that was previously in the middleware constructor.
+/// </summary>
+public class RateLimitCleanupService(ILogger<RateLimitCleanupService> logger) : BackgroundService
+{
+    private readonly ILogger<RateLimitCleanupService> _logger = logger;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("RateLimitCleanupService started.");
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            RateLimitingMiddleware.CleanupExpiredEntries();
+            _logger.LogDebug("Rate-limit cleanup executed.");
+        }
+        _logger.LogInformation("RateLimitCleanupService stopped.");
+    }
 }

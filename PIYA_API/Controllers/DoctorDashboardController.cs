@@ -419,7 +419,7 @@ public class DoctorDashboardController(
     /// Cancel appointment
     /// </summary>
     [HttpPost("appointments/{id}/cancel")]
-    public async Task<ActionResult<Appointment>> CancelAppointment(Guid id, [FromBody] CancelAppointmentRequest request)
+    public async Task<ActionResult<Appointment>> CancelAppointment(Guid id, [FromBody] CancelAppointmentRequest? request = null)
     {
         try
         {
@@ -436,7 +436,8 @@ public class DoctorDashboardController(
                 return Forbid();
             }
 
-            var updated = await _appointmentService.CancelAppointmentAsync(id, userId, request.Reason);
+            var reason = request?.Reason ?? "Cancelled by doctor";
+            var updated = await _appointmentService.CancelAppointmentAsync(id, userId, reason);
             return Ok(updated);
         }
         catch (InvalidOperationException ex)
@@ -486,18 +487,15 @@ public class DoctorDashboardController(
                 UpdatedAt = DateTime.UtcNow
             };
 
-            // Create prescription first
-            var created = await _prescriptionService.CreatePrescriptionAsync(prescription);
-            
-            // Then add items if provided
+            // Populate items BEFORE save so EF Core persists them in the same transaction
             if (request.Items != null && request.Items.Any())
             {
                 foreach (var item in request.Items)
                 {
-                    created.Items.Add(new PrescriptionItem
+                    prescription.Items.Add(new PrescriptionItem
                     {
                         Id = Guid.NewGuid(),
-                        PrescriptionId = created.Id,
+                        PrescriptionId = prescription.Id,
                         MedicationId = item.MedicationId,
                         Dosage = item.Dosage,
                         Frequency = item.Frequency,
@@ -508,6 +506,8 @@ public class DoctorDashboardController(
                     });
                 }
             }
+
+            var created = await _prescriptionService.CreatePrescriptionAsync(prescription);
             
             return CreatedAtAction(nameof(GetPrescription), new { id = created.Id }, created);
         }

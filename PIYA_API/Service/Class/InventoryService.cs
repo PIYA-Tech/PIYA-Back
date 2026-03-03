@@ -178,6 +178,10 @@ public class InventoryService(
             throw new ArgumentException("Quantity must be positive", nameof(quantity));
         }
 
+        await using var tx = await _context.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead);
+        try
+        {
         var inventory = await _context.PharmacyInventories
             .Include(i => i.Batches.Where(b => b.IsActive))
             .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found");
@@ -211,7 +215,7 @@ public class InventoryService(
         if (remainingToDecrease > 0)
         {
             throw new InvalidOperationException(
-                $"Insufficient stock. Required: {quantity}, Available: {quantity - remainingToDecrease}");
+                $"Insufficient stock. Required: {quantity}, Available: {oldStock}");
         }
 
         inventory.QuantityInStock -= quantity;
@@ -232,9 +236,16 @@ public class InventoryService(
         );
 
         await _context.SaveChangesAsync();
+        await tx.CommitAsync();
         await CheckAndTriggerLowStockAlertAsync(inventory);
 
         return inventory;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<PharmacyInventory> IncreaseStockAsync(

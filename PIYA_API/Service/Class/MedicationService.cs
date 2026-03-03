@@ -88,7 +88,6 @@ public class MedicationService(
         searchTerm = searchTerm.ToLower();
         
         return await _context.Medications
-            .Where(m => m.IsAvailable)
             .Where(m => 
                 m.BrandName.ToLower().Contains(searchTerm) ||
                 m.GenericName.ToLower().Contains(searchTerm))
@@ -101,7 +100,6 @@ public class MedicationService(
         ingredient = ingredient.ToLower();
         
         return await _context.Medications
-            .Where(m => m.IsAvailable)
             .Where(m => m.ActiveIngredients.Any(i => i.ToLower().Contains(ingredient)))
             .OrderBy(m => m.BrandName)
             .ToListAsync();

@@ -75,6 +75,7 @@ builder.Services.Configure<FeaturesOptions>(
     builder.Configuration.GetSection(FeaturesOptions.SectionName));
 builder.Services.Configure<RateLimitingOptions>(
     builder.Configuration.GetSection(RateLimitingOptions.SectionName));
+builder.Services.AddHostedService<PIYA_API.Middleware.RateLimitCleanupService>();
 builder.Services.Configure<CachingOptions>(
     builder.Configuration.GetSection(CachingOptions.SectionName));
 
@@ -296,42 +297,34 @@ builder.Services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringS
 // Security hardening may need scoped services such as IAuditService; register scoped
 builder.Services.AddScoped<ISecurityHardeningService, SecurityHardeningService>();
 
-// Configure Swagger with JWT support
+// Configure Swagger with JWT support + file-upload operation filter (single registration)
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "PIYA Pharmacy API", Version = "v1" });
-    
-    // Add JWT Authentication to Swagger
+
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.",
+        Description = "JWT Authorization header. Enter 'Bearer {token}'",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
     });
-    
+
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
             },
             Array.Empty<string>()
         }
     });
+
+    // Support IFormFile / multipart file upload endpoints
+    c.OperationFilter<PIYA_API.Swagger.FileUploadOperationFilter>();
 });
-    // Register operation filter to support file uploads in Swagger (IFormFile)
-    builder.Services.Configure<Swashbuckle.AspNetCore.SwaggerGen.SwaggerGeneratorOptions>(opts => { });
-    builder.Services.AddSwaggerGen(c =>
-    {
-        c.OperationFilter<PIYA_API.Swagger.FileUploadOperationFilter>();
-    });
 
 var app = builder.Build();
 
@@ -365,13 +358,14 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-    app.UseAuthentication(); // Add this before UseAuthorization
-    app.UseAuthorization();
-    
-    // Add Global Exception Handling Middleware
-    app.UseMiddleware<PIYA_API.Middleware.GlobalExceptionHandlingMiddleware>();
-    
-    app.MapControllers();
+
+// Global exception handler must be first so it wraps everything downstream
+app.UseMiddleware<PIYA_API.Middleware.GlobalExceptionHandlingMiddleware>();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
 
     // Map SignalR Hubs
     app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub");

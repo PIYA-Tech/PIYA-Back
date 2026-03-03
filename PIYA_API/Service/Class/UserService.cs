@@ -10,7 +10,7 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
     private readonly PharmacyApiDbContext _dbContext = dbContext;
     private readonly IPasswordHasher _passwordHasher = passwordHasher;
 
-    public async Task<User> Authenticate(string username, string password)
+    public async Task<User?> Authenticate(string username, string password)
     {
         if (string.IsNullOrWhiteSpace(username))
             throw new ArgumentException("Username or email is required");
@@ -23,11 +23,11 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
 
         // User not found
         if (user == null)
-            return null!;
+            return null;
 
         // Verify password
         if (!_passwordHasher.VerifyPassword(password, user.PasswordHash))
-            return null!;
+            return null;
 
         // Authentication successful
         return user;
