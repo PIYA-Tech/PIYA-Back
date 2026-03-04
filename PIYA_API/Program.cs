@@ -171,7 +171,17 @@ builder.Services.AddCors(options =>
 
 // Configure JWT Authentication
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"] ?? 
-    throw new InvalidOperationException("JWT SecretKey is not configured");
+    throw new InvalidOperationException(
+        "Jwt:SecretKey is not configured. Set the PIYA__Jwt__SecretKey environment variable. " +
+        "Generate with: openssl rand -base64 64");
+
+if (jwtSecretKey.Length < 32)
+    throw new InvalidOperationException("Jwt:SecretKey must be at least 32 characters.");
+
+if (jwtSecretKey.Contains("REPLACE") || jwtSecretKey.Contains("CHANGE"))
+    throw new InvalidOperationException(
+        "Jwt:SecretKey must be changed from placeholder value. " +
+        "Generate with: openssl rand -base64 64");
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "PIYA_API";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "PIYA_Clients";
 
@@ -256,6 +266,13 @@ builder.Services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
 
 // Webhook Service
 builder.Services.AddHttpClient<IWebhookService, WebhookService>();
+
+// File Storage Service (S3 or local depending on Storage:Provider config)
+var storageProvider = builder.Configuration["Storage:Provider"] ?? "Local";
+if (storageProvider.Equals("S3", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddSingleton<IFileStorageService, S3FileStorageService>();
+else
+    builder.Services.AddSingleton<IFileStorageService, LocalFileStorageService>();
 
 // File Upload Service
 builder.Services.AddScoped<IFileUploadService, FileUploadService>();

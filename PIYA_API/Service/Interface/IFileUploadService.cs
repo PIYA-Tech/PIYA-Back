@@ -58,9 +58,9 @@ public interface IFileUploadService
     Task<bool> VerifyDocumentAsync(Guid id, Guid doctorUserId);
     
     /// <summary>
-    /// Get document file path
+    /// Get a short-lived presigned URL to access the document's binary content.
     /// </summary>
-    Task<string> GetDocumentPathAsync(Guid id);
+    Task<string> GetPresignedUrlAsync(Guid id, int expirySeconds = 300);
     
     /// <summary>
     /// Validate file type

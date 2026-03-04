@@ -9,37 +9,30 @@ namespace PIYA_API.Service.Class;
 public class FileUploadService : IFileUploadService
 {
     private readonly PharmacyApiDbContext _context;
-    private readonly IConfiguration _configuration;
-    private readonly string _storagePath;
+    private readonly IFileStorageService _fileStorage;
     private readonly long _maxFileSizeBytes;
     private readonly HashSet<string> _allowedMimeTypes;
 
-    public FileUploadService(PharmacyApiDbContext context, IConfiguration configuration)
+    public FileUploadService(
+        PharmacyApiDbContext context,
+        IConfiguration configuration,
+        IFileStorageService fileStorage)
     {
         _context = context;
-        _configuration = configuration;
-        
-        // Get storage configuration
-        _storagePath = _configuration["FileUpload:LocalStoragePath"] ?? "./uploads";
-        _maxFileSizeBytes = long.Parse(_configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
-        
-        // Allowed MIME types
+        _fileStorage = fileStorage;
+
+        _maxFileSizeBytes = long.Parse(configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
+
         _allowedMimeTypes = new HashSet<string>
         {
             "image/jpeg",
             "image/jpg",
             "image/png",
             "application/pdf",
-            "application/dicom", // Medical imaging format
+            "application/dicom",
             "image/tiff",
             "image/bmp"
         };
-        
-        // Ensure storage directory exists
-        if (!Directory.Exists(_storagePath))
-        {
-            Directory.CreateDirectory(_storagePath);
-        }
     }
 
     public async Task<MedicalDocument> UploadDocumentAsync(
@@ -54,23 +47,15 @@ public class FileUploadService : IFileUploadService
         Guid? appointmentId = null,
         Guid? prescriptionId = null)
     {
-        // Validate file type
         if (!IsValidFileType(contentType, fileName))
-        {
             throw new InvalidOperationException($"File type '{contentType}' is not allowed");
-        }
 
-        // Validate file size
         if (fileStream.Length > _maxFileSizeBytes)
-        {
-            throw new InvalidOperationException($"File size exceeds maximum allowed size of {_maxFileSizeBytes / (1024 * 1024)} MB");
-        }
+            throw new InvalidOperationException(
+                $"File size exceeds maximum allowed size of {_maxFileSizeBytes / (1024 * 1024)} MB");
 
-        // Generate unique stored filename
-        var storedFileName = $"{Guid.NewGuid()}_{Path.GetFileName(fileName)}";
-        var filePath = Path.Combine(_storagePath, storedFileName);
+        var documentId = Guid.NewGuid();
 
-        // Calculate file hash
         string fileHash;
         using (var sha256 = SHA256.Create())
         {
@@ -79,23 +64,21 @@ public class FileUploadService : IFileUploadService
             fileHash = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
         }
 
-        // Save file to storage
-        fileStream.Position = 0;
-        using (var fileWriteStream = File.Create(filePath))
-        {
-            await fileStream.CopyToAsync(fileWriteStream);
-        }
+        var objectKey = IFileStorageService.BuildObjectKey("patients", userId, documentId, fileName);
 
-        // Create database record
+        fileStream.Position = 0;
+        await _fileStorage.UploadAsync(fileStream, objectKey, contentType);
+
         var document = new MedicalDocument
         {
-            Id = Guid.NewGuid(),
+            Id = documentId,
             UserId = userId,
             DocumentType = documentType,
             Title = title ?? $"{documentType} - {DateTime.UtcNow:yyyy-MM-dd}",
             FileName = fileName,
-            StoredFileName = storedFileName,
-            FilePath = filePath,
+            StoredFileName = Path.GetFileName(objectKey),
+            FilePath = null,
+            ObjectKey = objectKey,
             ContentType = contentType,
             FileSizeBytes = fileStream.Length,
             FileHash = fileHash,
@@ -125,17 +108,12 @@ public class FileUploadService : IFileUploadService
 
     public async Task<List<MedicalDocument>> GetUserDocumentsAsync(Guid userId, bool includeArchived = false)
     {
-        var query = _context.MedicalDocuments
-            .Where(d => d.UserId == userId);
+        var query = _context.MedicalDocuments.Where(d => d.UserId == userId);
 
         if (!includeArchived)
-        {
             query = query.Where(d => !d.IsArchived);
-        }
 
-        return await query
-            .OrderByDescending(d => d.UploadedAt)
-            .ToListAsync();
+        return await query.OrderByDescending(d => d.UploadedAt).ToListAsync();
     }
 
     public async Task<List<MedicalDocument>> GetDocumentsByTypeAsync(Guid userId, MedicalDocumentType documentType)
@@ -146,35 +124,49 @@ public class FileUploadService : IFileUploadService
             .ToListAsync();
     }
 
+    public async Task<string> GetPresignedUrlAsync(Guid id, int expirySeconds = 300)
+    {
+        var doc = await _context.MedicalDocuments
+            .Where(d => d.Id == id)
+            .Select(d => new { d.ObjectKey, d.FilePath })
+            .FirstOrDefaultAsync()
+            ?? throw new FileNotFoundException("Document not found");
+
+        if (!string.IsNullOrEmpty(doc.ObjectKey))
+            return await _fileStorage.GetPresignedUrlAsync(doc.ObjectKey, expirySeconds);
+
+        if (!string.IsNullOrEmpty(doc.FilePath) && File.Exists(doc.FilePath))
+            return $"__legacy:{doc.FilePath}";
+
+        throw new FileNotFoundException("Document file not found");
+    }
+
+    [Obsolete("Use GetPresignedUrlAsync. Kept for legacy stream-download of records that predate S3 migration.")]
     public async Task<(Stream FileStream, string ContentType, string FileName)> DownloadDocumentAsync(Guid id)
     {
         var document = await GetDocumentByIdAsync(id) ?? throw new FileNotFoundException("Document not found");
-        if (!File.Exists(document.FilePath))
+
+        if (!string.IsNullOrEmpty(document.FilePath) && File.Exists(document.FilePath))
         {
-            throw new FileNotFoundException("Physical file not found");
+            var fs = new FileStream(document.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return (fs, document.ContentType, document.FileName);
         }
 
-        var fileStream = new FileStream(document.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        
-        return (fileStream, document.ContentType, document.FileName);
+        throw new FileNotFoundException("Physical file not found");
     }
 
     public async Task<bool> DeleteDocumentAsync(Guid id, Guid userId)
     {
         var document = await GetDocumentByIdAsync(id);
-        
+
         if (document == null || document.UserId != userId)
-        {
             return false;
-        }
 
-        // Delete physical file
-        if (File.Exists(document.FilePath))
-        {
+        if (!string.IsNullOrEmpty(document.ObjectKey))
+            await _fileStorage.DeleteAsync(document.ObjectKey);
+        else if (!string.IsNullOrEmpty(document.FilePath) && File.Exists(document.FilePath))
             File.Delete(document.FilePath);
-        }
 
-        // Remove from database
         _context.MedicalDocuments.Remove(document);
         await _context.SaveChangesAsync();
 
@@ -184,68 +176,42 @@ public class FileUploadService : IFileUploadService
     public async Task<bool> ArchiveDocumentAsync(Guid id, Guid userId)
     {
         var document = await GetDocumentByIdAsync(id);
-        
+
         if (document == null || document.UserId != userId)
-        {
             return false;
-        }
 
         document.IsArchived = true;
         document.ArchivedAt = DateTime.UtcNow;
-        
-        await _context.SaveChangesAsync();
 
+        await _context.SaveChangesAsync();
         return true;
     }
 
     public async Task<bool> VerifyDocumentAsync(Guid id, Guid doctorUserId)
     {
         var document = await GetDocumentByIdAsync(id);
-        
-        if (document == null)
-        {
-            return false;
-        }
 
-        // TODO: Add check to ensure doctorUserId is actually a doctor
-        // This would require a Role check or Doctor entity check
+        if (document == null)
+            return false;
 
         document.IsVerified = true;
         document.VerifiedByUserId = doctorUserId;
         document.VerifiedAt = DateTime.UtcNow;
-        
+
         await _context.SaveChangesAsync();
-
         return true;
-    }
-
-    public async Task<string> GetDocumentPathAsync(Guid id)
-    {
-        var document = await _context.MedicalDocuments
-            .Where(d => d.Id == id)
-            .Select(d => d.FilePath)
-            .FirstOrDefaultAsync();
-        
-        return document ?? throw new FileNotFoundException("Document not found");
     }
 
     public bool IsValidFileType(string contentType, string fileName)
     {
-        // Check MIME type
         if (!_allowedMimeTypes.Contains(contentType.ToLowerInvariant()))
-        {
             return false;
-        }
 
-        // Check file extension
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
         var allowedExtensions = new HashSet<string> { ".jpg", ".jpeg", ".png", ".pdf", ".dcm", ".tiff", ".tif", ".bmp" };
-        
         return allowedExtensions.Contains(extension);
     }
 
     public bool IsValidFileSize(long fileSizeBytes)
-    {
-        return fileSizeBytes > 0 && fileSizeBytes <= _maxFileSizeBytes;
-    }
+        => fileSizeBytes > 0 && fileSizeBytes <= _maxFileSizeBytes;
 }

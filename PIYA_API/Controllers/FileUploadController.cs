@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PIYA_API.Model;
+using PIYA_API.Service.Class;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
 
@@ -9,9 +10,12 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class FileUploadController(IFileUploadService fileUploadService) : ControllerBase
+public class FileUploadController(
+    IFileUploadService fileUploadService,
+    IFileStorageService fileStorageService) : ControllerBase
 {
     private readonly IFileUploadService _fileUploadService = fileUploadService;
+    private readonly IFileStorageService _fileStorageService = fileStorageService;
 
     /// <summary>
     /// Upload a medical document
@@ -97,40 +101,31 @@ public class FileUploadController(IFileUploadService fileUploadService) : Contro
     }
 
     /// <summary>
-    /// Download a medical document
+    /// Get a short-lived presigned URL to download a document.
+    /// The URL is valid for 5 minutes. Clients should redirect / fetch directly to this URL.
     /// </summary>
-    [HttpGet("{id}/download")]
-    public async Task<IActionResult> DownloadDocument(Guid id)
+    [HttpGet("{id}/presigned-url")]
+    public async Task<IActionResult> GetPresignedUrl(Guid id, [FromQuery] int expirySeconds = 300)
     {
         try
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
-            {
                 return Unauthorized(new { message = "Invalid user token" });
-            }
 
             var document = await _fileUploadService.GetDocumentByIdAsync(id);
-            
             if (document == null)
-            {
                 return NotFound(new { message = "Document not found" });
-            }
 
-            // Check access:
-            // - Owner of the document
-            // - The person who uploaded it (e.g. doctor who uploaded for a patient)
-            // - Any Doctor or Admin (doctors need to view patient documents)
-            var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
             if (document.UserId != userId && document.UploadedByUserId != userId
                 && callerRole != "Doctor" && callerRole != "Admin")
-            {
                 return Forbid();
-            }
 
-            var (fileStream, contentType, fileName) = await _fileUploadService.DownloadDocumentAsync(id);
-            
-            return File(fileStream, contentType, fileName);
+            var url = await _fileUploadService.GetPresignedUrlAsync(id, Math.Clamp(expirySeconds, 30, 3600));
+            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expirySeconds);
+
+            return Ok(new { url, expiresInSeconds = expirySeconds, expiresAt });
         }
         catch (FileNotFoundException)
         {
@@ -138,8 +133,39 @@ public class FileUploadController(IFileUploadService fileUploadService) : Contro
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while downloading the document", error = ex.Message });
+            return StatusCode(500, new { message = "An error occurred while generating the presigned URL", error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Redeem a local-storage presigned token (Development only).
+    /// This endpoint is called by the URL returned by LocalFileStorageService.GetPresignedUrlAsync.
+    /// </summary>
+    [HttpGet("local-download/{token}")]
+    [AllowAnonymous] // token is single-use + expiry-checked inside the service
+    public IActionResult LocalDownload(string token)
+    {
+        if (_fileStorageService is not LocalFileStorageService localService)
+            return NotFound(new { message = "Local download is only available in Development" });
+
+        var result = localService.RedeemToken(token);
+        if (result is null)
+            return NotFound(new { message = "Token expired or not found" });
+
+        var (stream, objectKey) = result.Value;
+        var ext = Path.GetExtension(objectKey).ToLowerInvariant();
+        var contentType = ext switch
+        {
+            ".pdf"  => "application/pdf",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png"  => "image/png",
+            ".tiff" or ".tif" => "image/tiff",
+            ".bmp"  => "image/bmp",
+            ".dcm"  => "application/dicom",
+            _       => "application/octet-stream"
+        };
+
+        return File(stream, contentType, Path.GetFileName(objectKey));
     }
 
     /// <summary>

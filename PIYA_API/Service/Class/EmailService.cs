@@ -11,6 +11,7 @@ public class EmailService : IEmailService
 {
     private readonly IConfiguration _configuration;
     private readonly ILogger<EmailService> _logger;
+    private readonly bool _isEnabled;
     private readonly string _smtpHost;
     private readonly int _smtpPort;
     private readonly string _fromEmail;
@@ -24,14 +25,16 @@ public class EmailService : IEmailService
         _configuration = configuration;
         _logger = logger;
         
-        // Load SMTP settings from configuration
-        _smtpHost = _configuration["Email:SmtpHost"] ?? "smtp.gmail.com";
-        _smtpPort = int.Parse(_configuration["Email:SmtpPort"] ?? "587");
-        _fromEmail = _configuration["Email:FromEmail"] ?? "noreply@piya.health";
-        _fromName = _configuration["Email:FromName"] ?? "PIYA Health";
-        _smtpUsername = _configuration["Email:SmtpUsername"] ?? "";
-        _smtpPassword = _configuration["Email:SmtpPassword"] ?? "";
-        _enableSsl = bool.Parse(_configuration["Email:EnableSsl"] ?? "true");
+        // Load SMTP settings from configuration — canonical path: ExternalApis:EmailService:*
+        // Env-var override (Docker/Linux): PIYA__ExternalApis__EmailService__SmtpPassword etc.
+        _isEnabled    = configuration.GetValue<bool>("ExternalApis:EmailService:Enabled");
+        _smtpHost     = _configuration["ExternalApis:EmailService:SmtpHost"]     ?? "smtp.gmail.com";
+        _smtpPort     = int.Parse(_configuration["ExternalApis:EmailService:SmtpPort"] ?? "587");
+        _fromEmail    = _configuration["ExternalApis:EmailService:FromEmail"]     ?? "noreply@piya.health";
+        _fromName     = _configuration["ExternalApis:EmailService:FromName"]      ?? "PIYA Health";
+        _smtpUsername = _configuration["ExternalApis:EmailService:SmtpUsername"]  ?? "";
+        _smtpPassword = _configuration["ExternalApis:EmailService:SmtpPassword"]  ?? "";
+        _enableSsl    = bool.Parse(_configuration["ExternalApis:EmailService:EnableSsl"] ?? "true");
     }
 
     public async Task SendEmailVerificationAsync(string toEmail, string userName, string verificationToken, string verificationUrl)
@@ -204,6 +207,18 @@ public class EmailService : IEmailService
 
     public async Task SendEmailAsync(string toEmail, string subject, string htmlBody, string? plainTextBody = null)
     {
+        if (!_isEnabled)
+        {
+            _logger.LogWarning("Email service is disabled. Email not sent to {ToEmail} — subject: {Subject}", toEmail, subject);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_smtpUsername) || _smtpUsername.Contains("REPLACE"))
+        {
+            _logger.LogError("Email service is enabled but SMTP credentials are not configured. Set ExternalApis__EmailService__SmtpUsername / SmtpPassword env vars.");
+            return;
+        }
+
         try
         {
             using var message = new MailMessage

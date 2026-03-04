@@ -24,14 +24,20 @@ public class MedicalDocument
     public required string FileName { get; set; }
     
     /// <summary>
-    /// Stored filename (UUID-based)
+    /// Stored filename (UUID-based) — legacy local-disk field; may be null for S3 documents.
     /// </summary>
-    public required string StoredFileName { get; set; }
+    public string? StoredFileName { get; set; }
     
     /// <summary>
-    /// File path relative to storage root
+    /// File path relative to local storage root — legacy field; null for S3 documents.
     /// </summary>
-    public required string FilePath { get; set; }
+    public string? FilePath { get; set; }
+
+    /// <summary>
+    /// Object storage key (S3 / compatible). Null for legacy records uploaded before S3 migration.
+    /// Format: {prefix}/{ownerId:N}/docs/{documentId:N}/{safeFileName}{ext}
+    /// </summary>
+    public string? ObjectKey { get; set; }
     
     /// <summary>
     /// MIME type
