@@ -38,7 +38,7 @@ public class Pharmacy
     /// Services offered by the pharmacy
     /// Example: ["Prescription Filling", "Vaccination", "Consultation", "Home Delivery"]
     /// </summary>
-    public List<string> Services { get; set; } = new();
+    public List<string> Services { get; set; } = [];
     
     /// <summary>
     /// Whether the pharmacy is currently active/open for business
@@ -68,5 +68,5 @@ public class Pharmacy
     public List<User>? Staff { get; set; }
     public required Coordinates Coordinates { get; set; }
     public required PharmacyCompany Company { get; set; }
-    public ICollection<PharmacyRating> Ratings { get; set; } = new List<PharmacyRating>();
+    public ICollection<PharmacyRating> Ratings { get; set; } = [];
 }

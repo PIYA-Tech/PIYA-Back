@@ -352,7 +352,7 @@ public class PrescriptionScanResponse
     public Guid PatientId { get; set; }
     public Guid DoctorId { get; set; }
     public string Status { get; set; } = string.Empty;
-    public List<MedicationItemDto> Medications { get; set; } = new();
+    public List<MedicationItemDto> Medications { get; set; } = [];
     public DateTime IssuedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public string Message { get; set; } = string.Empty;

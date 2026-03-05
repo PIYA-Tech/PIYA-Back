@@ -64,7 +64,7 @@ public class MedicationSyncResult
     public int FailedRecords { get; set; }
     public DateTime SyncStartedAt { get; set; }
     public DateTime SyncCompletedAt { get; set; }
-    public List<string> Errors { get; set; } = new();
+    public List<string> Errors { get; set; } = [];
     
     public TimeSpan Duration => SyncCompletedAt - SyncStartedAt;
 }

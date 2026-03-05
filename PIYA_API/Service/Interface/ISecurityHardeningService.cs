@@ -76,7 +76,7 @@ public class SuspiciousActivityResult
     public bool ShouldBlock { get; set; }
     public bool RequiresCaptcha { get; set; }
     public bool RequiresMfa { get; set; }
-    public List<string> DetectedPatterns { get; set; } = new();
+    public List<string> DetectedPatterns { get; set; } = [];
 }
 
 public class PasswordStrengthResult
@@ -84,9 +84,9 @@ public class PasswordStrengthResult
     public bool IsStrong { get; set; }
     public int Score { get; set; } // 0-100
     public required string Strength { get; set; } // "Weak", "Fair", "Good", "Strong", "Very Strong"
-    public List<string> Suggestions { get; set; } = new();
-    public List<string> PassedRules { get; set; } = new();
-    public List<string> FailedRules { get; set; } = new();
+    public List<string> Suggestions { get; set; } = [];
+    public List<string> PassedRules { get; set; } = [];
+    public List<string> FailedRules { get; set; } = [];
 }
 
 public class FailedLoginAttempt
@@ -111,8 +111,8 @@ public class SecurityAuditReport
     public int XssAttempts { get; set; }
     public int PasswordResetRequests { get; set; }
     public int MfaChallenges { get; set; }
-    public List<TopAttackSource> TopAttackSources { get; set; } = new();
-    public List<SecurityIncident> RecentIncidents { get; set; } = new();
+    public List<TopAttackSource> TopAttackSources { get; set; } = [];
+    public List<SecurityIncident> RecentIncidents { get; set; } = [];
 }
 
 public class TopAttackSource
@@ -120,7 +120,7 @@ public class TopAttackSource
     public required string IpAddress { get; set; }
     public int AttackCount { get; set; }
     public required string Country { get; set; }
-    public List<string> AttackTypes { get; set; } = new();
+    public List<string> AttackTypes { get; set; } = [];
 }
 
 public class SecurityIncident
@@ -139,8 +139,8 @@ public class VulnerabilityScanResult
     public DateTime ScannedAt { get; set; }
     public int TotalChecks { get; set; }
     public int VulnerabilitiesFound { get; set; }
-    public List<Vulnerability> Vulnerabilities { get; set; } = new();
-    public List<string> Recommendations { get; set; } = new();
+    public List<Vulnerability> Vulnerabilities { get; set; } = [];
+    public List<string> Recommendations { get; set; } = [];
 }
 
 public class Vulnerability

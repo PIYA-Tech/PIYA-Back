@@ -310,7 +310,7 @@ public class SecurityHardeningService(
             return await Task.FromResult(attempts);
         }
 
-        return new List<FailedLoginAttempt>();
+        return [];
     }
 
     public async Task ResetFailedLoginAttemptsAsync(string email)
@@ -343,7 +343,7 @@ public class SecurityHardeningService(
                     IpAddress = g.Key,
                     AttackCount = g.Count(),
                     Country = "Unknown", // Would use GeoIP lookup
-                    AttackTypes = new List<string> { "Failed Login" }
+                    AttackTypes = ["Failed Login"]
                 })
                 .ToList()
         };

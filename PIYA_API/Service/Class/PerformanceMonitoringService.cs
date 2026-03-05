@@ -34,7 +34,7 @@ public class PerformanceMonitoringService(
             };
 
             _endpointMetrics.AddOrUpdate(key,
-                new List<EndpointMetric> { metric },
+                [metric],
                 (_, list) =>
                 {
                     list.Add(metric);

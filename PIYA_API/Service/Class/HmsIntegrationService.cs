@@ -223,7 +223,7 @@ public class HmsIntegrationService : IHmsIntegrationService
         {
             if (!_hmsEnabled)
             {
-                return new List<HmsLabResult>();
+                return [];
             }
 
             var dateFilter = fromDate?.ToString("yyyy-MM-dd") ?? DateTime.UtcNow.AddMonths(-6).ToString("yyyy-MM-dd");
@@ -232,7 +232,7 @@ public class HmsIntegrationService : IHmsIntegrationService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Failed to import lab results for user {UserId}: {StatusCode}", userId, response.StatusCode);
-                return new List<HmsLabResult>();
+                return [];
             }
 
             var content = await response.Content.ReadAsStringAsync();
@@ -243,12 +243,12 @@ public class HmsIntegrationService : IHmsIntegrationService
 
             _logger.LogInformation("Imported {Count} lab results from HMS for user {UserId}", results?.Count ?? 0, userId);
 
-            return results ?? new List<HmsLabResult>();
+            return results ?? [];
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error importing lab results from HMS for user {UserId}", userId);
-            return new List<HmsLabResult>();
+            return [];
         }
     }
 

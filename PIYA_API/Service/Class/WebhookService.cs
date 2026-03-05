@@ -14,8 +14,8 @@ public class WebhookService(HttpClient httpClient, ILogger<WebhookService> logge
     private readonly ILogger<WebhookService> _logger = logger;
     
     // In-memory storage - in production, use database
-    private static readonly List<WebhookSubscription> _subscriptions = new();
-    private static readonly List<WebhookDelivery> _deliveries = new();
+    private static readonly List<WebhookSubscription> _subscriptions = [];
+    private static readonly List<WebhookDelivery> _deliveries = [];
 
     public Task<Guid> RegisterWebhookAsync(string url, List<WebhookEventType> events, string? secret = null)
     {

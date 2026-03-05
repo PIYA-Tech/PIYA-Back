@@ -227,7 +227,7 @@ public class GdprComplianceService(
                         DeletedAt = DateTime.UtcNow,
                         Reason = reason,
                         RecordsDeleted = 0,
-                        EntitiesDeleted = new List<string>(),
+                        EntitiesDeleted = [],
                         ErrorMessage = $"User cannot be deleted yet. Eligible for deletion on: {retentionStatus.EligibleForDeletionDate}"
                     };
                 }
@@ -289,7 +289,7 @@ public class GdprComplianceService(
                 DeletedAt = DateTime.UtcNow,
                 Reason = reason,
                 RecordsDeleted = 0,
-                EntitiesDeleted = new List<string>(),
+                EntitiesDeleted = [],
                 ErrorMessage = ex.Message
             };
         }
@@ -443,11 +443,11 @@ public class GdprComplianceService(
             ActiveConsents = 0, // Implement when consent table is added
             RevokedConsents = gdprAuditLogs.Count(a => a.Action == "CONSENT_REVOKED"),
             AverageResponseTimeHours = 24, // Implement actual calculation
-            Metrics = new List<ComplianceMetric>
-            {
+            Metrics =
+            [
                 new ComplianceMetric { MetricName = "Total GDPR Requests", Value = gdprAuditLogs.Count, Unit = "requests" },
                 new ComplianceMetric { MetricName = "Active Users", Value = await _context.Users.CountAsync(), Unit = "users" }
-            }
+            ]
         };
 
         return report;

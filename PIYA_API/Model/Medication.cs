@@ -20,7 +20,7 @@ public class Medication
     /// <summary>
     /// Active ingredients
     /// </summary>
-    public List<string> ActiveIngredients { get; set; } = new();
+    public List<string> ActiveIngredients { get; set; } = [];
     
     /// <summary>
     /// ATC (Anatomical Therapeutic Chemical) classification code
@@ -55,7 +55,7 @@ public class Medication
     /// <summary>
     /// Generic alternatives (medication IDs)
     /// </summary>
-    public List<Guid> GenericAlternatives { get; set; } = new();
+    public List<Guid> GenericAlternatives { get; set; } = [];
     
     /// <summary>
     /// Usage/indications

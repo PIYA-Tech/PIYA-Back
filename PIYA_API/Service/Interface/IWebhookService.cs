@@ -64,7 +64,7 @@ public class WebhookSubscription
 {
     public Guid Id { get; set; }
     public string Url { get; set; } = string.Empty;
-    public List<WebhookEventType> Events { get; set; } = new();
+    public List<WebhookEventType> Events { get; set; } = [];
     public string? Secret { get; set; }
     public bool IsActive { get; set; }
     public int RetryCount { get; set; } = 3;

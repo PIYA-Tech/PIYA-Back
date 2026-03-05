@@ -56,7 +56,7 @@ public class PharmacyRatingStats
 {
     public decimal AverageRating { get; set; }
     public int TotalRatings { get; set; }
-    public Dictionary<int, int> RatingDistribution { get; set; } = new();
+    public Dictionary<int, int> RatingDistribution { get; set; } = [];
     public int VerifiedRatings { get; set; }
     public int RecommendCount { get; set; }
     public PharmacyRatingCategoryAverages? CategoryAverages { get; set; }

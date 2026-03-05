@@ -74,7 +74,7 @@ public class DoctorProfile
     /// <summary>
     /// Additional specializations
     /// </summary>
-    public List<MedicalSpecialization> AdditionalSpecializations { get; set; } = new();
+    public List<MedicalSpecialization> AdditionalSpecializations { get; set; } = [];
     
     /// <summary>
     /// Years of medical practice
@@ -84,17 +84,17 @@ public class DoctorProfile
     /// <summary>
     /// Medical certifications and qualifications
     /// </summary>
-    public List<string> Certifications { get; set; } = new();
+    public List<string> Certifications { get; set; } = [];
     
     /// <summary>
     /// Education details (medical school, residency, etc.)
     /// </summary>
-    public List<string> Education { get; set; } = new();
+    public List<string> Education { get; set; } = [];
     
     /// <summary>
     /// Languages spoken by the doctor
     /// </summary>
-    public List<string> Languages { get; set; } = new();
+    public List<string> Languages { get; set; } = [];
     
     /// <summary>
     /// Professional biography
@@ -124,7 +124,7 @@ public class DoctorProfile
     /// <summary>
     /// Associated hospitals (many-to-many relationship)
     /// </summary>
-    public List<Guid> HospitalIds { get; set; } = new();
+    public List<Guid> HospitalIds { get; set; } = [];
     
     /// <summary>
     /// Working hours configuration (JSON format)
@@ -162,7 +162,7 @@ public class DoctorProfile
 public class WorkingHoursSlot
 {
     public string DayOfWeek { get; set; } = string.Empty; // Monday, Tuesday, etc.
-    public List<TimeSlot> Slots { get; set; } = new();
+    public List<TimeSlot> Slots { get; set; } = [];
 }
 
 /// <summary>

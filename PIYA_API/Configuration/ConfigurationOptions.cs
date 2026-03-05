@@ -364,7 +364,7 @@ public class RateLimitingOptions
     public int PermitLimit { get; set; } = 100;
     public int WindowSeconds { get; set; } = 60;
     public int QueueLimit { get; set; } = 0;
-    public Dictionary<string, EndpointRateLimitOptions> Endpoints { get; set; } = new();
+    public Dictionary<string, EndpointRateLimitOptions> Endpoints { get; set; } = [];
 }
 
 /// <summary>

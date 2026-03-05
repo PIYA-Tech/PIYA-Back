@@ -17,7 +17,7 @@ public class Hospital
     /// <summary>
     /// Hospital departments (e.g., Cardiology, Pediatrics)
     /// </summary>
-    public List<string> Departments { get; set; } = new();
+    public List<string> Departments { get; set; } = [];
     
     /// <summary>
     /// Emergency contact number

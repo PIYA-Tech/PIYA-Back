@@ -32,7 +32,7 @@ public class AppointmentReminder
     /// <summary>
     /// Reminder delivery methods
     /// </summary>
-    public List<ReminderDeliveryMethod> DeliveryMethods { get; set; } = new();
+    public List<ReminderDeliveryMethod> DeliveryMethods { get; set; } = [];
     
     /// <summary>
     /// Whether the reminder has been sent
@@ -99,7 +99,7 @@ public class PrescriptionRefillReminder
     /// <summary>
     /// Reminder delivery methods
     /// </summary>
-    public List<ReminderDeliveryMethod> DeliveryMethods { get; set; } = new();
+    public List<ReminderDeliveryMethod> DeliveryMethods { get; set; } = [];
     
     /// <summary>
     /// Whether the reminder has been sent
@@ -129,7 +129,7 @@ public class PrescriptionRefillReminder
     /// <summary>
     /// Specific medication items to refill (if not all)
     /// </summary>
-    public List<Guid> MedicationItemIds { get; set; } = new();
+    public List<Guid> MedicationItemIds { get; set; } = [];
     
     /// <summary>
     /// Number of retry attempts if delivery failed

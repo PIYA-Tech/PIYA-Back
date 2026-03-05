@@ -37,12 +37,12 @@ public class PharmacySearchResult
 {
     public Pharmacy Pharmacy { get; set; } = null!;
     public double? DistanceKm { get; set; }
-    public List<MedicationStock> AvailableMedications { get; set; } = new();
+    public List<MedicationStock> AvailableMedications { get; set; } = [];
     public int TotalMedicationsRequested { get; set; }
     public int MedicationsInStock { get; set; }
     public decimal StockMatchPercentage { get; set; }
     public bool CanFulfillCompletely { get; set; }
-    public List<Guid> MissingMedicationIds { get; set; } = new();
+    public List<Guid> MissingMedicationIds { get; set; } = [];
     public decimal CompositeScore { get; set; } // Higher is better
 }
 

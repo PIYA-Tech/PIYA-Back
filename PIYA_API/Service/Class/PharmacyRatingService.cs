@@ -139,7 +139,7 @@ public class PharmacyRatingService(PharmacyApiDbContext context, IAuditService a
             {
                 AverageRating = 0,
                 TotalRatings = 0,
-                RatingDistribution = new Dictionary<int, int>()
+                RatingDistribution = []
             };
         }
 

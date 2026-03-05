@@ -54,15 +54,15 @@ public class FhirPatientResource
 {
     public string ResourceType { get; set; } = "Patient";
     public string Id { get; set; } = string.Empty;
-    public List<FhirIdentifier> Identifier { get; set; } = new();
+    public List<FhirIdentifier> Identifier { get; set; } = [];
     public bool Active { get; set; } = true;
-    public List<FhirName> Name { get; set; } = new();
-    public List<FhirTelecom> Telecom { get; set; } = new();
+    public List<FhirName> Name { get; set; } = [];
+    public List<FhirTelecom> Telecom { get; set; } = [];
     public string Gender { get; set; } = string.Empty;
     public string BirthDate { get; set; } = string.Empty;
-    public List<FhirAddress> Address { get; set; } = new();
+    public List<FhirAddress> Address { get; set; } = [];
     public string? MaritalStatus { get; set; }
-    public List<FhirCommunication> Communication { get; set; } = new();
+    public List<FhirCommunication> Communication { get; set; } = [];
 }
 
 public class FhirIdentifier
@@ -76,7 +76,7 @@ public class FhirName
 {
     public string Use { get; set; } = "official";
     public string Family { get; set; } = string.Empty;
-    public List<string> Given { get; set; } = new();
+    public List<string> Given { get; set; } = [];
     public string? Prefix { get; set; }
 }
 
@@ -106,7 +106,7 @@ public class FhirCommunication
 
 public class FhirCodeableConcept
 {
-    public List<FhirCoding> Coding { get; set; } = new();
+    public List<FhirCoding> Coding { get; set; } = [];
     public string? Text { get; set; }
 }
 
@@ -127,7 +127,7 @@ public class FhirMedicationRequest
     public FhirReference Requester { get; set; } = new();
     public FhirCodeableConcept MedicationCodeableConcept { get; set; } = new();
     public DateTime AuthoredOn { get; set; }
-    public List<FhirDosageInstruction> DosageInstruction { get; set; } = new();
+    public List<FhirDosageInstruction> DosageInstruction { get; set; } = [];
     public FhirDispenseRequest? DispenseRequest { get; set; }
 }
 
@@ -191,7 +191,7 @@ public class EhrImportResult
     public bool Success { get; set; }
     public Guid? UserId { get; set; }
     public string? ErrorMessage { get; set; }
-    public List<string> Warnings { get; set; } = new();
+    public List<string> Warnings { get; set; } = [];
     public DateTime ImportedAt { get; set; }
 }
 
@@ -201,7 +201,7 @@ public class EhrSyncResult
     public int RecordsSynced { get; set; }
     public DateTime SyncedAt { get; set; }
     public string? ErrorMessage { get; set; }
-    public Dictionary<string, int> SyncDetails { get; set; } = new();
+    public Dictionary<string, int> SyncDetails { get; set; } = [];
 }
 
 public class EhrTimelineEvent
@@ -229,8 +229,8 @@ public class EhrShareResult
 public class FhirValidationResult
 {
     public bool IsValid { get; set; }
-    public List<string> Errors { get; set; } = new();
-    public List<string> Warnings { get; set; } = new();
+    public List<string> Errors { get; set; } = [];
+    public List<string> Warnings { get; set; } = [];
     public string? FhirVersion { get; set; }
     public DateTime ValidatedAt { get; set; }
 }
@@ -239,7 +239,7 @@ public class EhrInteroperabilityStatus
 {
     public bool IsOperational { get; set; }
     public string FhirVersion { get; set; } = "R4";
-    public List<string> SupportedResources { get; set; } = new();
+    public List<string> SupportedResources { get; set; } = [];
     public bool HL7Enabled { get; set; }
     public bool CCDAEnabled { get; set; }
     public DateTime LastSyncAt { get; set; }

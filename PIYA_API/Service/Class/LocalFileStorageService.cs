@@ -17,7 +17,7 @@ public class LocalFileStorageService : IFileStorageService
     private readonly ILogger<LocalFileStorageService> _logger;
 
     // token → (objectKey, expiry)  — simple in-process presigned URL simulation
-    private static readonly Dictionary<string, (string Key, DateTimeOffset Expiry)> _tokens = new();
+    private static readonly Dictionary<string, (string Key, DateTimeOffset Expiry)> _tokens = [];
     private static readonly Lock _lock = new();
 
     public LocalFileStorageService(IConfiguration configuration, ILogger<LocalFileStorageService> logger)

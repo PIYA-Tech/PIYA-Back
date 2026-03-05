@@ -50,8 +50,8 @@ public interface ISearchHistoryService
 public class UserSearchAnalytics
 {
     public int TotalSearches { get; set; }
-    public Dictionary<SearchType, int> SearchesByType { get; set; } = new();
-    public List<string> MostSearchedQueries { get; set; } = new();
-    public Dictionary<string, int> SelectionRate { get; set; } = new();
+    public Dictionary<SearchType, int> SearchesByType { get; set; } = [];
+    public List<string> MostSearchedQueries { get; set; } = [];
+    public Dictionary<string, int> SelectionRate { get; set; } = [];
     public DateTime? LastSearchAt { get; set; }
 }

@@ -73,22 +73,22 @@ public class PharmacistProfile
     /// <summary>
     /// Pharmacy education details
     /// </summary>
-    public List<string> Education { get; set; } = new();
+    public List<string> Education { get; set; } = [];
     
     /// <summary>
     /// Certifications and qualifications
     /// </summary>
-    public List<string> Certifications { get; set; } = new();
+    public List<string> Certifications { get; set; } = [];
     
     /// <summary>
     /// Languages spoken
     /// </summary>
-    public List<string> Languages { get; set; } = new();
+    public List<string> Languages { get; set; } = [];
     
     /// <summary>
     /// Specialization areas (e.g., Clinical Pharmacy, Pediatric Pharmacy)
     /// </summary>
-    public List<string> Specializations { get; set; } = new();
+    public List<string> Specializations { get; set; } = [];
     
     /// <summary>
     /// Professional biography

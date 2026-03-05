@@ -23,8 +23,8 @@ public class FileUploadService : IFileUploadService
 
         _maxFileSizeBytes = long.Parse(configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
 
-        _allowedMimeTypes = new HashSet<string>
-        {
+        _allowedMimeTypes =
+        [
             "image/jpeg",
             "image/jpg",
             "image/png",
@@ -32,7 +32,7 @@ public class FileUploadService : IFileUploadService
             "application/dicom",
             "image/tiff",
             "image/bmp"
-        };
+        ];
     }
 
     public async Task<MedicalDocument> UploadDocumentAsync(

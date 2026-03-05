@@ -379,7 +379,7 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
 // DTOs for request bodies
 public class MultipleMedicationsSearchRequest
 {
-    public List<Guid> MedicationIds { get; set; } = new();
+    public List<Guid> MedicationIds { get; set; } = [];
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
     public int? RadiusKm { get; set; }
@@ -387,7 +387,7 @@ public class MultipleMedicationsSearchRequest
 
 public class SmartSearchRequest
 {
-    public List<Guid> MedicationIds { get; set; } = new();
+    public List<Guid> MedicationIds { get; set; } = [];
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
     public int? MaxRadiusKm { get; set; }

@@ -67,8 +67,8 @@ public class HmsPatientRecord
     public DateTime DateOfBirth { get; set; }
     public string Gender { get; set; } = string.Empty;
     public string? BloodType { get; set; }
-    public List<string> Allergies { get; set; } = new();
-    public List<string> ChronicConditions { get; set; } = new();
+    public List<string> Allergies { get; set; } = [];
+    public List<string> ChronicConditions { get; set; } = [];
     public string? EmergencyContact { get; set; }
     public string? InsuranceProvider { get; set; }
     public string? InsurancePolicyNumber { get; set; }
@@ -124,7 +124,7 @@ public class HmsHealthStatus
     public string Version { get; set; } = string.Empty;
     public DateTime LastSyncAt { get; set; }
     public int PendingSyncCount { get; set; }
-    public Dictionary<string, bool> ModuleStatus { get; set; } = new();
+    public Dictionary<string, bool> ModuleStatus { get; set; } = [];
     public string? ErrorMessage { get; set; }
 }
 

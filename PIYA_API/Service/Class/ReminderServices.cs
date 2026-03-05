@@ -173,7 +173,7 @@ public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILo
             EstimatedRefillDate = estimatedRefillDate,
             DaysBeforeRefill = daysBeforeRefill,
             DeliveryMethods = deliveryMethods,
-            MedicationItemIds = medicationItemIds ?? new List<Guid>()
+            MedicationItemIds = medicationItemIds ?? []
         };
 
         _context.PrescriptionRefillReminders.Add(reminder);
@@ -348,11 +348,10 @@ public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILo
             prescription.PatientId,
             estimatedRefillDate,
             7,
-            new List<ReminderDeliveryMethod> 
-            { 
+            [ 
                 ReminderDeliveryMethod.Email, 
                 ReminderDeliveryMethod.PushNotification 
-            }
+            ]
         );
     }
 }

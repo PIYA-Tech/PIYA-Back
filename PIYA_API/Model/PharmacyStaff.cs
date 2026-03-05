@@ -49,7 +49,7 @@ public class PharmacyStaff
     /// <summary>
     /// Permissions specific to this pharmacy
     /// </summary>
-    public List<string> Permissions { get; set; } = new();
+    public List<string> Permissions { get; set; } = [];
     
     /// <summary>
     /// Notes about this staff assignment

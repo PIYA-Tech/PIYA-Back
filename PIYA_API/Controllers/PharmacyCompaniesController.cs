@@ -229,7 +229,7 @@ public class PharmacyCompanyDetailDto
     public Guid Id { get; set; }
     public required string Name { get; set; }
     public int PharmacyCount { get; set; }
-    public List<PharmacyBasicDto> Pharmacies { get; set; } = new();
+    public List<PharmacyBasicDto> Pharmacies { get; set; } = [];
 }
 
 public class PharmacyBasicDto

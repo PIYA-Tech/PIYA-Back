@@ -36,11 +36,11 @@ public class RateLimitingMiddleware
         _configuration = configuration;
         _globalRequestLimit = int.Parse(configuration["RateLimiting:PermitLimit"] ?? "100");
         _globalTimeWindow = TimeSpan.FromSeconds(int.Parse(configuration["RateLimiting:WindowSeconds"] ?? "60"));
-        _whitelistedPaths = configuration.GetSection("RateLimiting:WhitelistedPaths").Get<List<string>>() ?? new List<string>
-        {
+        _whitelistedPaths = configuration.GetSection("RateLimiting:WhitelistedPaths").Get<List<string>>() ??
+        [
             "/api/Health",
             "/swagger"
-        };
+        ];
         // Secret token required for bypass headers — must be set via env/config to be usable
         _bypassSecret = configuration["RateLimiting:BypassSecret"];
     }
@@ -323,7 +323,7 @@ public class RateLimitingMiddleware
 
 public class ClientRateLimitInfo
 {
-    public List<DateTime> Requests { get; } = new();
+    public List<DateTime> Requests { get; } = [];
 }
 
 /// <summary>

@@ -51,28 +51,28 @@ public class EhrIntegrationService : IEhrIntegrationService
             {
                 Id = user.Id.ToString(),
                 Active = true,
-                Identifier = new List<FhirIdentifier>
-                {
+                Identifier =
+                [
                     new FhirIdentifier
                     {
                         System = "https://piya.healthcare/patient-id",
                         Value = user.Id.ToString(),
                         Type = "MR" // Medical Record Number
                     }
-                },
-                Name = new List<FhirName>
-                {
+                ],
+                Name =
+                [
                     new FhirName
                     {
                         Use = "official",
                         Family = user.LastName,
-                        Given = new List<string> { user.FirstName }
+                        Given = [user.FirstName]
                     }
-                },
-                Telecom = new List<FhirTelecom>(),
+                ],
+                Telecom = [],
                 Gender = "unknown",
                 BirthDate = user.DateOfBirth.ToString("yyyy-MM-dd"),
-                Address = new List<FhirAddress>()
+                Address = []
             };
 
             if (!string.IsNullOrEmpty(user.Email))
@@ -247,19 +247,19 @@ public class EhrIntegrationService : IEhrIntegrationService
                 MedicationCodeableConcept = new FhirCodeableConcept
                 {
                     Text = firstItem.Medication.BrandName,
-                    Coding = new List<FhirCoding>
-                    {
+                    Coding =
+                    [
                         new FhirCoding
                         {
                             System = "https://piya.healthcare/medication",
                             Code = firstItem.MedicationId.ToString(),
                             Display = firstItem.Medication.GenericName
                         }
-                    }
+                    ]
                 },
                 AuthoredOn = prescription.IssuedAt,
-                DosageInstruction = new List<FhirDosageInstruction>
-                {
+                DosageInstruction =
+                [
                     new FhirDosageInstruction
                     {
                         Sequence = 1,
@@ -274,7 +274,7 @@ public class EhrIntegrationService : IEhrIntegrationService
                             }
                         }
                     }
-                },
+                ],
                 DispenseRequest = new FhirDispenseRequest
                 {
                     NumberOfRepeatsAllowed = 0,
@@ -436,7 +436,7 @@ public class EhrIntegrationService : IEhrIntegrationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving patient timeline for user {UserId}", userId);
-            return new List<EhrTimelineEvent>();
+            return [];
         }
     }
 
@@ -547,7 +547,7 @@ public class EhrIntegrationService : IEhrIntegrationService
             return new FhirValidationResult
             {
                 IsValid = false,
-                Errors = new List<string> { ex.Message },
+                Errors = [ex.Message],
                 ValidatedAt = DateTime.UtcNow
             };
         }
@@ -578,7 +578,7 @@ public class EhrIntegrationService : IEhrIntegrationService
                 {
                     IsOperational = true,
                     FhirVersion = metadata.RootElement.GetProperty("fhirVersion").GetString() ?? "R4",
-                    SupportedResources = new List<string> { "Patient", "Practitioner", "MedicationRequest", "Encounter", "Observation" },
+                    SupportedResources = ["Patient", "Practitioner", "MedicationRequest", "Encounter", "Observation"],
                     HL7Enabled = true,
                     CCDAEnabled = true,
                     LastSyncAt = DateTime.UtcNow,

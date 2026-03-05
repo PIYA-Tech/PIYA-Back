@@ -27,7 +27,7 @@ public class TwoFactorAuth
     /// <summary>
     /// Backup codes for account recovery (hashed)
     /// </summary>
-    public List<string> BackupCodes { get; set; } = new();
+    public List<string> BackupCodes { get; set; } = [];
     
     /// <summary>
     /// Phone number for SMS-based 2FA (optional)

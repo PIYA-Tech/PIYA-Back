@@ -67,10 +67,10 @@ public class GdprDataExport
     public DateTime ExportDate { get; set; }
     public required string Format { get; set; } // "JSON", "XML", "CSV"
     public required PersonalData PersonalData { get; set; }
-    public List<AppointmentData> Appointments { get; set; } = new();
-    public List<PrescriptionData> Prescriptions { get; set; } = new();
-    public List<AuditLogEntry> ActivityLog { get; set; } = new();
-    public List<ConsentRecord> Consents { get; set; } = new();
+    public List<AppointmentData> Appointments { get; set; } = [];
+    public List<PrescriptionData> Prescriptions { get; set; } = [];
+    public List<AuditLogEntry> ActivityLog { get; set; } = [];
+    public List<ConsentRecord> Consents { get; set; } = [];
 }
 
 public class PersonalData
@@ -98,7 +98,7 @@ public class PrescriptionData
     public Guid Id { get; set; }
     public DateTime IssuedDate { get; set; }
     public required string DoctorName { get; set; }
-    public List<string> Medications { get; set; } = new();
+    public List<string> Medications { get; set; } = [];
     public required string Status { get; set; }
 }
 
@@ -125,7 +125,7 @@ public class GdprAnonymizationResult
     public DateTime AnonymizedAt { get; set; }
     public required string Reason { get; set; }
     public int RecordsAnonymized { get; set; }
-    public List<string> EntitiesAffected { get; set; } = new();
+    public List<string> EntitiesAffected { get; set; } = [];
 }
 
 public class GdprDeletionResult
@@ -135,7 +135,7 @@ public class GdprDeletionResult
     public DateTime DeletedAt { get; set; }
     public required string Reason { get; set; }
     public int RecordsDeleted { get; set; }
-    public List<string> EntitiesDeleted { get; set; } = new();
+    public List<string> EntitiesDeleted { get; set; } = [];
     public string? ErrorMessage { get; set; }
 }
 
@@ -159,7 +159,7 @@ public class DataRetentionStatus
     public int RetentionPeriodDays { get; set; }
     public bool CanBeDeleted { get; set; }
     public DateTime? EligibleForDeletionDate { get; set; }
-    public List<string> ActiveDataCategories { get; set; } = new();
+    public List<string> ActiveDataCategories { get; set; } = [];
 }
 
 public class DataRetentionResult
@@ -169,7 +169,7 @@ public class DataRetentionResult
     public int UsersAnonymized { get; set; }
     public int UsersDeleted { get; set; }
     public int RecordsArchived { get; set; }
-    public List<string> Errors { get; set; } = new();
+    public List<string> Errors { get; set; } = [];
 }
 
 public class GdprComplianceReport
@@ -183,7 +183,7 @@ public class GdprComplianceReport
     public int ActiveConsents { get; set; }
     public int RevokedConsents { get; set; }
     public double AverageResponseTimeHours { get; set; }
-    public List<ComplianceMetric> Metrics { get; set; } = new();
+    public List<ComplianceMetric> Metrics { get; set; } = [];
 }
 
 public class ComplianceMetric
