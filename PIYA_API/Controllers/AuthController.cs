@@ -282,6 +282,41 @@ public class AuthController(
         }
     }
 
+    /// <summary>
+    /// Returns the current authenticated user's profile — used by the frontend
+    /// to rehydrate the session after a page refresh without a full re-login.
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize]
+    public async Task<IActionResult> Me()
+    {
+        try
+        {
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrWhiteSpace(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                return Unauthorized(new { message = "Invalid token" });
+
+            var user = await _userService.GetByIdAsync(userId);
+            if (user == null)
+                return Unauthorized(new { message = "User not found" });
+
+            return Ok(new
+            {
+                id        = user.Id,
+                username  = user.Username,
+                email     = user.Email,
+                firstName = user.FirstName,
+                lastName  = user.LastName,
+                role      = user.Role.ToString(),
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in /auth/me");
+            return StatusCode(500, new { message = "An error occurred" });
+        }
+    }
+
     [HttpPost("refresh")]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)    {
         try
