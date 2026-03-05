@@ -32,17 +32,18 @@ public static class DataSeeder
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
         // ── Users ──────────────────────────────────────────────────────────────
-        // Batch-preload all demo emails in a single query to minimise the race
-        // window and avoid N individual round-trips.
-        var demoEmails = DemoUsers.Select(u => u.Email).ToArray();
+        // Batch-preload all demo users matched by either username or email
+        // so that rows created with an old email are still found and reconciled.
+        var demoEmails    = DemoUsers.Select(u => u.Email).ToArray();
+        var demoUsernames = DemoUsers.Select(u => u.Username).ToArray();
 
         var existing = await db.Users
-            .Where(u => demoEmails.Contains(u.Email))
-            .ToDictionaryAsync(u => u.Email);
+            .Where(u => demoEmails.Contains(u.Email) || demoUsernames.Contains(u.Username))
+            .ToDictionaryAsync(u => u.Username);
 
         foreach (var (username, first, last, email, phone, role) in DemoUsers)
         {
-            if (!existing.TryGetValue(email, out var user))
+            if (!existing.TryGetValue(username, out var user))
             {
                 // Not in DB yet — create and track in both EF and our local dict.
                 user = new User
@@ -71,15 +72,19 @@ public static class DataSeeder
                     },
                 };
                 db.Users.Add(user);
-                existing[email] = user;
+                existing[username] = user;
             }
 
-            // Always reconcile mutable fields so repeated runs stay consistent.
+            // Always reconcile ALL mutable fields — including email — so repeated
+            // runs correct rows that were created with an old/different email.
             user.Username    = username;
+            user.Email       = email;
             user.FirstName   = first;
             user.LastName    = last;
             user.PhoneNumber = phone;
             user.Role        = role;
+            user.IsActive        = true;
+            user.IsEmailVerified = true;
             user.UpdatedAt   = DateTime.UtcNow;
 
             if (!hasher.VerifyPassword(DemoPassword, user.PasswordHash))
