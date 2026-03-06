@@ -41,6 +41,18 @@ public class AuthController(
                 return BadRequest(new { message = "Invalid DateOfBirth format. Expected ISO 8601 (yyyy-MM-dd)." });
             parsedDob = dob;
         }
+        if (parsedDob.HasValue && parsedDob.Value > DateTime.UtcNow.AddYears(-18))
+        {
+            return BadRequest(new { message = "You must be at least 18 years old to register." });
+        }
+        if(request.Role != null && request.Role != "Patient")
+        {
+            return BadRequest(new { message = "Invalid role specified. Role must be 'Patient' for self-registration." });
+        }
+        if(request.PhoneNumber == null || !System.Text.RegularExpressions.Regex.IsMatch(request.PhoneNumber, @"^\+?[1-9]\d{1,14}$"))
+        {
+            return BadRequest(new { message = "Invalid phone number format. Expected E.164 format (e.g. +1234567890)." });
+        }
 
         var user = new User
         {
@@ -377,7 +389,7 @@ public class RegisterRequest
     public required string Password { get; set; }
     public required string FirstName { get; set; }
     public required string LastName { get; set; }
-    public required string PhoneNumber { get; set; }
+    public string? PhoneNumber { get; set; }
     public string? DateOfBirth { get; set; }
     public string? DeviceInfo { get; set; }
     // Accept role as string from clients/tests (e.g. "Patient") and parse below.
