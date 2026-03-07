@@ -27,7 +27,9 @@ public class DoctorDashboardController(
     #region Profile Management
 
     /// <summary>
-    /// Get current doctor's profile
+    /// Get current doctor's profile.
+    /// Returns 204 No Content when the profile has not been created yet
+    /// (allows the frontend to distinguish "no profile" from server errors without a 404 console warning).
     /// </summary>
     [HttpGet("profile")]
     public async Task<ActionResult<DoctorProfile>> GetMyProfile()
@@ -36,11 +38,9 @@ public class DoctorDashboardController(
         {
             var userId = GetUserId();
             var profile = await _doctorProfileService.GetByUserIdAsync(userId);
-            
+
             if (profile == null)
-            {
-                return NotFound(new { error = "Doctor profile not found. Please create your profile first." });
-            }
+                return NoContent(); // 204 — profile not yet created
 
             return Ok(profile);
         }
@@ -84,7 +84,7 @@ public class DoctorDashboardController(
                 Biography = request.Biography,
                 ConsultationFee = request.ConsultationFee,
                 AcceptingNewPatients = request.AcceptingNewPatients,
-                HospitalIds = request.HospitalIds ?? [],
+                HospitalIds = [],          // hospitals are assigned by admins only
                 CurrentStatus = DoctorAvailabilityStatus.Offline,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -127,7 +127,7 @@ public class DoctorDashboardController(
             if (request.Biography != null) profile.Biography = request.Biography;
             if (request.ConsultationFee.HasValue) profile.ConsultationFee = request.ConsultationFee;
             if (request.AcceptingNewPatients.HasValue) profile.AcceptingNewPatients = request.AcceptingNewPatients.Value;
-            if (request.HospitalIds != null) profile.HospitalIds = request.HospitalIds;
+            // HospitalIds are managed by admins only — not updated here
             
             profile.UpdatedAt = DateTime.UtcNow;
 
@@ -451,6 +451,48 @@ public class DoctorDashboardController(
         }
     }
 
+    /// <summary>
+    /// Get unique patients this doctor has seen (derived from appointment history).
+    /// Returns deduplicated patient records with last-visit date and appointment count.
+    /// </summary>
+    [HttpGet("patients")]
+    public async Task<ActionResult> GetMyPatients()
+    {
+        try
+        {
+            var userId = GetUserId();
+            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
+
+            var patients = appointments
+                .Where(a => a.Patient != null)
+                .GroupBy(a => a.PatientId)
+                .Select(g =>
+                {
+                    var patient = g.First().Patient!;
+                    return new
+                    {
+                        patient.Id,
+                        patient.FirstName,
+                        patient.LastName,
+                        patient.Email,
+                        patient.PhoneNumber,
+                        patient.DateOfBirth,
+                        AppointmentCount = g.Count(),
+                        LastVisit = g.Max(a => a.ScheduledAt),
+                    };
+                })
+                .OrderByDescending(p => p.LastVisit)
+                .ToList();
+
+            return Ok(patients);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctor's patients");
+            return StatusCode(500, new { error = "Failed to retrieve patients" });
+        }
+    }
+
     #endregion
 
     #region Prescriptions
@@ -708,7 +750,7 @@ public class CreateDoctorProfileRequest
     public string? Biography { get; set; }
     public decimal? ConsultationFee { get; set; }
     public bool AcceptingNewPatients { get; set; } = true;
-    public List<Guid>? HospitalIds { get; set; }
+    // HospitalIds intentionally omitted — assigned by admins via PUT /api/hospital/doctors/{id}/hospitals
 }
 
 public class UpdateDoctorProfileRequest
@@ -723,7 +765,7 @@ public class UpdateDoctorProfileRequest
     public string? Biography { get; set; }
     public decimal? ConsultationFee { get; set; }
     public bool? AcceptingNewPatients { get; set; }
-    public List<Guid>? HospitalIds { get; set; }
+    // HospitalIds intentionally omitted — assigned by admins via PUT /api/hospital/doctors/{id}/hospitals
 }
 
 public class UpdateAvailabilityRequest

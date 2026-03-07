@@ -73,4 +73,9 @@ public interface IDoctorProfileService
     /// Check if doctor is available at specific date/time
     /// </summary>
     Task<bool> IsAvailableAtAsync(Guid userId, DateTime dateTime);
+
+    /// <summary>
+    /// Admin: replace the full set of hospitals for a doctor profile
+    /// </summary>
+    Task<DoctorProfile> AssignHospitalsAsync(Guid doctorProfileId, List<Guid> hospitalIds);
 }

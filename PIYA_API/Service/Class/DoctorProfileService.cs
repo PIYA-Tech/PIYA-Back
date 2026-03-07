@@ -354,4 +354,43 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
             throw;
         }
     }
+
+    public async Task<DoctorProfile> AssignHospitalsAsync(Guid doctorProfileId, List<Guid> hospitalIds)
+    {
+        try
+        {
+            var profile = await _context.DoctorProfiles
+                .Include(dp => dp.User)
+                .FirstOrDefaultAsync(dp => dp.Id == doctorProfileId)
+                ?? throw new KeyNotFoundException($"Doctor profile {doctorProfileId} not found");
+
+            // Validate that every supplied hospital ID actually exists
+            if (hospitalIds.Count > 0)
+            {
+                var existingIds = await _context.Hospitals
+                    .Where(h => hospitalIds.Contains(h.Id))
+                    .Select(h => h.Id)
+                    .ToListAsync();
+
+                var missing = hospitalIds.Except(existingIds).ToList();
+                if (missing.Count > 0)
+                    throw new KeyNotFoundException($"Hospital(s) not found: {string.Join(", ", missing)}");
+            }
+
+            profile.HospitalIds = hospitalIds;
+            profile.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Admin assigned hospitals [{Hospitals}] to doctor profile {ProfileId}",
+                string.Join(", ", hospitalIds), doctorProfileId);
+
+            return profile;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error assigning hospitals to doctor profile {ProfileId}", doctorProfileId);
+            throw;
+        }
+    }
 }

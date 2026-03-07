@@ -37,16 +37,28 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     }
 
     /// <summary>
-    /// Get all medications (paginated)
+    /// Get all available medications (public, paginated, max 200 per page)
     /// </summary>
     [HttpGet]
     [AllowAnonymous]
-    public async Task<ActionResult<List<Medication>>> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] string? search = null,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 50)
     {
         try
         {
-            var medications = await _medicationService.GetAllAsync();
-            return Ok(medications);
+            pageSize = Math.Min(pageSize, 200);
+            var (items, total) = await _medicationService.GetAllAdminAsync(
+                search, null, true /* availableOnly */, pageNumber, pageSize);
+            return Ok(new
+            {
+                items,
+                totalCount = total,
+                pageNumber,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            });
         }
         catch (Exception ex)
         {
@@ -148,6 +160,30 @@ public class MedicationController(IMedicationService medicationService, ILogger<
         {
             _logger.LogError(ex, "Error searching by ingredient");
             return StatusCode(500, new { error = "Failed to search by ingredient" });
+        }
+    }
+
+    /// <summary>
+    /// Update medication — Admin only
+    /// </summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<Medication>> Update(Guid id, [FromBody] Medication medication)
+    {
+        try
+        {
+            medication.Id = id;
+            var updated = await _medicationService.UpdateAsync(medication);
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Medication not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating medication {MedicationId}", id);
+            return StatusCode(500, new { error = "Failed to update medication" });
         }
     }
 

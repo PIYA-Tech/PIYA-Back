@@ -3,14 +3,17 @@ using Microsoft.AspNetCore.Mvc;
 using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
-
 namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class HospitalController(IHospitalService hospitalService, ILogger<HospitalController> logger) : ControllerBase
+public class HospitalController(
+    IHospitalService hospitalService,
+    IDoctorProfileService doctorProfileService,
+    ILogger<HospitalController> logger) : ControllerBase
 {
     private readonly IHospitalService _hospitalService = hospitalService;
+    private readonly IDoctorProfileService _doctorProfileService = doctorProfileService;
     private readonly ILogger<HospitalController> _logger = logger;
 
     /// <summary>
@@ -243,6 +246,85 @@ public class HospitalController(IHospitalService hospitalService, ILogger<Hospit
         {
             _logger.LogError(ex, "Error activating hospital {HospitalId}", id);
             return StatusCode(500, new { error = "Failed to activate hospital" });
+        }
+    }
+
+    // ── Doctor assignment (Admin only) ────────────────────────────────────────
+
+    /// <summary>
+    /// Get all doctors assigned to a hospital
+    /// </summary>
+    [HttpGet("{id}/doctors")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<DoctorProfile>>> GetDoctors(Guid id)
+    {
+        try
+        {
+            var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(id);
+            return Ok(doctors);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctors for hospital {HospitalId}", id);
+            return StatusCode(500, new { error = "Failed to retrieve doctors" });
+        }
+    }
+
+    /// <summary>
+    /// Assign (replace) the full hospital list for a doctor profile (Admin only).
+    /// PUT /api/hospital/doctors/{doctorProfileId}/hospitals
+    /// Body: { "hospitalIds": ["guid", ...] }
+    /// </summary>
+    [HttpPut("doctors/{doctorProfileId}/hospitals")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<DoctorProfile>> AssignHospitals(
+        Guid doctorProfileId,
+        [FromBody] AssignHospitalsRequest request)
+    {
+        try
+        {
+            var updated = await _doctorProfileService.AssignHospitalsAsync(doctorProfileId, request.HospitalIds);
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error assigning hospitals to doctor {DoctorProfileId}", doctorProfileId);
+            return StatusCode(500, new { error = "Failed to assign hospitals" });
+        }
+    }
+
+    /// <summary>
+    /// Remove a single doctor from a specific hospital (Admin only).
+    /// DELETE /api/hospital/{hospitalId}/doctors/{doctorProfileId}
+    /// </summary>
+    [HttpDelete("{hospitalId}/doctors/{doctorProfileId}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> RemoveDoctorFromHospital(Guid hospitalId, Guid doctorProfileId)
+    {
+        try
+        {
+            var profile = await _doctorProfileService.GetByIdAsync(doctorProfileId);
+            if (profile == null)
+                return NotFound(new { error = "Doctor profile not found" });
+
+            var updated = await _doctorProfileService.AssignHospitalsAsync(
+                doctorProfileId,
+                profile.HospitalIds.Where(h => h != hospitalId).ToList());
+
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing doctor {DoctorProfileId} from hospital {HospitalId}", doctorProfileId, hospitalId);
+            return StatusCode(500, new { error = "Failed to remove doctor from hospital" });
         }
     }
 }
