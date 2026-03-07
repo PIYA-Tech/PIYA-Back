@@ -12,12 +12,14 @@ public class PrescriptionService(
     IAuditService auditService,
     IQRService qrService,
     IConfiguration configuration,
+    IInventoryService inventoryService,
     ILogger<PrescriptionService> logger) : IPrescriptionService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IAuditService _auditService = auditService;
     private readonly IQRService _qrService = qrService;
     private readonly IConfiguration _configuration = configuration;
+    private readonly IInventoryService _inventoryService = inventoryService;
     private readonly ILogger<PrescriptionService> _logger = logger;
 
     public async Task<Prescription> CreatePrescriptionAsync(Prescription prescription)
@@ -147,13 +149,36 @@ public class PrescriptionService(
             item.FulfilledAt = DateTime.UtcNow;
         }
 
-        // Revoke QR token (one-time use) - use system user ID for automatic fulfillment
+        // Revoke QR token (one-time use)
         if (!string.IsNullOrEmpty(prescription.QrToken))
         {
             await _qrService.RevokeTokenAsync(prescription.QrToken, prescription.PatientId, "Prescription fulfilled");
         }
 
         await _context.SaveChangesAsync();
+
+        // Deduct stock for each prescription item — best-effort (don't block fulfillment on stock error)
+        foreach (var item in prescription.Items)
+        {
+            try
+            {
+                await _inventoryService.DecreaseStockAsync(
+                    pharmacyId,
+                    item.MedicationId,
+                    item.Quantity,
+                    prescription.PatientId,
+                    prescriptionId,
+                    referenceNumber: $"RX-{prescriptionId.ToString()[..8]}"
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Stock deduction failed for medication {MedicationId} at pharmacy {PharmacyId} (prescription {PrescriptionId}). " +
+                    "Fulfillment still recorded — manual stock correction may be needed.",
+                    item.MedicationId, pharmacyId, prescriptionId);
+            }
+        }
 
         await _auditService.LogEntityActionAsync(
             "FulfillPrescription",

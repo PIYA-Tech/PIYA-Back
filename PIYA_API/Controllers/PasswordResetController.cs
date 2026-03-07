@@ -76,6 +76,16 @@ public class PasswordResetController(
                 return BadRequest(new { error = "Password must be at least 8 characters long" });
             }
 
+            if (!request.NewPassword.Any(char.IsDigit))
+            {
+                return BadRequest(new { error = "Password must contain at least one digit" });
+            }
+
+            if (request.NewPassword.All(char.IsLetterOrDigit))
+            {
+                return BadRequest(new { error = "Password must contain at least one special character" });
+            }
+
             if (request.NewPassword != request.ConfirmPassword)
             {
                 return BadRequest(new { error = "Passwords do not match" });
