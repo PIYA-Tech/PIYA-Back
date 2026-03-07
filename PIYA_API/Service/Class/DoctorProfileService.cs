@@ -65,7 +65,9 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
     {
         try
         {
-            return await _context.DoctorProfiles.FindAsync(id);
+            return await _context.DoctorProfiles
+                .Include(dp => dp.User)
+                .FirstOrDefaultAsync(dp => dp.Id == id);
         }
         catch (Exception ex)
         {
@@ -138,6 +140,7 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
         try
         {
             return await _context.DoctorProfiles
+                .Include(dp => dp.User)
                 .Where(dp => dp.Specialization == specialization || 
                             (dp.AdditionalSpecializations != null && dp.AdditionalSpecializations.Contains(specialization)))
                 .ToListAsync();
@@ -154,6 +157,7 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
         try
         {
             return await _context.DoctorProfiles
+                .Include(dp => dp.User)
                 .Where(dp => dp.HospitalIds != null && dp.HospitalIds.Contains(hospitalId))
                 .ToListAsync();
         }
@@ -169,6 +173,7 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
         try
         {
             var query = _context.DoctorProfiles
+                .Include(dp => dp.User)
                 .Where(dp => dp.AcceptingNewPatients == true);
 
             if (specialization.HasValue)
