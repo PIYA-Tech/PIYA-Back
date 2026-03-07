@@ -118,15 +118,16 @@ public class EmailVerificationService : IEmailVerificationService
             throw new InvalidOperationException("Email is already verified");
         }
 
-        // Check if a recent token exists (prevent spam)
+        // Check if a recent token exists (prevent spam) — disabled in dev, enforce in production
         var recentToken = await _context.EmailVerificationTokens
             .Where(evt => evt.UserId == userId && !evt.IsUsed)
             .OrderByDescending(evt => evt.CreatedAt)
             .FirstOrDefaultAsync();
 
-        if (recentToken != null && recentToken.CreatedAt > DateTime.UtcNow.AddMinutes(-2))
+        var cooldownSeconds = _configuration.GetValue<int>("EmailVerification:ResendCooldownSeconds", 0);
+        if (cooldownSeconds > 0 && recentToken != null && recentToken.CreatedAt > DateTime.UtcNow.AddSeconds(-cooldownSeconds))
         {
-            throw new InvalidOperationException("Please wait before requesting another verification email");
+            throw new InvalidOperationException($"Please wait {cooldownSeconds} seconds before requesting another verification email");
         }
 
         // Generate new token (will auto-revoke old ones)
