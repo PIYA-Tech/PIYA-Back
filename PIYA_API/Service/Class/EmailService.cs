@@ -16,6 +16,7 @@ public class EmailService : IEmailService
     private readonly int _smtpPort;
     private readonly string _fromEmail;
     private readonly string _fromName;
+    private readonly string? _replyToEmail;
     private readonly string _smtpUsername;
     private readonly string _smtpPassword;
     private readonly bool _enableSsl;
@@ -32,6 +33,7 @@ public class EmailService : IEmailService
         _smtpPort     = int.Parse(_configuration["ExternalApis:EmailService:SmtpPort"] ?? "587");
         _fromEmail    = _configuration["ExternalApis:EmailService:FromEmail"]     ?? "noreply@piya.health";
         _fromName     = _configuration["ExternalApis:EmailService:FromName"]      ?? "PIYA Health";
+        _replyToEmail = _configuration["ExternalApis:EmailService:ReplyToEmail"];
         _smtpUsername = _configuration["ExternalApis:EmailService:SmtpUsername"]  ?? "";
         _smtpPassword = _configuration["ExternalApis:EmailService:SmtpPassword"]  ?? "";
         _enableSsl    = bool.Parse(_configuration["ExternalApis:EmailService:EnableSsl"] ?? "true");
@@ -224,10 +226,17 @@ public class EmailService : IEmailService
             using var message = new MailMessage
             {
                 From = new MailAddress(_fromEmail, _fromName),
+                Sender = new MailAddress(_fromEmail, _fromName),
                 Subject = subject,
                 Body = htmlBody,
                 IsBodyHtml = true
             };
+            // Explicitly set Sender header to prevent iCloud from injecting the
+            // authenticated account address when using a custom-domain alias.
+            message.Headers.Set("Sender", _fromEmail);
+            // Optional Reply-To (e.g. noreply@piya.life) so replies don't go to the SMTP account
+            if (!string.IsNullOrWhiteSpace(_replyToEmail))
+                message.ReplyToList.Add(new MailAddress(_replyToEmail));
             
             message.To.Add(toEmail);
 
