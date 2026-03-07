@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using PIYA_API.Hubs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -12,10 +14,12 @@ namespace PIYA_API.Controllers;
 public class PharmacyInventoryController(
     IInventoryService inventoryService,
     IPharmacyStaffService pharmacyStaffService,
+    IHubContext<InventoryHub> inventoryHub,
     ILogger<PharmacyInventoryController> logger) : ControllerBase
 {
     private readonly IInventoryService _inventoryService = inventoryService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
+    private readonly IHubContext<InventoryHub> _inventoryHub = inventoryHub;
     private readonly ILogger<PharmacyInventoryController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
@@ -97,6 +101,9 @@ public class PharmacyInventoryController(
             };
 
             var result = await _inventoryService.AddOrUpdateInventoryAsync(inventory);
+            await _inventoryHub.Clients
+                .Group($"inventory:{request.PharmacyId}")
+                .SendAsync("InventoryAdded", result);
             return CreatedAtAction(nameof(GetInventoryItem), new { id = result.Id }, result);
         }
         catch (Exception ex)
@@ -115,11 +122,19 @@ public class PharmacyInventoryController(
     {
         try
         {
+            // Fetch before delete so we have pharmacyId for the broadcast
+            var item = await _inventoryService.GetByIdAsync(id);
+            if (item == null)
+                return NotFound(new { error = "Inventory item not found" });
+
             var deleted = await _inventoryService.DeleteAsync(id);
             if (!deleted)
-            {
                 return NotFound(new { error = "Inventory item not found" });
-            }
+
+            await _inventoryHub.Clients
+                .Group($"inventory:{item.PharmacyId}")
+                .SendAsync("InventoryDeleted", id);
+
             return NoContent();
         }
         catch (Exception ex)
@@ -146,6 +161,9 @@ public class PharmacyInventoryController(
         {
             var userId = GetUserId();
             var result = await _inventoryService.UpdateStockAsync(id, request.Quantity, userId, request.Notes);
+            await _inventoryHub.Clients
+                .Group($"inventory:{result.PharmacyId}")
+                .SendAsync("InventoryUpdated", result);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
@@ -177,7 +195,11 @@ public class PharmacyInventoryController(
                 request.Quantity,
                 userId,
                 request.ReferenceNumber);
-            
+
+            await _inventoryHub.Clients
+                .Group($"inventory:{request.PharmacyId}")
+                .SendAsync("InventoryUpdated", result);
+
             return Ok(result);
         }
         catch (InvalidOperationException ex)
@@ -210,7 +232,11 @@ public class PharmacyInventoryController(
                 userId,
                 request.PrescriptionId,
                 request.ReferenceNumber);
-            
+
+            await _inventoryHub.Clients
+                .Group($"inventory:{request.PharmacyId}")
+                .SendAsync("InventoryUpdated", result);
+
             return Ok(result);
         }
         catch (InvalidOperationException ex)

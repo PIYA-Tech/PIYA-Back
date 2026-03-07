@@ -94,6 +94,19 @@ public class AuthController(
                 return StatusCode(500, new { message = "Failed to generate token" });
             }
 
+            // Trigger email verification (best-effort — don't fail registration if email send fails)
+            try
+            {
+                var emailVerificationService = HttpContext.RequestServices
+                    .GetRequiredService<IEmailVerificationService>();
+                await emailVerificationService.GenerateVerificationTokenAsync(
+                    createdUser.Id, ipAddress ?? "", userAgent);
+            }
+            catch (Exception evEx)
+            {
+                _logger.LogWarning(evEx, "Could not send verification email for user {UserId}", createdUser.Id);
+            }
+
             // Return the token key in multiple forms so existing integration tests (and older clients) can find it.
             return Ok(new
             {
@@ -104,6 +117,7 @@ public class AuthController(
                 expiresAt = tokenResponse.ExpiresAt,
                 refreshToken = tokenResponse.RefreshToken,
                 role = createdUser.Role.ToString(),
+                isEmailVerified = createdUser.IsEmailVerified,
                 // legacy short key used by some tests
                 token = tokenResponse.AccessToken
             });
@@ -233,10 +247,13 @@ public class AuthController(
                 UserId = user.Id,
                 Username = user.Username,
                 Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
                 Role = user.Role.ToString(),
                 AccessToken = tokenResponse.AccessToken,
                 RefreshToken = tokenResponse.RefreshToken,
-                ExpiresAt = tokenResponse.ExpiresAt
+                ExpiresAt = tokenResponse.ExpiresAt,
+                IsEmailVerified = user.IsEmailVerified
             });
         }
         catch (ArgumentException ex)
@@ -314,12 +331,13 @@ public class AuthController(
 
             return Ok(new
             {
-                id        = user.Id,
+                userId    = user.Id,
                 username  = user.Username,
                 email     = user.Email,
                 firstName = user.FirstName,
                 lastName  = user.LastName,
                 role      = user.Role.ToString(),
+                isEmailVerified = user.IsEmailVerified,
             });
         }
         catch (Exception ex)
@@ -418,8 +436,11 @@ public class AuthResponse
     public Guid UserId { get; set; }
     public required string Username { get; set; }
     public required string Email { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
     public required string AccessToken { get; set; }
     public DateTime ExpiresAt { get; set; }
     public string? RefreshToken { get; set; }
     public string? Role { get; set; }
+    public bool IsEmailVerified { get; set; }
 }

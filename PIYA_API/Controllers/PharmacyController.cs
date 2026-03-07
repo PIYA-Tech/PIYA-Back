@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using PIYA_API.DTOs;
+using PIYA_API.Hubs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -8,10 +10,14 @@ namespace PIYA_API.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class PharmacyController(ISearchService searchService, IPharmacyService pharmacyService) : ControllerBase
+public class PharmacyController(
+    ISearchService searchService,
+    IPharmacyService pharmacyService,
+    IHubContext<PharmacyHub> pharmacyHub) : ControllerBase
 {
     private readonly ISearchService _searchService = searchService;
     private readonly IPharmacyService _pharmacyService = pharmacyService;
+    private readonly IHubContext<PharmacyHub> _pharmacyHub = pharmacyHub;
 
     /// <summary>
     /// Get all pharmacies (public)
@@ -42,6 +48,8 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
     {
         var pharmacy = DtoToPharmacy(dto);
         var createdPharmacy = await _pharmacyService.Create(pharmacy);
+        await _pharmacyHub.Clients.Group("pharmacies")
+            .SendAsync("PharmacyCreated", createdPharmacy);
         return CreatedAtAction(nameof(GetPharmacy), new { id = createdPharmacy.Id }, createdPharmacy);
     }
 
@@ -54,6 +62,8 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
             var pharmacy = DtoToPharmacy(dto);
             pharmacy.Id = id;
             var updated = await _pharmacyService.Update(pharmacy);
+            await _pharmacyHub.Clients.Group("pharmacies")
+                .SendAsync("PharmacyUpdated", updated);
             return Ok(updated);
         }
         catch (KeyNotFoundException)
@@ -69,6 +79,8 @@ public class PharmacyController(ISearchService searchService, IPharmacyService p
         try
         {
             await _pharmacyService.Delete(id);
+            await _pharmacyHub.Clients.Group("pharmacies")
+                .SendAsync("PharmacyDeleted", id);
             return Ok(new { message = "Pharmacy deleted successfully" });
         }
         catch (KeyNotFoundException)

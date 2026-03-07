@@ -386,6 +386,8 @@ app.MapControllers();
 
     // Map SignalR Hubs
     app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub");
+    app.MapHub<PIYA_API.Hubs.PharmacyHub>("/hubs/pharmacy");
+    app.MapHub<PIYA_API.Hubs.InventoryHub>("/hubs/inventory");
 
     // Seed demo users when explicitly enabled via env-var OR appsettings DemoSeeding:Enabled.
     // Set ENABLE_DEMO_SEEDING=true in CI test steps and local dev; never in production.
