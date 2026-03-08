@@ -90,6 +90,7 @@ public class PharmacyController(
     }
 
     [HttpGet("searchByCountry")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByCountry([FromQuery] Coordinates coordinates)
     {
         var pharmacies = await _searchService.SearchByCountry(coordinates);
@@ -100,6 +101,7 @@ public class PharmacyController(
         return Ok(pharmacies);
     }
     [HttpGet("searchByCity")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByCity([FromQuery] Coordinates coordinates)
     {
         var pharmacies = await _searchService.SearchByCity(coordinates);
@@ -110,6 +112,7 @@ public class PharmacyController(
         return Ok(pharmacies);
     }
     [HttpGet("searchByRadius")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByRadius([FromQuery] Coordinates coordinates, [FromQuery] int radius)
     {
         var pharmacies = await _searchService.SearchByRadius(coordinates, radius);
@@ -123,12 +126,8 @@ public class PharmacyController(
     /// <summary>
     /// Search pharmacies by single medication availability
     /// </summary>
-    /// <param name="medicationId">The medication ID to search for</param>
-    /// <param name="latitude">User's latitude (optional, for distance calculation)</param>
-    /// <param name="longitude">User's longitude (optional, for distance calculation)</param>
-    /// <param name="radiusKm">Maximum distance in kilometers (optional)</param>
-    /// <returns>List of pharmacies with the medication in stock, sorted by distance</returns>
     [HttpGet("search/by-medication/{medicationId}")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByMedication(
         Guid medicationId,
         [FromQuery] double? latitude = null,
@@ -175,9 +174,8 @@ public class PharmacyController(
     /// <summary>
     /// Search pharmacies that have ALL specified medications in stock
     /// </summary>
-    /// <param name="request">Request containing list of medication IDs and optional location</param>
-    /// <returns>Pharmacies sorted by stock match percentage and distance</returns>
     [HttpPost("search/by-multiple-medications")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchByMultipleMedications([FromBody] MultipleMedicationsSearchRequest request)
     {
         try

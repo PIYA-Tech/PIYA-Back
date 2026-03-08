@@ -164,6 +164,26 @@ public class RateLimitingMiddleware
                 if (permit.HasValue) requestLimit = permit.Value;
                 if (windowSeconds.HasValue) timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
             }
+
+            // Apply a tighter limit to public (unauthenticated) search endpoints
+            var isPublicSearch = !context.User.Identity?.IsAuthenticated == true && (
+                context.Request.Path.StartsWithSegments("/api/pharmacy/search") ||
+                context.Request.Path.StartsWithSegments("/api/pharmacy/searchBy") ||
+                context.Request.Path.StartsWithSegments("/api/hospital") ||
+                context.Request.Path.StartsWithSegments("/api/medication/search"));
+
+            if (isPublicSearch)
+            {
+                var permit = _configuration.GetValue<int?>("RateLimiting:Endpoints:PublicSearch:PermitLimit");
+                var windowSeconds = _configuration.GetValue<int?>("RateLimiting:Endpoints:PublicSearch:WindowSeconds");
+                if (permit.HasValue) requestLimit = permit.Value;
+                if (windowSeconds.HasValue) timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
+                // Always key by IP for anonymous callers — ignore any user id claim
+                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if (context.Request.Headers.ContainsKey("X-Forwarded-For"))
+                    ip = context.Request.Headers["X-Forwarded-For"].ToString().Split(',')[0].Trim();
+                rateLimitKey = $"publicsearch:ip:{ip}";
+            }
         }
         catch
         {
