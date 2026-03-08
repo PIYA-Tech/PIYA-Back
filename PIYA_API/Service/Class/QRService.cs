@@ -486,7 +486,7 @@ public class QRService : IQRService
         return Convert.ToBase64String(hash);
     }
 
-    private static string ComputeSha256Hash(string rawData)
+    private string ComputeSha256Hash(string rawData)
     {
         using var sha256 = SHA256.Create();
         var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));

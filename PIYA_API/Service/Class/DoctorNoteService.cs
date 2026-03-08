@@ -208,7 +208,7 @@ public class DoctorNoteService(
         return $"{prefix}{nextSequence:D6}"; // e.g., DN-2026-000001
     }
 
-    private static string GenerateSecureToken()
+    private string GenerateSecureToken()
     {
         // Generate 32-byte random token, encoded as URL-safe base64 (no +, /, or = padding)
         var bytes = new byte[32];
@@ -220,7 +220,7 @@ public class DoctorNoteService(
             .TrimEnd('=');
     }
 
-    private static string HashToken(string token)
+    private string HashToken(string token)
     {
         // Normalise URL-safe base64 back to standard base64 before hashing
         var normalized = token
@@ -230,11 +230,10 @@ public class DoctorNoteService(
         switch (normalized.Length % 4)
         {
             case 2: normalized += "=="; break;
-            case 3: normalized += "=";  break;
+            case 3: normalized += "="; break;
         }
-        using var sha256 = SHA256.Create();
         var bytes = Encoding.UTF8.GetBytes(normalized);
-        var hash = sha256.ComputeHash(bytes);
+        var hash = SHA256.HashData(bytes);
         return Convert.ToBase64String(hash);
     }
 }
