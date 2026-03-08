@@ -155,4 +155,16 @@ public class AuditService(PharmacyApiDbContext context, ILogger<AuditService> lo
 
         return logs;
     }
+
+    public async Task<List<AuditLog>> GetAllLogsAsync(int pageNumber = 1, int pageSize = 50)
+    {
+        var logs = await _context.AuditLogs
+            .OrderByDescending(a => a.CreatedAt)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .AsNoTracking()
+            .ToListAsync();
+
+        return logs;
+    }
 }

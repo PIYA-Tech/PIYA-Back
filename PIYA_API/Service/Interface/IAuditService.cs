@@ -51,4 +51,9 @@ public interface IAuditService
     /// Get failed security events
     /// </summary>
     Task<List<AuditLog>> GetFailedSecurityEventsAsync(int pageNumber = 1, int pageSize = 50);
+
+    /// <summary>
+    /// Get all audit logs (admin)
+    /// </summary>
+    Task<List<AuditLog>> GetAllLogsAsync(int pageNumber = 1, int pageSize = 50);
 }
