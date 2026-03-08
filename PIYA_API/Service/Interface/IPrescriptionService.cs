@@ -61,4 +61,14 @@ public interface IPrescriptionService
     /// Get prescriptions expiring soon
     /// </summary>
     Task<List<Prescription>> GetExpiringSoonAsync(int daysThreshold = 7);
+
+    /// <summary>
+    /// Get all prescriptions (Admin only), optionally filtered by status
+    /// </summary>
+    Task<List<Prescription>> GetAllAsync(PrescriptionStatus? status = null, int pageNumber = 1, int pageSize = 50);
+
+    /// <summary>
+    /// Permanently delete a prescription (Admin only)
+    /// </summary>
+    Task DeleteAsync(Guid id);
 }

@@ -260,6 +260,44 @@ public class PrescriptionService(
             .ToListAsync();
     }
 
+    public async Task<List<Prescription>> GetAllAsync(PrescriptionStatus? status = null, int pageNumber = 1, int pageSize = 50)
+    {
+        var query = _context.Prescriptions
+            .Include(p => p.Patient)
+            .Include(p => p.Doctor)
+            .Include(p => p.Items)
+                .ThenInclude(i => i.Medication)
+            .AsQueryable();
+
+        if (status.HasValue)
+            query = query.Where(p => p.Status == status.Value);
+
+        return await query
+            .OrderByDescending(p => p.IssuedAt)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        var prescription = await _context.Prescriptions
+            .Include(p => p.Items)
+            .FirstOrDefaultAsync(p => p.Id == id)
+            ?? throw new KeyNotFoundException($"Prescription {id} not found");
+
+        _context.Prescriptions.Remove(prescription);
+        await _context.SaveChangesAsync();
+
+        await _auditService.LogEntityActionAsync(
+            "DeletePrescription",
+            "Prescription",
+            id.ToString(),
+            Guid.Empty,
+            $"Prescription {id} permanently deleted by admin"
+        );
+    }
+
     private string GenerateDigitalSignature(Prescription prescription)
     {
         var data = $"{prescription.Id}|{prescription.PatientId}|{prescription.DoctorId}|{prescription.IssuedAt:O}";

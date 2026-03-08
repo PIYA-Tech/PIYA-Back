@@ -64,7 +64,7 @@ public class PrescriptionController(
     /// <summary>
     /// Get prescription by ID
     /// </summary>
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     public async Task<ActionResult<Prescription>> GetById(Guid id)
     {
         try
@@ -152,7 +152,7 @@ public class PrescriptionController(
     /// <summary>
     /// Generate QR code for prescription (5-minute validity)
     /// </summary>
-    [HttpPost("{id}/generate-qr")]
+    [HttpPost("{id:guid}/generate-qr")]
     [Authorize(Roles = "Patient")]
     public async Task<ActionResult<object>> GenerateQrCode(Guid id)
     {
@@ -231,7 +231,7 @@ public class PrescriptionController(
     /// <summary>
     /// Fulfill prescription (Pharmacist only)
     /// </summary>
-    [HttpPost("{id}/fulfill")]
+    [HttpPost("{id:guid}/fulfill")]
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<Prescription>> FulfillPrescription(Guid id, [FromBody] FulfillPrescriptionRequest request)
     {
@@ -266,7 +266,7 @@ public class PrescriptionController(
     /// <summary>
     /// Fulfill prescription item (Pharmacist only)
     /// </summary>
-    [HttpPost("item/{itemId}/fulfill")]
+    [HttpPost("item/{itemId:guid}/fulfill")]
     [Authorize(Roles = "Pharmacist,Admin")]
     public async Task<ActionResult<PrescriptionItem>> FulfillPrescriptionItem(Guid itemId)
     {
@@ -289,7 +289,7 @@ public class PrescriptionController(
     /// <summary>
     /// Cancel prescription (Doctor only)
     /// </summary>
-    [HttpPost("{id}/cancel")]
+    [HttpPost("{id:guid}/cancel")]
     [Authorize(Roles = "Doctor,Admin")]
     public async Task<ActionResult<Prescription>> Cancel(Guid id, [FromBody] CancelPrescriptionRequest request)
     {
@@ -326,7 +326,7 @@ public class PrescriptionController(
     /// <summary>
     /// Check if prescription is expired
     /// </summary>
-    [HttpGet("{id}/is-expired")]
+    [HttpGet("{id:guid}/is-expired")]
     public async Task<ActionResult<object>> IsExpired(Guid id)
     {
         try
@@ -353,6 +353,55 @@ public class PrescriptionController(
         {
             _logger.LogError(ex, "Error checking prescription expiry {PrescriptionId}", id);
             return StatusCode(500, new { error = "Failed to check expiry" });
+        }
+    }
+
+    /// <summary>
+    /// Get all prescriptions — Admin only, paginated, optional status filter
+    /// </summary>
+    [HttpGet("all")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<ActionResult<object>> GetAll(
+        [FromQuery] string? status = null,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        try
+        {
+            PrescriptionStatus? prescriptionStatus = null;
+            if (!string.IsNullOrEmpty(status) && Enum.TryParse<PrescriptionStatus>(status, true, out var parsed))
+                prescriptionStatus = parsed;
+
+            var prescriptions = await _prescriptionService.GetAllAsync(prescriptionStatus, pageNumber, pageSize);
+            return Ok(prescriptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving all prescriptions");
+            return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
+        }
+    }
+
+    /// <summary>
+    /// Permanently delete a prescription — Admin only
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        try
+        {
+            await _prescriptionService.DeleteAsync(id);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Prescription not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting prescription {PrescriptionId}", id);
+            return StatusCode(500, new { error = "Failed to delete prescription" });
         }
     }
 
