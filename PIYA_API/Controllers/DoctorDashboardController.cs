@@ -529,7 +529,7 @@ public class DoctorDashboardController(
     #region Prescriptions
 
     /// <summary>
-    /// Create prescription for patient
+    /// Create prescription for patient — must be tied to a completed appointment
     /// </summary>
     [HttpPost("prescriptions")]
     public async Task<ActionResult<Prescription>> CreatePrescription([FromBody] CreatePrescriptionRequest request)
@@ -543,6 +543,26 @@ public class DoctorDashboardController(
             if (!canCreate)
             {
                 return Forbid();
+            }
+
+            // Require a completed appointment
+            if (!request.AppointmentId.HasValue)
+            {
+                return BadRequest(new { error = "A completed appointment must be selected before creating a prescription." });
+            }
+
+            var appointment = await _appointmentService.GetByIdAsync(request.AppointmentId.Value);
+            if (appointment == null || appointment.DoctorId != userId)
+            {
+                return BadRequest(new { error = "Appointment not found or does not belong to you." });
+            }
+            if (appointment.Status != AppointmentStatus.Completed)
+            {
+                return BadRequest(new { error = "Prescriptions can only be created for completed appointments." });
+            }
+            if (appointment.PatientId != request.PatientId)
+            {
+                return BadRequest(new { error = "Patient does not match the selected appointment." });
             }
 
             var prescription = new Prescription

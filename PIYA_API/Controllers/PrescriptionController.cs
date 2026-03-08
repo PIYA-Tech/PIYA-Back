@@ -13,11 +13,13 @@ public class PrescriptionController(
     IPrescriptionService prescriptionService,
     IQRService qrService,
     IPharmacyStaffService pharmacyStaffService,
+    IAppointmentService appointmentService,
     ILogger<PrescriptionController> logger) : ControllerBase
 {
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
     private readonly IQRService _qrService = qrService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
+    private readonly IAppointmentService _appointmentService = appointmentService;
     private readonly ILogger<PrescriptionController> _logger = logger;
 
     /// <summary>
@@ -31,6 +33,23 @@ public class PrescriptionController(
         {
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            // Doctors must link prescriptions to a completed appointment
+            if (userRole == "Doctor")
+            {
+                if (!dto.AppointmentId.HasValue)
+                    return BadRequest(new { error = "A completed appointment is required to create a prescription." });
+
+                var appointment = await _appointmentService.GetByIdAsync(dto.AppointmentId.Value);
+                if (appointment == null)
+                    return NotFound(new { error = "Appointment not found." });
+                if (appointment.Status != AppointmentStatus.Completed)
+                    return BadRequest(new { error = "Prescriptions can only be created for completed appointments." });
+                if (appointment.DoctorId != userId)
+                    return Forbid();
+                if (appointment.PatientId != dto.PatientId)
+                    return BadRequest(new { error = "Patient does not match the appointment." });
+            }
 
             var prescription = new Prescription
             {
