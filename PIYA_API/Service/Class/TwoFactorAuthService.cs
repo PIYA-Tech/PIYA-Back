@@ -201,7 +201,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
 
     // Helper methods
 
-    private string GenerateSecretKey()
+    private static string GenerateSecretKey()
     {
         // Generate a random 20-byte secret and encode as Base32
         var bytes = new byte[20];
@@ -209,7 +209,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return Base32Encode(bytes);
     }
 
-    private List<string> GenerateBackupCodes(int count = 10)
+    private static List<string> GenerateBackupCodes(int count = 10)
     {
         var codes = new List<string>();
         for (int i = 0; i < count; i++)
@@ -222,7 +222,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return codes;
     }
 
-    private string GenerateNumericCode(int length = 6)
+    private static string GenerateNumericCode(int length = 6)
     {
         var bytes = new byte[4];
         RandomNumberGenerator.Fill(bytes);
@@ -230,7 +230,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return num.ToString($"D{length}");
     }
 
-    private bool VerifyTempCode(Guid userId, string code)
+    private static bool VerifyTempCode(Guid userId, string code)
     {
         if (_tempCodes.TryGetValue(userId, out var tempCode))
         {
@@ -261,7 +261,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return false;
     }
 
-    private string GenerateTotpCode(string secretKey, long timeStep)
+    private static string GenerateTotpCode(string secretKey, long timeStep)
     {
         var keyBytes = Base32Decode(secretKey);
         var timeBytes = BitConverter.GetBytes(timeStep);
@@ -281,7 +281,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return otp.ToString("D6");
     }
 
-    private string GenerateQrCodeUri(string email, string secretKey)
+    private static string GenerateQrCodeUri(string email, string secretKey)
     {
         var issuer = "PIYA";
         return $"otpauth://totp/{issuer}:{email}?secret={secretKey}&issuer={issuer}";
