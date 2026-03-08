@@ -3,6 +3,11 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+.markdownlint.json
+.editorconfig
+appsettings.Development.json
+appsettings.json
+
 # User-specific files
 *.rsuser
 *.suo
@@ -361,4 +366,20 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Application settings with sensitive data
 /PIYA_API/appsettings.json
+/PIYA_API/appsettings.Production.json
+/PIYA_API/appsettings.Staging.json
+/PIYA_API/appsettings.Local.json
+/PIYA_API/appsettings.*.local.json
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# Secrets
+secrets.json
+**/secrets.json
