@@ -21,6 +21,16 @@ public interface IEmailService
     Task SendAppointmentConfirmationAsync(string toEmail, string patientName, DateTime appointmentDate, string doctorName, string hospitalName);
     
     /// <summary>
+    /// Send appointment cancellation email (sent to patient when doctor or admin cancels)
+    /// </summary>
+    Task SendAppointmentCancelledAsync(string toEmail, string patientName, DateTime appointmentDate, string doctorName, string cancelledBy, string? reason);
+
+    /// <summary>
+    /// Send appointment rescheduled email (sent to patient when doctor reschedules)
+    /// </summary>
+    Task SendAppointmentRescheduledAsync(string toEmail, string patientName, DateTime oldDate, DateTime newDate, string doctorName);
+    
+    /// <summary>
     /// Send appointment reminder email
     /// </summary>
     Task SendAppointmentReminderAsync(string toEmail, string patientName, DateTime appointmentDate, string doctorName);

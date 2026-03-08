@@ -5,10 +5,11 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class AppointmentService(PharmacyApiDbContext context, IAuditService auditService, ILogger<AppointmentService> logger) : IAppointmentService
+public class AppointmentService(PharmacyApiDbContext context, IAuditService auditService, IEmailService emailService, ILogger<AppointmentService> logger) : IAppointmentService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IAuditService _auditService = auditService;
+    private readonly IEmailService _emailService = emailService;
     private readonly ILogger<AppointmentService> _logger = logger;
 
     public async Task<Appointment> BookAppointmentAsync(Appointment appointment)
@@ -168,6 +169,33 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             $"Appointment cancelled: {reason}"
         );
 
+        // Notify the patient by email when someone else (doctor/admin) cancels
+        try
+        {
+            var wasDoctor = cancelledBy != appointment.PatientId;
+            if (wasDoctor && appointment.Patient?.Email != null)
+            {
+                var patientName  = $"{appointment.Patient.FirstName} {appointment.Patient.LastName}".Trim();
+                var doctorName   = appointment.Doctor != null
+                    ? $"Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}".Trim()
+                    : "your doctor";
+                var cancelledByLabel = wasDoctor ? doctorName : "you";
+
+                await _emailService.SendAppointmentCancelledAsync(
+                    appointment.Patient.Email,
+                    patientName,
+                    appointment.ScheduledAt,
+                    doctorName,
+                    cancelledByLabel,
+                    reason
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send cancellation email for appointment {AppointmentId}", id);
+        }
+
         return appointment;
     }
 
@@ -201,6 +229,30 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             appointment.PatientId,
             $"Rescheduled from {oldTime} to {newScheduledAt}"
         );
+
+        // Notify the patient by email
+        try
+        {
+            if (appointment.Patient?.Email != null)
+            {
+                var patientName = $"{appointment.Patient.FirstName} {appointment.Patient.LastName}".Trim();
+                var doctorName  = appointment.Doctor != null
+                    ? $"Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}".Trim()
+                    : "your doctor";
+
+                await _emailService.SendAppointmentRescheduledAsync(
+                    appointment.Patient.Email,
+                    patientName,
+                    oldTime,
+                    newScheduledAt,
+                    doctorName
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send reschedule email for appointment {AppointmentId}", id);
+        }
 
         return appointment;
     }

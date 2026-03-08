@@ -452,6 +452,37 @@ public class DoctorDashboardController(
     }
 
     /// <summary>
+    /// Reschedule appointment (Doctor only) — sends email notification to patient
+    /// </summary>
+    [HttpPost("appointments/{id}/reschedule")]
+    public async Task<ActionResult<Appointment>> RescheduleAppointment(Guid id, [FromBody] RescheduleAppointmentRequest request)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var appointment = await _appointmentService.GetByIdAsync(id);
+
+            if (appointment == null)
+                return NotFound(new { error = "Appointment not found" });
+
+            if (appointment.DoctorId != userId)
+                return Forbid();
+
+            var rescheduled = await _appointmentService.RescheduleAppointmentAsync(id, request.NewScheduledAt);
+            return Ok(rescheduled);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error rescheduling appointment");
+            return StatusCode(500, new { error = "Failed to reschedule appointment" });
+        }
+    }
+
+    /// <summary>
     /// Get unique patients this doctor has seen (derived from appointment history).
     /// Returns deduplicated patient records with last-visit date and appointment count.
     /// </summary>

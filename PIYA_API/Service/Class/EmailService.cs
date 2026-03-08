@@ -142,6 +142,60 @@ public class EmailService : IEmailService
         await SendEmailAsync(toEmail, subject, htmlBody);
     }
 
+    public async Task SendAppointmentCancelledAsync(string toEmail, string patientName, DateTime appointmentDate, string doctorName, string cancelledBy, string? reason)
+    {
+        var subject = "Appointment Cancelled – PIYA Health";
+        var reasonLine = !string.IsNullOrWhiteSpace(reason)
+            ? $"<p><strong>Reason:</strong> {reason}</p>"
+            : string.Empty;
+
+        var htmlBody = $@"
+            <html>
+            <body style='font-family: Arial, sans-serif;'>
+                <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+                    <h2 style='color: #e74c3c;'>❌ Appointment Cancelled</h2>
+                    <p>Dear {patientName},</p>
+                    <p>We regret to inform you that your appointment has been <strong>cancelled</strong> by <strong>{cancelledBy}</strong>.</p>
+                    <div style='background-color: #fdf0ed; padding: 20px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #e74c3c;'>
+                        <p><strong>Original Date &amp; Time:</strong> {appointmentDate:dddd, MMMM dd, yyyy 'at' HH:mm}</p>
+                        <p><strong>Doctor:</strong> {doctorName}</p>
+                        {reasonLine}
+                    </div>
+                    <p>Please log in to PIYA to book a new appointment at your convenience.</p>
+                    <hr style='border: 1px solid #ecf0f1; margin: 30px 0;'>
+                    <p style='color: #95a5a6; font-size: 12px;'>PIYA Health – Digital Healthcare Platform</p>
+                </div>
+            </body>
+            </html>";
+
+        await SendEmailAsync(toEmail, subject, htmlBody);
+    }
+
+    public async Task SendAppointmentRescheduledAsync(string toEmail, string patientName, DateTime oldDate, DateTime newDate, string doctorName)
+    {
+        var subject = "Appointment Rescheduled – PIYA Health";
+        var htmlBody = $@"
+            <html>
+            <body style='font-family: Arial, sans-serif;'>
+                <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+                    <h2 style='color: #f39c12;'>📅 Appointment Rescheduled</h2>
+                    <p>Dear {patientName},</p>
+                    <p>Your appointment with <strong>{doctorName}</strong> has been rescheduled.</p>
+                    <div style='background-color: #fff8ec; padding: 20px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #f39c12;'>
+                        <p><strong>Previous Date &amp; Time:</strong> <span style='text-decoration: line-through; color: #999;'>{oldDate:dddd, MMMM dd, yyyy 'at' HH:mm}</span></p>
+                        <p><strong>New Date &amp; Time:</strong> {newDate:dddd, MMMM dd, yyyy 'at' HH:mm}</p>
+                        <p><strong>Doctor:</strong> {doctorName}</p>
+                    </div>
+                    <p>Please log in to PIYA if you need to make any further changes.</p>
+                    <hr style='border: 1px solid #ecf0f1; margin: 30px 0;'>
+                    <p style='color: #95a5a6; font-size: 12px;'>PIYA Health – Digital Healthcare Platform</p>
+                </div>
+            </body>
+            </html>";
+
+        await SendEmailAsync(toEmail, subject, htmlBody);
+    }
+
     public async Task SendAppointmentReminderAsync(string toEmail, string patientName, DateTime appointmentDate, string doctorName)
     {
         var subject = "Appointment Reminder - Tomorrow";
