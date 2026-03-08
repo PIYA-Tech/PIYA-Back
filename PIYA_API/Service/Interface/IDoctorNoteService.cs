@@ -36,6 +36,11 @@ public interface IDoctorNoteService
     /// Verify public token and get note (for anonymous public access)
     /// </summary>
     Task<DoctorNote?> VerifyPublicTokenAsync(string publicToken);
+
+    /// <summary>
+    /// Regenerate and return a fresh public token for a note (patient use)
+    /// </summary>
+    Task<string> RegeneratePublicTokenAsync(Guid noteId);
     
     /// <summary>
     /// Check if note is expired

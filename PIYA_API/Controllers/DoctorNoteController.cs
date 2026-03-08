@@ -171,6 +171,41 @@ public class DoctorNoteController(
     }
 
     /// <summary>
+    /// Get (or regenerate) the public verification token for a note — Patient only
+    /// </summary>
+    /// <remarks>
+    /// Each call issues a fresh token and invalidates the previous one.
+    /// The patient uses this to generate a QR code to present to their employer/school.
+    /// </remarks>
+    [HttpPost("{id}/patient-token")]
+    [Authorize(Roles = "Patient")]
+    public async Task<ActionResult<PatientTokenResponse>> GetPatientToken(Guid id)
+    {
+        try
+        {
+            var note = await _doctorNoteService.GetByIdAsync(id);
+            if (note == null)
+                return NotFound(new { error = "Doctor note not found" });
+
+            var patientId = GetUserId();
+            if (note.PatientId != patientId)
+                return Forbid();
+
+            if (note.Status == DoctorNoteStatus.Revoked)
+                return BadRequest(new { error = "This note has been revoked and cannot be shared." });
+
+            var token = await _doctorNoteService.RegeneratePublicTokenAsync(id);
+
+            return Ok(new PatientTokenResponse { PublicToken = token });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating patient token for note {NoteId}", id);
+            return StatusCode(500, new { error = "Failed to generate token" });
+        }
+    }
+
+    /// <summary>
     /// Revoke a doctor note (Doctor only)
     /// </summary>
     /// <remarks>
@@ -217,9 +252,9 @@ public class DoctorNoteController(
     /// This endpoint allows anyone to verify the authenticity of a medical certificate
     /// by scanning the QR code. Returns minimal public information.
     /// </remarks>
-    [HttpGet("verify/{token}")]
+    [HttpGet("verify")]
     [AllowAnonymous]
-    public async Task<ActionResult<DoctorNotePublicDto>> VerifyToken(string token)
+    public async Task<ActionResult<DoctorNotePublicDto>> VerifyToken([FromQuery] string token)
     {
         try
         {
@@ -302,9 +337,13 @@ public class DoctorNoteController(
         {
             Id = note.Id,
             PatientId = note.PatientId,
-            PatientName = $"{note.Patient.FirstName} {note.Patient.LastName}",
+            PatientName = note.Patient is not null
+                ? $"{note.Patient.FirstName} {note.Patient.LastName}"
+                : "Unknown Patient",
             DoctorId = note.DoctorId,
-            DoctorName = $"Dr. {note.Doctor.FirstName} {note.Doctor.LastName}",
+            DoctorName = note.Doctor is not null
+                ? $"Dr. {note.Doctor.FirstName} {note.Doctor.LastName}"
+                : "Unknown Doctor",
             AppointmentId = note.AppointmentId,
             Title = note.Title,
             Summary = note.Summary,
@@ -352,6 +391,11 @@ public class CreateDoctorNoteResponse
 public class RevokeNoteRequest
 {
     public string? Reason { get; set; }
+}
+
+public class PatientTokenResponse
+{
+    public required string PublicToken { get; set; }
 }
 
 public class DoctorNoteDto

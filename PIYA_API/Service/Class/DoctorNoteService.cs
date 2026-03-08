@@ -55,6 +55,7 @@ public class DoctorNoteService(
     public async Task<List<DoctorNote>> GetPatientNotesAsync(Guid patientId)
     {
         return await _context.DoctorNotes
+            .Include(n => n.Patient)
             .Include(n => n.Doctor)
             .Include(n => n.Appointment)
             .Where(n => n.PatientId == patientId)
@@ -66,6 +67,7 @@ public class DoctorNoteService(
     {
         return await _context.DoctorNotes
             .Include(n => n.Patient)
+            .Include(n => n.Doctor)
             .Include(n => n.Appointment)
             .Where(n => n.DoctorId == doctorId)
             .OrderByDescending(n => n.IssuedAt)
@@ -135,6 +137,20 @@ public class DoctorNoteService(
         );
 
         return note;
+    }
+
+    public async Task<string> RegeneratePublicTokenAsync(Guid noteId)
+    {
+        var note = await _context.DoctorNotes.FindAsync(noteId)
+            ?? throw new InvalidOperationException("Doctor note not found");
+
+        var newToken = GenerateSecureToken();
+        note.PublicTokenHash = HashToken(newToken);
+        note.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        return newToken;
     }
 
     public bool IsNoteExpired(DoctorNote note)
