@@ -210,17 +210,30 @@ public class DoctorNoteService(
 
     private string GenerateSecureToken()
     {
-        // Generate 32-byte random token
+        // Generate 32-byte random token, encoded as URL-safe base64 (no +, /, or = padding)
         var bytes = new byte[32];
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(bytes);
-        return Convert.ToBase64String(bytes);
+        return Convert.ToBase64String(bytes)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
     }
 
     private string HashToken(string token)
     {
+        // Normalise URL-safe base64 back to standard base64 before hashing
+        var normalized = token
+            .Replace('-', '+')
+            .Replace('_', '/');
+        // Re-add padding if needed
+        switch (normalized.Length % 4)
+        {
+            case 2: normalized += "=="; break;
+            case 3: normalized += "=";  break;
+        }
         using var sha256 = SHA256.Create();
-        var bytes = Encoding.UTF8.GetBytes(token);
+        var bytes = Encoding.UTF8.GetBytes(normalized);
         var hash = sha256.ComputeHash(bytes);
         return Convert.ToBase64String(hash);
     }
