@@ -21,8 +21,12 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         var user = await _dbContext.Users
             .SingleOrDefaultAsync(x => x.Username == username || x.Email == username);
 
-        // User not found
+        // User not found — return null (same as wrong password to avoid user enumeration)
         if (user == null)
+            return null;
+
+        // Deactivated accounts cannot authenticate
+        if (!user.IsActive)
             return null;
 
         // Verify password

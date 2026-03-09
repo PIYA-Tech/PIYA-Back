@@ -91,10 +91,14 @@ public class SearchService(
             }
         }
 
-        // Sort by distance (closest first)
-        return pharmaciesInRadius
-            .OrderBy(p => _coordinatesService.CalculateDistance(coordinates, p.Coordinates).Result)
-            .ToList();
+        // Sort by distance (closest first) — pre-compute async distances to avoid .Result deadlock
+        var withDistances = new List<(Pharmacy pharmacy, double distance)>();
+        foreach (var pharmacy in pharmaciesInRadius)
+        {
+            var dist = await _coordinatesService.CalculateDistance(coordinates, pharmacy.Coordinates);
+            withDistances.Add((pharmacy, dist));
+        }
+        return withDistances.OrderBy(x => x.distance).Select(x => x.pharmacy).ToList();
     }
 
     public async Task<List<PharmacySearchResult>> SearchByMedicationAsync(Guid medicationId, Coordinates? userLocation = null, int? radiusKm = null)

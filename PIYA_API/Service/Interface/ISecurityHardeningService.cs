@@ -51,6 +51,11 @@ public interface ISecurityHardeningService
     Task<List<FailedLoginAttempt>> GetFailedLoginAttemptsAsync(string email, TimeSpan? within = null);
     
     /// <summary>
+    /// Record a single failed login attempt for lockout tracking
+    /// </summary>
+    Task RecordFailedLoginAttemptAsync(string email, string? ipAddress);
+
+    /// <summary>
     /// Reset failed login counter
     /// </summary>
     Task ResetFailedLoginAttemptsAsync(string email);

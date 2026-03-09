@@ -115,7 +115,7 @@ if (cacheProvider == "Redis")
     else
     {
         // Fallback to in-memory cache if Redis is not properly configured
-        Console.WriteLine("Warning: Redis not configured. Using in-memory cache.");
+        Log.Warning("Redis not configured or using placeholder. Using in-memory cache.");
         builder.Services.AddDistributedMemoryCache();
     }
 }
@@ -210,14 +210,10 @@ builder.Services.AddAuthentication(options =>
     {
         OnAuthenticationFailed = context =>
         {
-            Console.WriteLine($"JWT Auth Failed: {context.Exception.Message}");
+            Log.Debug("JWT Auth Failed: {Message}", context.Exception.Message);
             return Task.CompletedTask;
         },
-        OnTokenValidated = context =>
-        {
-            Console.WriteLine("JWT Token Validated Successfully");
-            return Task.CompletedTask;
-        }
+        OnTokenValidated = _ => Task.CompletedTask
     };
 });
 

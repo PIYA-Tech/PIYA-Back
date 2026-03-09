@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -13,6 +15,8 @@ public class AuthController(
     IConfiguration configuration,
     IAuditService auditService,
     ITwoFactorAuthService twoFactorService,
+    ISecurityHardeningService securityHardeningService,
+    IOptions<SecurityOptions> securityOptions,
     ILogger<AuthController> logger) : ControllerBase
 {
     private readonly IUserService _userService = userService;
@@ -20,6 +24,8 @@ public class AuthController(
     private readonly IConfiguration _configuration = configuration;
     private readonly IAuditService _auditService = auditService;
     private readonly ITwoFactorAuthService _twoFactorService = twoFactorService;
+    private readonly ISecurityHardeningService _securityHardeningService = securityHardeningService;
+    private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<AuthController> _logger = logger;
 
     [HttpPost("register")]
@@ -174,73 +180,62 @@ public class AuthController(
             if (string.IsNullOrWhiteSpace(identifier))
             {
                 await _auditService.LogSecurityEventAsync(
-                    "LoginFailed",
-                    null,
-                    ipAddress,
-                    userAgent,
-                    false,
-                    "Login attempted without username or email"
-                );
+                    "LoginFailed", null, ipAddress, userAgent, false,
+                    "Login attempted without username or email");
                 return BadRequest(new { message = "Username or email is required" });
+            }
+
+            // Check brute-force lockout before touching the DB for the user
+            var failedAttempts = await _securityHardeningService.GetFailedLoginAttemptsAsync(
+                identifier, TimeSpan.FromMinutes(_securityOptions.LockoutDurationMinutes));
+            if (failedAttempts.Count >= _securityOptions.MaxLoginAttempts)
+            {
+                await _auditService.LogSecurityEventAsync(
+                    "LoginLockedOut", null, ipAddress, userAgent, false,
+                    $"Locked-out account login attempt: {identifier}");
+                return StatusCode(429, new { message = "Too many failed attempts. Please try again later." });
             }
 
             var user = await _userService.Authenticate(identifier, request.Password);
 
             if (user == null)
             {
+                // Record failed attempt for lockout tracking
+                await _securityHardeningService.RecordFailedLoginAttemptAsync(identifier, ipAddress);
+
                 await _auditService.LogSecurityEventAsync(
-                    "LoginFailed",
-                    null,
-                    ipAddress,
-                    userAgent,
-                    false,
-                    $"Invalid credentials for username: {request.Username}"
-                );
+                    "LoginFailed", null, ipAddress, userAgent, false,
+                    $"Invalid credentials for identifier: {identifier}");
                 return Unauthorized(new { message = "Invalid username or password" });
             }
+
+            // Successful login — clear any prior failed attempts
+            await _securityHardeningService.ResetFailedLoginAttemptsAsync(identifier);
 
             // Check if 2FA is enabled
             var requires2FA = await _twoFactorService.IsTwoFactorEnabledAsync(user.Id);
             if (requires2FA)
             {
-                // Return an opaque challenge token instead of the real userId to prevent
-                // user-enumeration via the 2FA pending response.
                 var challengeToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-                // Store the mapping in the distributed/in-process 2FA temp-codes slot so the
-                // verify endpoint can resolve it. We reuse TwoFactorAuthService SMS/Email path
-                // which already stores a code keyed by userId; here we log the pending state.
                 await _auditService.LogSecurityEventAsync(
-                    "LoginPending2FA",
-                    user.Id,
-                    ipAddress,
-                    userAgent,
-                    true,
-                    $"Login successful, awaiting 2FA verification. Challenge: {challengeToken[..8]}…"
-                );
+                    "LoginPending2FA", user.Id, ipAddress, userAgent, true,
+                    $"Login successful, awaiting 2FA verification. Challenge: {challengeToken[..8]}…");
 
                 return Ok(new
                 {
                     requires2FA = true,
-                    userId = user.Id,   // retained for client compatibility — rate-limiting + lockout on /2fa/verify prevents brute-force
+                    userId = user.Id,
                     message = "Please provide 2FA code"
                 });
             }
 
             var tokenResponse = await _jwtService.GenerateSecurityToken(user.Username);
-
             if (tokenResponse == null)
-            {
                 return StatusCode(500, new { message = "Failed to generate token" });
-            }
 
             await _auditService.LogSecurityEventAsync(
-                "LoginSuccess",
-                user.Id,
-                ipAddress,
-                userAgent,
-                true,
-                $"User logged in: {user.Username}"
-            );
+                "LoginSuccess", user.Id, ipAddress, userAgent, true,
+                $"User logged in: {user.Username}");
 
             return Ok(new AuthResponse
             {
@@ -259,25 +254,13 @@ public class AuthController(
         catch (ArgumentException ex)
         {
             await _auditService.LogSecurityEventAsync(
-                "LoginFailed",
-                null,
-                ipAddress,
-                userAgent,
-                false,
-                $"Login error: {ex.Message}"
-            );
+                "LoginFailed", null, ipAddress, userAgent, false, $"Login error: {ex.Message}");
             return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
             await _auditService.LogSecurityEventAsync(
-                "LoginFailed",
-                null,
-                ipAddress,
-                userAgent,
-                false,
-                $"Login error: {ex.Message}"
-            );
+                "LoginFailed", null, ipAddress, userAgent, false, $"Login error: {ex.Message}");
             return StatusCode(500, new { message = "An error occurred during login" });
         }
     }

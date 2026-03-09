@@ -313,6 +313,19 @@ public class SecurityHardeningService(
         return [];
     }
 
+    public async Task RecordFailedLoginAttemptAsync(string email, string? ipAddress)
+    {
+        var list = _failedLogins.GetOrAdd(email, _ => []);
+        list.Add(new FailedLoginAttempt
+        {
+            Email = email,
+            IpAddress = ipAddress ?? "unknown",
+            AttemptedAt = DateTime.UtcNow,
+            FailureReason = "InvalidCredentials"
+        });
+        await Task.CompletedTask;
+    }
+
     public async Task ResetFailedLoginAttemptsAsync(string email)
     {
         _failedLogins.TryRemove(email, out _);

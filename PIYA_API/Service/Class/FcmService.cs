@@ -12,13 +12,15 @@ public class FcmService : IFcmService
 {
     private readonly PharmacyApiDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<FcmService> _logger;
     private readonly FirebaseMessaging? _messaging;
     private readonly bool _isEnabled;
 
-    public FcmService(PharmacyApiDbContext context, IConfiguration configuration)
+    public FcmService(PharmacyApiDbContext context, IConfiguration configuration, ILogger<FcmService> logger)
     {
         _context = context;
         _configuration = configuration;
+        _logger = logger;
 
         // Initialize Firebase Admin SDK
         try
@@ -37,17 +39,17 @@ public class FcmService : IFcmService
                 
                 _messaging = FirebaseMessaging.DefaultInstance;
                 _isEnabled = true;
-                Console.WriteLine("Firebase Cloud Messaging initialized successfully");
+                _logger.LogInformation("Firebase Cloud Messaging initialized successfully");
             }
             else
             {
-                Console.WriteLine("Warning: Firebase credentials not found. FCM is disabled.");
+                _logger.LogWarning("Firebase credentials not found at '{Path}'. FCM is disabled", credentialsPath);
                 _isEnabled = false;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Warning: Failed to initialize Firebase: {ex.Message}");
+            _logger.LogWarning(ex, "Failed to initialize Firebase. FCM is disabled");
             _isEnabled = false;
         }
     }
@@ -56,7 +58,7 @@ public class FcmService : IFcmService
     {
         if (!_isEnabled || _messaging == null)
         {
-            Console.WriteLine("FCM is not enabled. Notification not sent.");
+            _logger.LogDebug("FCM is not enabled. Notification not sent");
             return false;
         }
 
@@ -74,7 +76,7 @@ public class FcmService : IFcmService
             };
 
             var response = await _messaging.SendAsync(message);
-            Console.WriteLine($"Successfully sent FCM message: {response}");
+            _logger.LogInformation("FCM message sent: {Response}", response);
             
             // Update last used timestamp
             await UpdateTokenLastUsedAsync(deviceToken);
@@ -83,7 +85,7 @@ public class FcmService : IFcmService
         }
         catch (FirebaseMessagingException ex)
         {
-            Console.WriteLine($"Failed to send FCM message: {ex.Message}");
+            _logger.LogWarning(ex, "Failed to send FCM message to token");
             
             // If token is invalid, deactivate it
             if (ex.MessagingErrorCode == MessagingErrorCode.Unregistered || 
@@ -117,7 +119,7 @@ public class FcmService : IFcmService
             };
 
             var response = await _messaging.SendEachForMulticastAsync(message);
-            Console.WriteLine($"Successfully sent {response.SuccessCount} messages out of {deviceTokens.Count}");
+            _logger.LogInformation("FCM multicast: {Success}/{Total} messages sent", response.SuccessCount, deviceTokens.Count);
             
             // Update last used timestamp for successful tokens
             foreach (var token in deviceTokens)
@@ -129,7 +131,7 @@ public class FcmService : IFcmService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to send multicast FCM message: {ex.Message}");
+            _logger.LogError(ex, "Failed to send multicast FCM message");
             return 0;
         }
     }

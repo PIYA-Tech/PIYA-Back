@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
 
@@ -11,11 +13,13 @@ public class QRValidationController(
     IQRService qrService,
     IPrescriptionService prescriptionService,
     IPharmacyStaffService pharmacyStaffService,
+    IOptions<SecurityOptions> securityOptions,
     ILogger<QRValidationController> logger) : ControllerBase
 {
     private readonly IQRService _qrService = qrService;
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
+    private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<QRValidationController> _logger = logger;
 
     /// <summary>
@@ -42,7 +46,7 @@ public class QRValidationController(
                 userAgent
             );
 
-            var expiresAt = DateTime.UtcNow.AddMinutes(5); // Default 5 minutes
+            var expiresAt = DateTime.UtcNow.AddMinutes(_securityOptions.QrTokenExpiryMinutes);
 
             return Ok(new QRTokenResponse
             {
@@ -50,8 +54,8 @@ public class QRValidationController(
                 TokenId = tokenId,
                 PrescriptionId = prescriptionId,
                 ExpiresAt = expiresAt,
-                ValidityMinutes = 5,
-                Message = "QR code generated successfully. Valid for 5 minutes."
+                ValidityMinutes = _securityOptions.QrTokenExpiryMinutes,
+                Message = $"QR code generated successfully. Valid for {_securityOptions.QrTokenExpiryMinutes} minutes."
             });
         }
         catch (InvalidOperationException ex)
