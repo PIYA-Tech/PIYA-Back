@@ -19,6 +19,14 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Program.cs validates Jwt:SecretKey during host construction, before test-time
+        // ConfigureAppConfiguration overrides are applied. Seed valid env-vars here so
+        // the host can build deterministically in local/CI test runs.
+        Environment.SetEnvironmentVariable("Jwt__SecretKey", "PIYA_LOCAL_TEST_JWT_SECRET_KEY_AT_LEAST_32_CHARS_LONG");
+        Environment.SetEnvironmentVariable("Jwt__Issuer", "PIYA_API_Test");
+        Environment.SetEnvironmentVariable("Jwt__Audience", "PIYA_Clients_Test");
+        Environment.SetEnvironmentVariable("Security__QrSigningKey", "PIYA_LOCAL_TEST_QR_SIGNING_KEY_AT_LEAST_32_CHARS_LONG");
+
         // ----------------------------------------------------------------
         // Add a high-priority in-memory config layer.
         // This runs AFTER the host is built, so it cannot change values

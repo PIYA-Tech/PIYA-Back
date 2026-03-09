@@ -62,14 +62,6 @@ public static class DataSeeder
                     IsPhoneVerified = true,
                     CreatedAt       = DateTime.UtcNow,
                     UpdatedAt       = DateTime.UtcNow,
-                    TokensInfo = new Token
-                    {
-                        Id           = Guid.NewGuid(),
-                        AccessToken  = string.Empty,
-                        RefreshToken = string.Empty,
-                        ExpiresAt    = DateTime.UtcNow,
-                        DeviceInfo   = "Seed",
-                    },
                 };
                 db.Users.Add(user);
                 existing[username] = user;

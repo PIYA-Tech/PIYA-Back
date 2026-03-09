@@ -143,6 +143,45 @@ public class DoctorDashboardController(
 
     #endregion
 
+    #region Appointment Access
+
+    /// <summary>
+    /// Get the current doctor's appointments.
+    /// Optional query params:
+    /// - status: Scheduled, Confirmed, InProgress, Completed, Cancelled, NoShow, Rescheduled
+    /// - scheduledDate=today for today's slice
+    /// </summary>
+    [HttpGet("appointments")]
+    public async Task<ActionResult<List<Appointment>>> GetMyAppointments(
+        [FromQuery] string? status = null,
+        [FromQuery] string? scheduledDate = null)
+    {
+        try
+        {
+            var userId = GetUserId();
+            DateTime? date = string.Equals(scheduledDate, "today", StringComparison.OrdinalIgnoreCase)
+                ? DateTime.UtcNow.Date
+                : null;
+
+            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date);
+
+            if (!string.IsNullOrWhiteSpace(status) &&
+                Enum.TryParse<AppointmentStatus>(status, true, out var parsedStatus))
+            {
+                appointments = appointments.Where(a => a.Status == parsedStatus).ToList();
+            }
+
+            return Ok(appointments);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctor appointments");
+            return StatusCode(500, new { error = "Failed to retrieve appointments" });
+        }
+    }
+
+    #endregion
+
     #region Availability Management
 
     /// <summary>

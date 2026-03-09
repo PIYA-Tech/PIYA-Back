@@ -12,6 +12,16 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     private readonly IEmailService _emailService = emailService;
     private readonly ILogger<AppointmentService> _logger = logger;
 
+    private IQueryable<Appointment> QueryAppointments(bool asNoTracking = false)
+    {
+        var query = _context.Appointments
+            .Include(a => a.Patient)
+            .Include(a => a.Doctor)
+            .Include(a => a.Hospital);
+
+        return asNoTracking ? query.AsNoTracking() : query;
+    }
+
     public async Task<Appointment> BookAppointmentAsync(Appointment appointment)
     {
         // Check for conflicts
@@ -64,12 +74,15 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment?> GetByIdAsync(Guid id)
     {
-        return await _context.Appointments
-            .AsNoTracking()
-            .Include(a => a.Patient)
-            .Include(a => a.Doctor)
-            .Include(a => a.Hospital)
+        return await QueryAppointments(asNoTracking: true)
             .FirstOrDefaultAsync(a => a.Id == id);
+    }
+
+    private async Task<Appointment> GetTrackedByIdAsync(Guid id)
+    {
+        return await QueryAppointments()
+            .FirstOrDefaultAsync(a => a.Id == id)
+            ?? throw new InvalidOperationException("Appointment not found");
     }
 
     public async Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null)
@@ -127,7 +140,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> UpdateStatusAsync(Guid id, AppointmentStatus status, string? reason = null)
     {
-        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
+        var appointment = await GetTrackedByIdAsync(id);
         appointment.Status = status;
         appointment.UpdatedAt = DateTime.UtcNow;
 
@@ -155,7 +168,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> CancelAppointmentAsync(Guid id, Guid cancelledBy, string? reason)
     {
-        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
+        var appointment = await GetTrackedByIdAsync(id);
         appointment.Status = AppointmentStatus.Cancelled;
         appointment.CancellationReason = reason;
         appointment.CancelledBy = cancelledBy;
@@ -204,7 +217,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> RescheduleAppointmentAsync(Guid id, DateTime newScheduledAt)
     {
-        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
+        var appointment = await GetTrackedByIdAsync(id);
 
         // Cannot reschedule appointments that are already finished or cancelled
         if (appointment.Status == AppointmentStatus.Cancelled ||
@@ -270,7 +283,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> CompleteAppointmentAsync(Guid id, string? doctorNotes)
     {
-        var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
+        var appointment = await GetTrackedByIdAsync(id);
         appointment.Status = AppointmentStatus.Completed;
         appointment.AppointmentNotes = doctorNotes;
         appointment.ActualEndTime = DateTime.UtcNow;
@@ -292,6 +305,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<List<Appointment>> GetHospitalAppointmentsAsync(Guid hospitalId, DateTime? date = null)
     {
         var query = _context.Appointments
+            .AsNoTracking()
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Where(a => a.HospitalId == hospitalId);

@@ -2270,8 +2270,7 @@ namespace PIYA_API.Migrations
 
             modelBuilder.Entity("PIYA_API.Model.User", b =>
                 {
-                    b.Navigation("TokensInfo")
-                        .IsRequired();
+                    b.Navigation("TokensInfo");
 
                     b.Navigation("TwoFactorAuth");
                 });

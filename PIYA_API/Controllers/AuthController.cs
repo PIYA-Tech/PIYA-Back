@@ -71,14 +71,6 @@ public class AuthController(
                 PhoneNumber = request.PhoneNumber,
                 DateOfBirth = parsedDob ?? DateTime.UtcNow.AddYears(-18),
                 Role = roleEnum,
-                TokensInfo = new Token
-                {
-                    Id = Guid.NewGuid(),
-                    AccessToken = string.Empty,
-                    RefreshToken = string.Empty,
-                    ExpiresAt = DateTime.UtcNow,
-                    DeviceInfo = request.DeviceInfo ?? "Unknown"
-                }
             };
 
             var createdUser = await _userService.Create(user, request.Password);

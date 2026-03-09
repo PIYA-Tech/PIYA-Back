@@ -187,7 +187,6 @@ public class EhrIntegrationService : IEhrIntegrationService
                 Role = UserRole.Patient,
                 IsActive = fhirPatient.Active,
                 CreatedAt = DateTime.UtcNow,
-                TokensInfo = new Token() // Initialize empty token info
             };
 
             _context.Users.Add(user);

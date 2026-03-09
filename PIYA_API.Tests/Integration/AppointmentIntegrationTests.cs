@@ -26,7 +26,7 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
     [Fact]
     public async Task BookAppointment_EndToEndFlow_Success()
     {
-        // Step 1: Register as patient — capture the userId returned directly in the response
+        // Step 1: Register the patient.
         var patientEmail = $"patient-{Guid.NewGuid()}@example.com";
         var patientRegister = new
         {
@@ -42,7 +42,8 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         patientResponse.StatusCode.Should().Be(HttpStatusCode.OK, "patient registration must succeed");
         var patientData = await ParseRegisterResponse(patientResponse);
 
-        // Step 2: Register as doctor — capture the real userId and accessToken
+    // Step 2: Register the future doctor as a patient first.
+    // Self-registration is intentionally restricted to the Patient role.
         var doctorEmail = $"doctor-{Guid.NewGuid()}@example.com";
         var doctorRegister = new
         {
@@ -52,17 +53,25 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
             lastName = "Smith",
             phoneNumber = "+994502222222",
             dateOfBirth = "1980-01-01",
-            role = "Doctor"
+            role = "Patient"
         };
         var doctorResponse = await _client.PostAsJsonAsync("/api/auth/register", doctorRegister);
-        doctorResponse.StatusCode.Should().Be(HttpStatusCode.OK, "doctor registration must succeed");
+        doctorResponse.StatusCode.Should().Be(HttpStatusCode.OK, "doctor bootstrap registration must succeed");
         var doctorData = await ParseRegisterResponse(doctorResponse);
 
-        // Step 3: Obtain a real hospital ID — query existing hospitals; if none, register an Admin
+        // Step 3: Elevate the second user to Doctor via the admin-only role assignment endpoint.
+        var adminToken = await LoginSeededAdmin();
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var assignRoleResponse = await _client.PostAsJsonAsync(
+            $"/api/user/{doctorData["userId"]}/assign-role",
+            new { role = "Doctor" });
+        assignRoleResponse.StatusCode.Should().Be(HttpStatusCode.OK, "admin should be able to assign the Doctor role");
+
+        // Step 4: Obtain a real hospital ID — query existing hospitals; if none, use the seeded admin
         //         and create one so the FK constraint is satisfied.
         var hospitalId = await GetOrCreateHospitalId();
 
-        // Step 4: Create doctor profile (optional — service auto-creates missing doctors)
+        // Step 5: Create doctor profile (optional — service auto-creates missing doctors)
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", doctorData["accessToken"]);
 
@@ -80,7 +89,7 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         // Best-effort — ignore failures (profile endpoint may not exist yet)
         await _client.PostAsJsonAsync("/api/doctor/profile", doctorProfile);
 
-        // Step 5: Book appointment as patient using real doctorId from register response
+        // Step 6: Book appointment as patient using the elevated doctor's userId.
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", patientData["accessToken"]);
 
@@ -98,8 +107,83 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
 
         // Assert
         bookResponse.StatusCode.Should().Be(
-            HttpStatusCode.OK,
+            HttpStatusCode.Created,
             $"booking should succeed — body: {await bookResponse.Content.ReadAsStringAsync()}");
+    }
+
+    [Fact]
+    public async Task DoctorAppointmentsEndpoint_ReturnsCurrentDoctorAppointments()
+    {
+        // Arrange: register doctor and patient, elevate the doctor via admin, then book an appointment.
+        var patientEmail = $"patient-list-{Guid.NewGuid()}@example.com";
+        var doctorEmail = $"doctor-list-{Guid.NewGuid()}@example.com";
+
+        var patientRegister = new
+        {
+            email = patientEmail,
+            password = "Patient@123",
+            firstName = "Pat",
+            lastName = "Ient",
+            phoneNumber = "+994503333333",
+            dateOfBirth = "1990-01-01",
+            role = "Patient"
+        };
+        var doctorRegister = new
+        {
+            email = doctorEmail,
+            password = "Doctor@123",
+            firstName = "Doc",
+            lastName = "Tor",
+            phoneNumber = "+994504444444",
+            dateOfBirth = "1985-01-01",
+            role = "Patient"
+        };
+
+        var patientData = await ParseRegisterResponse(await _client.PostAsJsonAsync("/api/auth/register", patientRegister));
+        var doctorData = await ParseRegisterResponse(await _client.PostAsJsonAsync("/api/auth/register", doctorRegister));
+        var adminToken = await LoginSeededAdmin();
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var assignRoleResponse = await _client.PostAsJsonAsync(
+            $"/api/user/{doctorData["userId"]}/assign-role",
+            new { role = "Doctor" });
+        assignRoleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Re-login after role assignment so the JWT carries the updated Doctor role claim.
+        var reloginResponse = await _client.PostAsJsonAsync("/api/auth/login", new
+        {
+            email = doctorEmail,
+            password = "Doctor@123"
+        });
+        reloginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        doctorData["accessToken"] = await ParseAccessToken(reloginResponse);
+
+        var hospitalId = await GetOrCreateHospitalId();
+
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", patientData["accessToken"]);
+
+        var appointment = new
+        {
+            doctorId = Guid.Parse(doctorData["userId"]),
+            hospitalId,
+            scheduledAt = DateTime.UtcNow.AddDays(1),
+            reason = "Doctor endpoint contract test"
+        };
+
+        var bookResponse = await _client.PostAsJsonAsync("/api/appointment/book", appointment);
+        bookResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Act: request doctor-scoped appointments with the doctor's token.
+        _client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", doctorData["accessToken"]);
+
+        var doctorAppointmentsResponse = await _client.GetAsync("/api/doctor/appointments");
+
+        // Assert
+        doctorAppointmentsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await doctorAppointmentsResponse.Content.ReadAsStringAsync();
+        body.Should().Contain("Doctor endpoint contract test");
     }
 
     // -------------------------------------------------------------------------
@@ -170,15 +254,7 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         // No hospitals yet — log in as the seeded admin_piya demo user (Role=Admin)
         // and create one.  We cannot self-register an Admin because /api/auth/register
         // always assigns the Patient role regardless of the 'role' field in the body.
-        var adminLogin = new
-        {
-            username = "admin_piya",
-            password = "Test@1234"
-        };
-        var adminLoginResponse = await _client.PostAsJsonAsync("/api/auth/login", adminLogin);
-        adminLoginResponse.StatusCode.Should().Be(HttpStatusCode.OK,
-            "seeded admin_piya login must succeed — ensure DataSeeder ran on startup");
-        var adminToken = await ParseAccessToken(adminLoginResponse);
+        var adminToken = await LoginSeededAdmin();
 
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", adminToken);
@@ -201,6 +277,20 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
         return Guid.Parse(created["id"].GetString()!);
+    }
+
+    private async Task<string> LoginSeededAdmin()
+    {
+        var adminLogin = new
+        {
+            username = "admin_piya",
+            password = "Test@1234"
+        };
+        var adminLoginResponse = await _client.PostAsJsonAsync("/api/auth/login", adminLogin);
+        adminLoginResponse.StatusCode.Should().Be(
+            HttpStatusCode.OK,
+            "seeded admin_piya login must succeed — ensure DataSeeder ran on startup");
+        return await ParseAccessToken(adminLoginResponse);
     }
 
     /// <summary>

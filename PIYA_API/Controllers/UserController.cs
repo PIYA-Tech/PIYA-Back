@@ -65,14 +65,6 @@ public class UserController(IUserService userService, ILogger<UserController> lo
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
                 DateOfBirth = request.DateOfBirth,
-                // TokensInfo is populated by UserService.Update from the existing DB record
-                TokensInfo = new Token
-                {
-                    AccessToken = string.Empty,
-                    RefreshToken = string.Empty,
-                    ExpiresAt = DateTime.MinValue,
-                    DeviceInfo = string.Empty
-                }
             };
 
             await _userService.Update(user, request.Password);
