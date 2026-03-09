@@ -46,8 +46,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             };
 
             var created = await _appointmentService.BookAppointmentAsync(appointment);
-            // Tests expect a 200 OK response for a successful booking
-            return Ok(created);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
         catch (InvalidOperationException ex)
         {

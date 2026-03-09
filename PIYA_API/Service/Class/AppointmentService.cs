@@ -203,6 +203,14 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     {
         var appointment = await GetByIdAsync(id) ?? throw new InvalidOperationException("Appointment not found");
 
+        // Cannot reschedule appointments that are already finished or cancelled
+        if (appointment.Status == AppointmentStatus.Cancelled ||
+            appointment.Status == AppointmentStatus.Completed ||
+            appointment.Status == AppointmentStatus.NoShow)
+        {
+            throw new InvalidOperationException($"Cannot reschedule a {appointment.Status} appointment");
+        }
+
         // Check if new time is available
         var isAvailable = await IsDoctorAvailableAsync(
             appointment.DoctorId,
