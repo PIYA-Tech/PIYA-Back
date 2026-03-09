@@ -12,6 +12,13 @@ public class Token
     /// <summary>FK to the owning User — enables O(1) purge on login without parsing every JWT row.</summary>
     public Guid? UserId { get; set; }
 
+    /// <summary>
+    /// Refresh token rotation family ID. All rotations of the same original token share this value.
+    /// If a refresh token from this family is reused after rotation (reuse attack),
+    /// the entire family is revoked.
+    /// </summary>
+    public Guid Family { get; set; } = Guid.NewGuid();
+
     public bool IsExpired()
     {
         return DateTime.UtcNow >= ExpiresAt;

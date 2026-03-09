@@ -38,6 +38,12 @@ public class SecurityOptions
     public int LockoutDurationMinutes { get; set; } = 15;
 
     /// <summary>
+    /// Maximum number of concurrent active sessions (refresh tokens) per user.
+    /// When exceeded the oldest session is evicted. 0 = unlimited (legacy behaviour).
+    /// </summary>
+    public int MaxConcurrentSessions { get; set; } = 3;
+
+    /// <summary>
     /// Require HTTPS for all endpoints (production only)
     /// </summary>
     public bool RequireHttps { get; set; } = false;

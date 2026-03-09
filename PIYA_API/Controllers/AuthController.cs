@@ -363,6 +363,24 @@ public class AuthController(
                 expiresAt = tokenResponse.ExpiresAt
             });
         }
+        catch (RefreshTokenReuseException ex)
+        {
+            // Token reuse attack detected — entire session family already revoked by JwtService.
+            // Clear the cookie and return 401 so the client is forced to re-authenticate.
+            _logger.LogWarning(
+                "Refresh token reuse attack detected for user {UserId}. All sessions revoked.",
+                ex.UserId);
+            Response.Cookies.Delete("piya_refresh_token",
+                new CookieOptions { Path = "/api/auth" });
+            await _auditService.LogSecurityEventAsync(
+                "RefreshTokenReuseDetected",
+                ex.UserId,
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString(),
+                false,
+                "Refresh token reuse detected — all sessions for this user were revoked.");
+            return Unauthorized(new { message = "Security violation detected. Please log in again." });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during token refresh");

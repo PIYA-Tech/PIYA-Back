@@ -3,50 +3,58 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configuration) : IJwtService
+public class JwtService(
+    PharmacyApiDbContext dbContext,
+    IConfiguration configuration,
+    IDistributedCacheWrapper distributedCache,
+    IOptions<SecurityOptions> securityOptions,
+    ILogger<JwtService> logger) : IJwtService
 {
     private readonly PharmacyApiDbContext _dbContext = dbContext;
     private readonly IConfiguration _configuration = configuration;
-    
+    private readonly IDistributedCacheWrapper _cache = distributedCache;
+    private readonly SecurityOptions _securityOptions = securityOptions.Value;
+    private readonly ILogger<JwtService> _logger = logger;
+
     private const string DefaultSecretKey = "PIYA_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION_MIN_32_CHARS";
     private const string DefaultIssuer = "PIYA_API";
     private const string DefaultAudience = "PIYA_Clients";
-    private const int DefaultExpirationMinutes = 30;
+    private const int DefaultExpirationMinutes = 15;
+    // Prefix for jti blocklist keys in the distributed cache
+    private const string RevokedJtiPrefix = "revoked_jti:";
 
-    public Guid GetId(string token)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static string HashToken(string rawToken)
     {
-        var tokenObj = _dbContext.Tokens.FirstOrDefault(t => t.AccessToken == token);
-        return tokenObj == null ? Guid.Empty : tokenObj.Id;
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    public async Task<TokenResponse?> GenerateSecurityToken(string username)
+    private (string secret, string issuer, string audience, int expiryMinutes) GetJwtConfig()
     {
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
-        if (user == null)
-        {
-            return null;
-        }
-
-        // Get JWT settings from configuration
-        var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
+        var secret = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
         var issuer = _configuration["Jwt:Issuer"] ?? DefaultIssuer;
         var audience = _configuration["Jwt:Audience"] ?? DefaultAudience;
-        var expirationMinutes = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var mins) 
-            ? mins 
-            : DefaultExpirationMinutes;
+        var expiry = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var m) ? m : DefaultExpirationMinutes;
+        return (secret, issuer, audience, expiry);
+    }
 
-        // Create security key
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        // Create claims
+    private string BuildAccessToken(User user, string secret, string issuer, string audience, int expiryMinutes)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
@@ -56,41 +64,65 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
             new Claim(ClaimTypes.Role, user.Role.ToString()),
             new Claim("firstName", user.FirstName),
             new Claim("lastName", user.LastName),
-            new Claim("role", user.Role.ToString())
+            new Claim("role", user.Role.ToString()),
         };
+        var descriptor = new JwtSecurityToken(issuer, audience, claims,
+            expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
+            signingCredentials: creds);
+        return new JwtSecurityTokenHandler().WriteToken(descriptor);
+    }
 
-        // Create token
-        var tokenDescriptor = new JwtSecurityToken(
-            issuer: issuer,
-            audience: audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
-            signingCredentials: credentials
-        );
+    // ─────────────────────────────────────────────────────────────────────────
+    // Generate (Login / Register)
+    // ─────────────────────────────────────────────────────────────────────────
 
-        var jwtToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
+    public async Task<TokenResponse?> GenerateSecurityToken(string username)
+    {
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
+        if (user == null) return null;
 
-        // Remove all previous tokens for this user via the indexed UserId column (O(log n))
-        var existingTokens = await _dbContext.Tokens
-            .Where(t => t.UserId == user.Id)
-            .ToListAsync();
+        var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
+        var jwtToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
+        var refreshToken = GenerateRefreshToken();
+        var refreshExpiry = DateTime.UtcNow.AddDays(7);
 
-        if (existingTokens.Count > 0)
+        // ── Session limit enforcement ────────────────────────────────────────
+        var maxSessions = _securityOptions.MaxConcurrentSessions;
+        if (maxSessions > 0)
         {
-            _dbContext.Tokens.RemoveRange(existingTokens);
+            var sessions = await _dbContext.Tokens
+                .Where(t => t.UserId == user.Id)
+                .OrderBy(t => t.CreationTime)
+                .ToListAsync();
+
+            // Evict oldest sessions until we are below the limit (leaving room for the new one)
+            while (sessions.Count >= maxSessions)
+            {
+                var oldest = sessions[0];
+                _dbContext.Tokens.Remove(oldest);
+                sessions.RemoveAt(0);
+                _logger.LogInformation(
+                    "Session limit: evicted oldest session for user {UserId} (family {Family})",
+                    user.Id, oldest.Family);
+            }
+        }
+        else
+        {
+            // Legacy behaviour: remove all prior sessions
+            var existing = await _dbContext.Tokens.Where(t => t.UserId == user.Id).ToListAsync();
+            if (existing.Count > 0) _dbContext.Tokens.RemoveRange(existing);
         }
 
-        // Save new token — stamp UserId so future purges are index-driven
-        var refreshToken = GenerateRefreshToken();
         var tokenEntity = new Token
         {
             Id = Guid.NewGuid(),
             UserId = user.Id,
             AccessToken = jwtToken,
             RefreshToken = refreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes),
+            Family = Guid.NewGuid(),        // each new login starts a fresh family
+            ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
             CreationTime = DateTime.UtcNow,
-            DeviceInfo = "Web"
+            DeviceInfo = "Web",
         };
 
         _dbContext.Tokens.Add(tokenEntity);
@@ -100,86 +132,81 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         {
             AccessToken = jwtToken,
             RefreshToken = refreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes)
+            ExpiresAt = tokenEntity.ExpiresAt,
         };
     }
 
     public string GenerateRefreshToken()
     {
-        var randomBytes = new byte[64];
+        var bytes = new byte[64];
         using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(randomBytes);
-        return Convert.ToBase64String(randomBytes);
+        rng.GetBytes(bytes);
+        return Convert.ToBase64String(bytes);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Refresh — with Rotation + Reuse Detection
+    // ─────────────────────────────────────────────────────────────────────────
 
     public async Task<TokenResponse?> RefreshAccessToken(string refreshToken)
     {
+        var hash = HashToken(refreshToken);
+
+        // ── Reuse Detection ──────────────────────────────────────────────────
+        // Check if this token was already rotated away (consumed in a prior refresh).
+        var usedEntry = await _dbContext.UsedRefreshTokens
+            .FirstOrDefaultAsync(u => u.TokenHash == hash);
+
+        if (usedEntry != null)
+        {
+            // Token re-use attack — revoke the entire family immediately
+            _logger.LogWarning(
+                "Refresh token reuse detected for user {UserId} family {Family}. Revoking all sessions.",
+                usedEntry.UserId, usedEntry.Family);
+
+            var familySessions = await _dbContext.Tokens
+                .Where(t => t.Family == usedEntry.Family)
+                .ToListAsync();
+            _dbContext.Tokens.RemoveRange(familySessions);
+            await _dbContext.SaveChangesAsync();
+
+            throw new RefreshTokenReuseException(usedEntry.UserId);
+        }
+
+        // ── Find the active token row ────────────────────────────────────────
         var tokenEntity = await _dbContext.Tokens
             .FirstOrDefaultAsync(t => t.RefreshToken == refreshToken);
 
-        if (tokenEntity == null)
-        {
-            return null;
-        }
+        if (tokenEntity == null) return null;
 
-        // Check if refresh token is expired (refresh tokens valid for 7 days)
-        if (tokenEntity.CreationTime.AddDays(7) < DateTime.UtcNow)
-        {
-            return null;
-        }
+        // Refresh window: 7 days from creation
+        if (tokenEntity.CreationTime.AddDays(7) < DateTime.UtcNow) return null;
 
-        // Find user — prefer the indexed UserId FK, fall back to JWT claim for legacy rows without UserId
-        User? user = tokenEntity.UserId.HasValue
+        var user = tokenEntity.UserId.HasValue
             ? await _dbContext.Users.FindAsync(tokenEntity.UserId.Value)
-            : await _dbContext.Users.FirstOrDefaultAsync(u =>
-                u.Username == new JwtSecurityTokenHandler()
-                    .ReadJwtToken(tokenEntity.AccessToken)
-                    .Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)!.Value);
-        if (user == null) return null;
+            : null;
+        if (user is null || !user.IsActive) return null;
 
-        // Build a new access token directly (without inserting a new Token row)
-        var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
-        var issuer = _configuration["Jwt:Issuer"] ?? DefaultIssuer;
-        var audience = _configuration["Jwt:Audience"] ?? DefaultAudience;
-        var expirationMinutes = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var mins)
-            ? mins : DefaultExpirationMinutes;
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var claims = new[]
-        {
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.Email, user.Email),
-            new Claim(ClaimTypes.Role, user.Role.ToString()),
-            new Claim("firstName", user.FirstName),
-            new Claim("lastName", user.LastName),
-            new Claim("role", user.Role.ToString())
-        };
-
-        var tokenDescriptor = new JwtSecurityToken(
-            issuer: issuer,
-            audience: audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
-            signingCredentials: credentials
-        );
-
-        var newAccessToken = new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
-        var newExpiry = DateTime.UtcNow.AddMinutes(expirationMinutes);
-
-        // Rotate the refresh token — generate a fresh one so the old value is invalidated
+        var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
+        var newAccessToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
         var newRefreshToken = GenerateRefreshToken();
+        var newExpiry = DateTime.UtcNow.AddMinutes(expiryMinutes);
 
-        // Update the existing token row in place — new access token + rotated refresh token
-        tokenEntity.UserId = user.Id;   // backfill for legacy rows that predate the UserId column
+        // ── Record the old refresh token as "used" (for reuse detection) ────
+        _dbContext.UsedRefreshTokens.Add(new UsedRefreshToken
+        {
+            TokenHash = hash,
+            Family = tokenEntity.Family,
+            UserId = user.Id,
+            ExpiresAt = tokenEntity.CreationTime.AddDays(7 + 1), // keep 1 extra day for clock skew
+        });
+
+        // ── Rotate in-place ──────────────────────────────────────────────────
+        tokenEntity.UserId = user.Id;
         tokenEntity.AccessToken = newAccessToken;
         tokenEntity.RefreshToken = newRefreshToken;
         tokenEntity.ExpiresAt = newExpiry;
-        // Reset creation time so the 7-day refresh window starts fresh
-        tokenEntity.CreationTime = DateTime.UtcNow;
+        tokenEntity.CreationTime = DateTime.UtcNow; // reset 7-day window
 
         await _dbContext.SaveChangesAsync();
 
@@ -187,9 +214,13 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         {
             AccessToken = newAccessToken,
             RefreshToken = newRefreshToken,
-            ExpiresAt = newExpiry
+            ExpiresAt = newExpiry,
         };
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Revocation
+    // ─────────────────────────────────────────────────────────────────────────
 
     public async Task RevokeRefreshTokenAsync(string refreshToken)
     {
@@ -207,54 +238,89 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         try
         {
             var jwt = new JwtSecurityTokenHandler().ReadJwtToken(accessToken);
-            var jti = jwt.Id; // JwtRegisteredClaimNames.Jti
+            var jti = jwt.Id;
             if (string.IsNullOrWhiteSpace(jti)) return;
 
-            // Skip if already revoked
-            if (await _dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti)) return;
+            var ttl = jwt.ValidTo - DateTime.UtcNow;
+            if (ttl <= TimeSpan.Zero) return; // already expired — no need to blocklist
 
-            _dbContext.RevokedTokens.Add(new RevokedToken
+            // ── Persist to DB ────────────────────────────────────────────────
+            if (!await _dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti))
             {
-                Jti = jti,
-                ExpiresAt = jwt.ValidTo,
-            });
-            await _dbContext.SaveChangesAsync();
+                _dbContext.RevokedTokens.Add(new RevokedToken
+                {
+                    Jti = jti,
+                    ExpiresAt = jwt.ValidTo,
+                });
+                await _dbContext.SaveChangesAsync();
+            }
+
+            // ── Cache in Redis / IDistributedCache with matching TTL ─────────
+            await _cache.SetStringAsync(
+                $"{RevokedJtiPrefix}{jti}",
+                "1",
+                ttl);
         }
-        catch
+        catch (Exception ex)
         {
-            // Malformed token — nothing to revoke
+            _logger.LogWarning(ex, "Failed to revoke access token — malformed JWT?");
         }
+    }
+
+    /// <summary>
+    /// Cache-first jti revocation check.
+    /// Redis hit → O(1), no DB round-trip.
+    /// Cache miss → DB fallback, then backfills the cache for future requests.
+    /// </summary>
+    public async Task<bool> IsJtiRevokedAsync(string jti)
+    {
+        var cacheKey = $"{RevokedJtiPrefix}{jti}";
+
+        // Fast path: cache hit
+        var cached = await _cache.GetStringAsync(cacheKey);
+        if (cached is not null) return true;
+
+        // Slow path: DB
+        var inDb = await _dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti);
+        if (inDb)
+        {
+            // Backfill cache — use a 5-min TTL so we don't hold stale entries forever
+            // (the cleanup service will purge the DB row once the token expires anyway)
+            await _cache.SetStringAsync(cacheKey, "1", TimeSpan.FromMinutes(5));
+        }
+        return inDb;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Validation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public Guid GetId(string token)
+    {
+        var tokenObj = _dbContext.Tokens.FirstOrDefault(t => t.AccessToken == token);
+        return tokenObj == null ? Guid.Empty : tokenObj.Id;
     }
 
     public string? ValidateToken(string token)
     {
         try
         {
-            var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
-            var issuer = _configuration["Jwt:Issuer"] ?? DefaultIssuer;
-            var audience = _configuration["Jwt:Audience"] ?? DefaultAudience;
-
+            var (secret, issuer, audience, _) = GetJwtConfig();
             var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(secretKey);
+            var principal = tokenHandler.ValidateToken(token,
+                new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)),
+                    ValidateIssuer = true, ValidIssuer = issuer,
+                    ValidateAudience = true, ValidAudience = audience,
+                    ValidateLifetime = true, ClockSkew = TimeSpan.Zero,
+                }, out _);
 
-            var validationParameters = new TokenValidationParameters
-            {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateIssuer = true,
-                ValidIssuer = issuer,
-                ValidateAudience = true,
-                ValidAudience = audience,
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.Zero
-            };
-
-            var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
-
-            // Check jti revocation blocklist
             var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
             if (!string.IsNullOrWhiteSpace(jti))
             {
+                // Synchronous check used by the legacy ValidateToken path
                 var revoked = _dbContext.RevokedTokens.Any(r => r.Jti == jti);
                 if (revoked) throw new UnauthorizedAccessException("Token has been revoked");
             }
@@ -265,10 +331,7 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         {
             throw new UnauthorizedAccessException("Token has expired");
         }
-        catch (UnauthorizedAccessException)
-        {
-            throw;
-        }
+        catch (UnauthorizedAccessException) { throw; }
         catch (Exception ex)
         {
             throw new UnauthorizedAccessException($"Token validation failed: {ex.Message}");

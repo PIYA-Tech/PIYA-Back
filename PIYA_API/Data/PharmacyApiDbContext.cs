@@ -45,6 +45,9 @@ namespace PIYA_API.Data
         public DbSet<Referral> Referrals { get; set; }
         public DbSet<MedicalTest> MedicalTests { get; set; }
 
+        // Auth security
+        public DbSet<UsedRefreshToken> UsedRefreshTokens { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -69,6 +72,20 @@ namespace PIYA_API.Data
                 .HasKey(r => r.Jti);
             modelBuilder.Entity<RevokedToken>()
                 .HasIndex(r => r.ExpiresAt);
+
+            // UsedRefreshToken: TokenHash is the PK; indexes for reuse-detection lookups
+            modelBuilder.Entity<UsedRefreshToken>()
+                .HasKey(u => u.TokenHash);
+            modelBuilder.Entity<UsedRefreshToken>()
+                .HasIndex(u => u.Family);
+            modelBuilder.Entity<UsedRefreshToken>()
+                .HasIndex(u => u.ExpiresAt); // for cleanup
+            modelBuilder.Entity<UsedRefreshToken>()
+                .HasIndex(u => u.UserId);
+
+            // Token.Family — index for fast family-revocation queries
+            modelBuilder.Entity<Token>()
+                .HasIndex(t => t.Family);
 
             // User - DoctorProfile (One-to-One)
             modelBuilder.Entity<DoctorProfile>()

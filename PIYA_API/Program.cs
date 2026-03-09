@@ -225,15 +225,15 @@ builder.Services.AddAuthentication(options =>
         },
         OnTokenValidated = async context =>
         {
-            // Enforce jti revocation blocklist — reject tokens whose jti has been
-            // explicitly revoked (e.g. logout before expiry).
+            // Cache-first jti revocation check (Redis hit = no DB round-trip).
+            // Falls back to DB on cache miss, then backfills the cache.
             var jti = context.Principal?.FindFirst(
                 System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
             if (!string.IsNullOrWhiteSpace(jti))
             {
-                var db = context.HttpContext.RequestServices
-                    .GetRequiredService<PharmacyApiDbContext>();
-                var revoked = await db.RevokedTokens.AnyAsync(r => r.Jti == jti);
+                var jwtSvc = context.HttpContext.RequestServices
+                    .GetRequiredService<IJwtService>();
+                var revoked = await jwtSvc.IsJtiRevokedAsync(jti);
                 if (revoked)
                 {
                     context.Fail("Token has been revoked");
@@ -257,6 +257,10 @@ builder.Services.AddAuthorizationBuilder()
 builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+// DistributedCacheWrapper bridges IDistributedCache (Redis or in-memory) to JwtService
+// for cache-first jti revocation checks. Registered as Scoped because IDistributedCache
+// itself is designed for scoped or singleton consumption.
+builder.Services.AddScoped<IDistributedCacheWrapper, DistributedCacheWrapper>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<ICoordinatesService, CoordinatesService>();
 builder.Services.AddScoped<IPharmacyService, PharmacyService>();
