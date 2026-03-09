@@ -202,11 +202,32 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         }
     }
 
+    public async Task RevokeAccessTokenAsync(string accessToken)
+    {
+        try
+        {
+            var jwt = new JwtSecurityTokenHandler().ReadJwtToken(accessToken);
+            var jti = jwt.Id; // JwtRegisteredClaimNames.Jti
+            if (string.IsNullOrWhiteSpace(jti)) return;
+
+            // Skip if already revoked
+            if (await _dbContext.RevokedTokens.AnyAsync(r => r.Jti == jti)) return;
+
+            _dbContext.RevokedTokens.Add(new RevokedToken
+            {
+                Jti = jti,
+                ExpiresAt = jwt.ValidTo,
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+        catch
+        {
+            // Malformed token — nothing to revoke
+        }
+    }
+
     public string? ValidateToken(string token)
     {
-        // TODO(#14): JWT token revocation is not enforced here — even revoked access tokens will pass
-        // signature validation until they expire (up to 15 min). To fix: on each validation call,
-        // look up the token's jti claim in a revocation store (Redis or DB) and reject if present.
         try
         {
             var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
@@ -228,16 +249,25 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
                 ClockSkew = TimeSpan.Zero
             };
 
-            var principal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
-            
-            // Extract username from claims
-            var username = principal.FindFirst(ClaimTypes.Name)?.Value;
-            
-            return username;
+            var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+
+            // Check jti revocation blocklist
+            var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+            if (!string.IsNullOrWhiteSpace(jti))
+            {
+                var revoked = _dbContext.RevokedTokens.Any(r => r.Jti == jti);
+                if (revoked) throw new UnauthorizedAccessException("Token has been revoked");
+            }
+
+            return principal.FindFirst(ClaimTypes.Name)?.Value;
         }
         catch (SecurityTokenExpiredException)
         {
             throw new UnauthorizedAccessException("Token has expired");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

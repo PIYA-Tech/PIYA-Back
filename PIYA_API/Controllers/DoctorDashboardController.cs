@@ -708,7 +708,9 @@ public class DoctorDashboardController(
     }
 
     /// <summary>
-    /// Get prescriptions for specific patient
+    /// Get prescriptions for specific patient — all prescriptions visible to this doctor.
+    /// Access is granted when the calling doctor has at least one non-cancelled appointment
+    /// with the patient.
     /// </summary>
     [HttpGet("patients/{patientId}/prescriptions")]
     public async Task<ActionResult<List<Prescription>>> GetPatientPrescriptions(Guid patientId)
@@ -716,17 +718,87 @@ public class DoctorDashboardController(
         try
         {
             var userId = GetUserId();
+
+            // Gate: doctor must have an appointment with this patient
+            var doctorAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
+            var hasRelationship = doctorAppointments.Any(a =>
+                a.PatientId == patientId &&
+                a.Status != AppointmentStatus.Cancelled);
+
+            if (!hasRelationship)
+                return Forbid();
+
+            // Return ALL prescriptions for this patient (full medical history)
             var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(patientId);
-            
-            // Filter to only show prescriptions created by this doctor
-            var doctorPrescriptions = prescriptions.Where(p => p.DoctorId == userId).ToList();
-            
-            return Ok(doctorPrescriptions);
+
+            return Ok(prescriptions);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving patient prescriptions");
             return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
+        }
+    }
+
+    /// <summary>
+    /// Get full patient records for a specific patient: all prescriptions + appointment history
+    /// with this doctor. Access is granted when the calling doctor has at least one
+    /// non-cancelled appointment with the patient.
+    /// </summary>
+    [HttpGet("patients/{patientId}/records")]
+    public async Task<ActionResult> GetPatientRecords(Guid patientId)
+    {
+        try
+        {
+            var userId = GetUserId();
+
+            // Gate: doctor must have a non-cancelled appointment with this patient
+            var doctorAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
+            var patientAppointments = doctorAppointments
+                .Where(a => a.PatientId == patientId)
+                .ToList();
+
+            if (!patientAppointments.Any(a => a.Status != AppointmentStatus.Cancelled))
+                return Forbid();
+
+            // All prescriptions (full medical history across all doctors)
+            var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(patientId);
+
+            // Patient info from first appointment
+            var patientInfo = patientAppointments.First().Patient;
+
+            var result = new
+            {
+                Patient = patientInfo == null ? null : new
+                {
+                    patientInfo.Id,
+                    patientInfo.FirstName,
+                    patientInfo.LastName,
+                    patientInfo.Email,
+                    patientInfo.PhoneNumber,
+                    patientInfo.DateOfBirth,
+                },
+                Prescriptions = prescriptions,
+                AppointmentHistory = patientAppointments
+                    .OrderByDescending(a => a.ScheduledAt)
+                    .Select(a => new
+                    {
+                        a.Id,
+                        a.ScheduledAt,
+                        a.Status,
+                        a.Reason,
+                        a.AppointmentNotes,
+                        a.DurationMinutes,
+                        Hospital = a.Hospital == null ? null : new { a.Hospital.Id, a.Hospital.Name },
+                    }),
+            };
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving patient records for {PatientId}", patientId);
+            return StatusCode(500, new { error = "Failed to retrieve patient records" });
         }
     }
 

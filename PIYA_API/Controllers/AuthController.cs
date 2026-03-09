@@ -106,6 +106,9 @@ public class AuthController(
             }
 
             // Return the token key in multiple forms so existing integration tests (and older clients) can find it.
+            // Also set the refresh token as an HttpOnly cookie for browser clients.
+            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+
             return Ok(new
             {
                 userId = createdUser.Id,
@@ -164,7 +167,6 @@ public class AuthController(
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-
         try
         {
             var identifier = string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username;
@@ -229,6 +231,11 @@ public class AuthController(
                 "LoginSuccess", user.Id, ipAddress, userAgent, true,
                 $"User logged in: {user.Username}");
 
+            // Set the refresh token as an HttpOnly Secure SameSite=Strict cookie.
+            // The access token is returned in the body only — the client must store it
+            // in memory (not localStorage) to eliminate XSS token-theft risk.
+            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+
             return Ok(new AuthResponse
             {
                 UserId = user.Id,
@@ -238,6 +245,7 @@ public class AuthController(
                 LastName = user.LastName,
                 Role = user.Role.ToString(),
                 AccessToken = tokenResponse.AccessToken,
+                // Still include RefreshToken in body for API clients / mobile that can't use cookies
                 RefreshToken = tokenResponse.RefreshToken,
                 ExpiresAt = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified
@@ -323,15 +331,26 @@ public class AuthController(
     }
 
     [HttpPost("refresh")]
-    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)    {
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+    {
         try
         {
-            var tokenResponse = await _jwtService.RefreshAccessToken(request.RefreshToken);
+            // Support both: refresh token in body (API/mobile clients) and HttpOnly cookie (browser clients)
+            var incomingRefresh = request.RefreshToken;
+            if (string.IsNullOrWhiteSpace(incomingRefresh))
+                incomingRefresh = Request.Cookies["piya_refresh_token"];
+
+            if (string.IsNullOrWhiteSpace(incomingRefresh))
+                return Unauthorized(new { message = "Refresh token is required" });
+
+            var tokenResponse = await _jwtService.RefreshAccessToken(incomingRefresh);
 
             if (tokenResponse == null)
             {
                 return Unauthorized(new { message = "Invalid or expired refresh token" });
             }
+
+            SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new
             {
@@ -347,6 +366,23 @@ public class AuthController(
         }
     }
 
+    /// <summary>Sets the refresh token as an HttpOnly Secure SameSite=Strict cookie (7-day window).</summary>
+    private void SetRefreshTokenCookie(string? refreshToken)
+    {
+        if (string.IsNullOrWhiteSpace(refreshToken)) return;
+
+        Response.Cookies.Append("piya_refresh_token", refreshToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure   = !HttpContext.RequestServices
+                           .GetRequiredService<IWebHostEnvironment>()
+                           .IsDevelopment(), // allow non-HTTPS in local dev only
+            SameSite = SameSiteMode.Strict,
+            Expires  = DateTimeOffset.UtcNow.AddDays(7),
+            Path     = "/api/auth", // only sent to auth endpoints — reduces cookie surface
+        });
+    }
+
     /// <summary>
     /// Logout — revokes the refresh token in the database so it cannot be reused
     /// </summary>
@@ -356,10 +392,36 @@ public class AuthController(
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(request.RefreshToken))
+            // Support refresh token from body (API/mobile) or HttpOnly cookie (browser)
+            var refreshToken = request.RefreshToken;
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                refreshToken = Request.Cookies["piya_refresh_token"];
+
+            if (!string.IsNullOrWhiteSpace(refreshToken))
             {
-                await _jwtService.RevokeRefreshTokenAsync(request.RefreshToken);
+                await _jwtService.RevokeRefreshTokenAsync(refreshToken);
             }
+
+            // Clear the HttpOnly cookie regardless of how the refresh token arrived
+            Response.Cookies.Delete("piya_refresh_token",
+                new CookieOptions { Path = "/api/auth" });
+
+            // Revoke the access token jti so it is rejected immediately (before expiry)
+            if (!string.IsNullOrWhiteSpace(request.AccessToken))
+            {
+                await _jwtService.RevokeAccessTokenAsync(request.AccessToken);
+            }
+            else
+            {
+                // Fallback: extract from Authorization header if client didn't send it in body
+                var bearerToken = Request.Headers.Authorization.ToString();
+                if (bearerToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _jwtService.RevokeAccessTokenAsync(
+                        bearerToken["Bearer ".Length..].Trim());
+                }
+            }
+
             return Ok(new { message = "Logged out successfully" });
         }
         catch (Exception ex)
@@ -373,6 +435,7 @@ public class AuthController(
 public class LogoutRequest
 {
     public string? RefreshToken { get; set; }
+    public string? AccessToken { get; set; }
 }
 
 public class RegisterRequest

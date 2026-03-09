@@ -21,6 +21,8 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
     {
         _factory = factory;
         _client = _factory.CreateClient();
+        // Apply any pending migrations (e.g. AddRevokedTokens) before tests run
+        _factory.EnsureMigratedAsync().GetAwaiter().GetResult();
     }
 
     [Fact]

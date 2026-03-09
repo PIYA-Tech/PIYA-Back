@@ -29,6 +29,7 @@ namespace PIYA_API.Data
         public DbSet<InventoryHistory> InventoryHistories { get; set; }
         public DbSet<DoctorNote> DoctorNotes { get; set; }
         public DbSet<QRToken> QRTokens { get; set; }
+        public DbSet<RevokedToken> RevokedTokens { get; set; }
         
         // Pharmacy Staff & Permissions
         public DbSet<PharmacyStaff> PharmacyStaff { get; set; }
@@ -58,6 +59,12 @@ namespace PIYA_API.Data
             // Index on Token.UserId so per-user purge on login is O(log n) not a full-table scan
             modelBuilder.Entity<Token>()
                 .HasIndex(t => t.UserId);
+
+            // RevokedToken: Jti is the PK; index on ExpiresAt for cleanup queries
+            modelBuilder.Entity<RevokedToken>()
+                .HasKey(r => r.Jti);
+            modelBuilder.Entity<RevokedToken>()
+                .HasIndex(r => r.ExpiresAt);
 
             // User - DoctorProfile (One-to-One)
             modelBuilder.Entity<DoctorProfile>()

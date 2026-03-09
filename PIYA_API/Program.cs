@@ -79,6 +79,7 @@ builder.Services.Configure<FeaturesOptions>(
 builder.Services.Configure<RateLimitingOptions>(
     builder.Configuration.GetSection(RateLimitingOptions.SectionName));
 builder.Services.AddHostedService<PIYA_API.Middleware.RateLimitCleanupService>();
+builder.Services.AddHostedService<PIYA_API.Middleware.RevokedTokenCleanupService>();
 builder.Services.Configure<CachingOptions>(
     builder.Configuration.GetSection(CachingOptions.SectionName));
 
@@ -222,7 +223,23 @@ builder.Services.AddAuthentication(options =>
             Log.Debug("JWT Auth Failed: {Message}", context.Exception.Message);
             return Task.CompletedTask;
         },
-        OnTokenValidated = _ => Task.CompletedTask
+        OnTokenValidated = async context =>
+        {
+            // Enforce jti revocation blocklist — reject tokens whose jti has been
+            // explicitly revoked (e.g. logout before expiry).
+            var jti = context.Principal?.FindFirst(
+                System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
+            if (!string.IsNullOrWhiteSpace(jti))
+            {
+                var db = context.HttpContext.RequestServices
+                    .GetRequiredService<PharmacyApiDbContext>();
+                var revoked = await db.RevokedTokens.AnyAsync(r => r.Jti == jti);
+                if (revoked)
+                {
+                    context.Fail("Token has been revoked");
+                }
+            }
+        }
     };
 });
 

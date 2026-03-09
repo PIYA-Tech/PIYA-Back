@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using PIYA_API.Data;
 
 namespace PIYA_API.Tests;
 
@@ -77,6 +80,17 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
         // missing appsettings.Test.json that used to cause Serilog to crash
         // the host before any test could run.
         builder.UseEnvironment("LoadTest");
+    }
+
+    /// <summary>
+    /// Ensures pending EF migrations are applied to the test database before any
+    /// test runs.  Called lazily by tests that need a fully-migrated schema.
+    /// </summary>
+    public async Task EnsureMigratedAsync()
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+        await db.Database.MigrateAsync();
     }
 
     /// <summary>
