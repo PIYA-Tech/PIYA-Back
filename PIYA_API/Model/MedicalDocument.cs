@@ -70,7 +70,13 @@ public class MedicalDocument
     /// </summary>
     public Guid? PrescriptionId { get; set; }
     public Prescription? Prescription { get; set; }
-    
+
+    /// <summary>
+    /// Related medical test ID (for lab results, imaging, etc.)
+    /// </summary>
+    public Guid? MedicalTestId { get; set; }
+    public MedicalTest? MedicalTest { get; set; }
+
     /// <summary>
     /// Uploaded by user ID (could be different from owner)
     /// </summary>
@@ -136,5 +142,6 @@ public enum MedicalDocumentType
     AllergyCard,
     InsuranceCard,
     IdDocument,
+    ECG,
     Other
 }

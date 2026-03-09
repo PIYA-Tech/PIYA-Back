@@ -1,0 +1,87 @@
+using Microsoft.EntityFrameworkCore;
+using PIYA_API.Data;
+using PIYA_API.Model;
+using PIYA_API.Service.Interface;
+
+namespace PIYA_API.Service.Class;
+
+public class MedicalTestService(
+    PharmacyApiDbContext context,
+    ILogger<MedicalTestService> logger) : IMedicalTestService
+{
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<MedicalTestService> _logger = logger;
+
+    public async Task<MedicalTest> CreateAsync(MedicalTest test)
+    {
+        test.Id = Guid.NewGuid();
+        test.CreatedAt = DateTime.UtcNow;
+        test.UpdatedAt = DateTime.UtcNow;
+        _context.MedicalTests.Add(test);
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("MedicalTest {TestId} created for referral {ReferralId}", test.Id, test.ReferralId);
+        return test;
+    }
+
+    public async Task<MedicalTest?> GetByIdAsync(Guid id) =>
+        await _context.MedicalTests
+            .Include(t => t.OrderedByDoctor)
+            .Include(t => t.PerformedByDoctor)
+            .Include(t => t.Documents)
+            .FirstOrDefaultAsync(t => t.Id == id);
+
+    public async Task<List<MedicalTest>> GetByReferralAsync(Guid referralId) =>
+        await _context.MedicalTests
+            .Include(t => t.OrderedByDoctor)
+            .Include(t => t.PerformedByDoctor)
+            .Include(t => t.Documents)
+            .Where(t => t.ReferralId == referralId)
+            .OrderBy(t => t.CreatedAt)
+            .ToListAsync();
+
+    public async Task<List<MedicalTest>> GetByAppointmentAsync(Guid appointmentId) =>
+        await _context.MedicalTests
+            .Include(t => t.OrderedByDoctor)
+            .Include(t => t.Documents)
+            .Where(t => t.AppointmentId == appointmentId)
+            .OrderBy(t => t.CreatedAt)
+            .ToListAsync();
+
+    public async Task<MedicalTest> UpdateStatusAsync(Guid id, MedicalTestStatus status, string? findings = null)
+    {
+        var test = await RequireAsync(id);
+        test.Status = status;
+        test.UpdatedAt = DateTime.UtcNow;
+
+        if (findings is not null)
+            test.Findings = findings;
+
+        if (status == MedicalTestStatus.ResultsReady || status == MedicalTestStatus.Reviewed)
+            test.ResultsAt ??= DateTime.UtcNow;
+
+        if (status == MedicalTestStatus.InProgress)
+            test.PerformedAt ??= DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        return test;
+    }
+
+    public async Task<MedicalTest> AttachDocumentAsync(Guid testId, Guid documentId)
+    {
+        var test = await RequireAsync(testId);
+
+        var doc = await _context.MedicalDocuments.FindAsync(documentId)
+            ?? throw new KeyNotFoundException($"Document {documentId} not found.");
+
+        doc.MedicalTestId = testId;
+        doc.ModifiedAt = DateTime.UtcNow;
+        test.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        return test;
+    }
+
+    private async Task<MedicalTest> RequireAsync(Guid id) =>
+        await _context.MedicalTests.FindAsync(id)
+        ?? throw new KeyNotFoundException($"MedicalTest {id} not found.");
+}

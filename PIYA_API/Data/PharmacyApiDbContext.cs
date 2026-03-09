@@ -41,6 +41,10 @@ namespace PIYA_API.Data
         public DbSet<AppointmentReminder> AppointmentReminders { get; set; }
         public DbSet<PrescriptionRefillReminder> PrescriptionRefillReminders { get; set; }
 
+        // Referrals and Medical Tests
+        public DbSet<Referral> Referrals { get; set; }
+        public DbSet<MedicalTest> MedicalTests { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -202,6 +206,12 @@ namespace PIYA_API.Data
                 .WithMany()
                 .HasForeignKey(md => md.PrescriptionId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MedicalDocument>()
+                .HasOne(md => md.MedicalTest)
+                .WithMany(mt => mt.Documents)
+                .HasForeignKey(md => md.MedicalTestId)
+                .OnDelete(DeleteBehavior.SetNull);
             
             modelBuilder.Entity<MedicalDocument>()
                 .HasIndex(md => md.UserId);
@@ -329,6 +339,86 @@ namespace PIYA_API.Data
             
             modelBuilder.Entity<PrescriptionRefillReminder>()
                 .HasIndex(prr => prr.IsSent);
+
+            // ── Referral ─────────────────────────────────────────────────────────────
+
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.ReferringDoctor)
+                .WithMany()
+                .HasForeignKey(r => r.ReferringDoctorId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.Patient)
+                .WithMany()
+                .HasForeignKey(r => r.PatientId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.ReferredToDoctor)
+                .WithMany()
+                .HasForeignKey(r => r.ReferredToDoctorId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.SourceAppointment)
+                .WithMany()
+                .HasForeignKey(r => r.SourceAppointmentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // ResultAppointment: the generated appointment has a back-reference to this Referral
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.ResultAppointment)
+                .WithOne(a => a.Referral)
+                .HasForeignKey<Referral>(r => r.ResultAppointmentId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.PatientId);
+
+            modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.ReferringDoctorId);
+
+            modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.ReferredToDoctorId);
+
+            modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.Status);
+
+            modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.CreatedAt);
+
+            // ── MedicalTest ───────────────────────────────────────────────────────────
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasOne(mt => mt.Referral)
+                .WithMany(r => r.Tests)
+                .HasForeignKey(mt => mt.ReferralId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasOne(mt => mt.Appointment)
+                .WithMany()
+                .HasForeignKey(mt => mt.AppointmentId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasOne(mt => mt.OrderedByDoctor)
+                .WithMany()
+                .HasForeignKey(mt => mt.OrderedByDoctorId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasOne(mt => mt.PerformedByDoctor)
+                .WithMany()
+                .HasForeignKey(mt => mt.PerformedByDoctorId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasIndex(mt => mt.ReferralId);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasIndex(mt => mt.Status);
         }
     }
 }

@@ -95,4 +95,10 @@ public class Appointment
     // Navigation properties
     public ICollection<Prescription> Prescriptions { get; set; } = [];
     public ICollection<DoctorNote> DoctorNotes { get; set; } = [];
+
+    /// <summary>
+    /// Referral that originated this appointment (null for directly booked appointments)
+    /// </summary>
+    public Guid? ReferralId { get; set; }
+    public Referral? Referral { get; set; }
 }

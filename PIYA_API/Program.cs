@@ -278,6 +278,10 @@ builder.Services.AddScoped<IDoctorProfileService, DoctorProfileService>();
 builder.Services.AddScoped<IPharmacistLicenseService, PharmacistLicenseService>();
 builder.Services.AddScoped<IHospitalService, HospitalService>();
 
+// Referral & Medical Test Services
+builder.Services.AddScoped<IReferralService, ReferralService>();
+builder.Services.AddScoped<IMedicalTestService, MedicalTestService>();
+
 // Email & Authentication Enhancement Services
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<ISmsService, SmsService>();

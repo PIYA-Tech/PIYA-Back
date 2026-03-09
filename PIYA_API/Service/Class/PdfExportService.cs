@@ -612,4 +612,152 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
     }
 
     #endregion
+
+    // ── Referral Letter ───────────────────────────────────────────────────────
+
+    public async Task<byte[]> GenerateReferralLetterPdfAsync(Guid referralId)
+    {
+        var referral = await _context.Referrals
+            .Include(r => r.ReferringDoctor)
+            .Include(r => r.ReferredToDoctor)
+            .Include(r => r.Patient)
+            .Include(r => r.Tests)
+            .FirstOrDefaultAsync(r => r.Id == referralId)
+            ?? throw new KeyNotFoundException($"Referral {referralId} not found.");
+
+        var referringProfile = await _context.DoctorProfiles
+            .FirstOrDefaultAsync(dp => dp.UserId == referral.ReferringDoctorId);
+
+        var document = new PdfDocument();
+        document.Info.Title = "Medical Referral Letter";
+        var page = document.AddPage();
+        var gfx = XGraphics.FromPdfPage(page);
+
+        var titleFont   = new XFont("Arial", 18, XFontStyle.Bold);
+        var headerFont  = new XFont("Arial", 13, XFontStyle.Bold);
+        var regularFont = new XFont("Arial", 11, XFontStyle.Regular);
+        var smallFont   = new XFont("Arial", 9,  XFontStyle.Regular);
+        var boldFont    = new XFont("Arial", 11, XFontStyle.Bold);
+
+        double y = 40;
+        const double L = 40;
+        double W = page.Width - 80;
+
+        // Title
+        gfx.DrawString("MEDICAL REFERRAL LETTER", titleFont, XBrushes.DarkBlue,
+            new XRect(L, y, W, 30), XStringFormats.TopCenter);
+        y += 40;
+
+        // Urgency badge
+        var urgencyBrush = referral.Urgency switch
+        {
+            ReferralUrgency.Emergency => XBrushes.Red,
+            ReferralUrgency.Urgent    => XBrushes.DarkOrange,
+            _                         => XBrushes.DarkGreen
+        };
+        gfx.DrawString($"[ {referral.Urgency.ToString().ToUpper()} ]", boldFont, urgencyBrush,
+            new XRect(L, y, W, 20), XStringFormats.TopRight);
+        y += 30;
+
+        // Referral reference
+        gfx.DrawString($"Referral Ref: {referral.Id.ToString()[..8].ToUpper()}   Date: {referral.CreatedAt:MMMM dd, yyyy}",
+            smallFont, XBrushes.Gray, L, y);
+        y += 25;
+
+        // Referring physician
+        DrawSectionHeader(gfx, "Referring Physician", headerFont, L, ref y);
+        gfx.DrawString($"Dr. {referral.ReferringDoctor.FirstName} {referral.ReferringDoctor.LastName}",
+            regularFont, XBrushes.Black, L, y); y += 20;
+        if (referringProfile is not null)
+        {
+            gfx.DrawString($"Specialization: {referringProfile.Specialization}  |  License: {referringProfile.LicenseNumber}",
+                regularFont, XBrushes.Black, L, y); y += 20;
+        }
+        gfx.DrawString($"Email: {referral.ReferringDoctor.Email}", regularFont, XBrushes.Black, L, y);
+        y += 30;
+
+        // Patient
+        DrawSectionHeader(gfx, "Patient Information", headerFont, L, ref y);
+        gfx.DrawString($"Name: {referral.Patient.FirstName} {referral.Patient.LastName}",
+            regularFont, XBrushes.Black, L, y); y += 20;
+        gfx.DrawString($"Date of Birth: {referral.Patient.DateOfBirth:MM/dd/yyyy}   Email: {referral.Patient.Email}",
+            regularFont, XBrushes.Black, L, y);
+        y += 30;
+
+        // Referred to
+        DrawSectionHeader(gfx, "Referred To", headerFont, L, ref y);
+        if (referral.IsExternal)
+        {
+            gfx.DrawString($"External Provider: {referral.ExternalProviderName ?? "N/A"}",
+                regularFont, XBrushes.Black, L, y); y += 20;
+            gfx.DrawString($"Contact: {referral.ExternalProviderContact ?? "N/A"}",
+                regularFont, XBrushes.Black, L, y); y += 20;
+        }
+        else
+        {
+            gfx.DrawString($"Specialty: {referral.ReferredToSpecialty}", regularFont, XBrushes.Black, L, y); y += 20;
+            if (referral.ReferredToDoctor is not null)
+            {
+                gfx.DrawString($"Doctor: Dr. {referral.ReferredToDoctor.FirstName} {referral.ReferredToDoctor.LastName}",
+                    regularFont, XBrushes.Black, L, y); y += 20;
+            }
+            else
+            {
+                gfx.DrawString("Doctor: To be assigned by patient", regularFont, XBrushes.Gray, L, y); y += 20;
+            }
+        }
+        y += 10;
+
+        // Reason for referral
+        DrawSectionHeader(gfx, "Reason for Referral", headerFont, L, ref y);
+        DrawWrappedText(gfx, referral.Reason, regularFont, L, ref y, W);
+        y += 10;
+
+        // Ordered tests
+        if (referral.Tests.Count > 0)
+        {
+            DrawSectionHeader(gfx, "Ordered Investigations", headerFont, L, ref y);
+            foreach (var test in referral.Tests)
+            {
+                gfx.DrawString($"• {test.TestType}{(test.Notes is not null ? $": {test.Notes}" : "")}",
+                    regularFont, XBrushes.Black, L + 10, y); y += 20;
+            }
+            y += 10;
+        }
+
+        // Clinical notes — confidential, doctor-only
+        if (!string.IsNullOrWhiteSpace(referral.ClinicalNotes))
+        {
+            DrawSectionHeader(gfx, "Clinical Notes  [CONFIDENTIAL]", headerFont, L, ref y);
+            DrawWrappedText(gfx, referral.ClinicalNotes, regularFont, L, ref y, W);
+            y += 10;
+        }
+
+        // Results section (populated after completion)
+        if (referral.Status == ReferralStatus.Completed && !string.IsNullOrWhiteSpace(referral.ResultNotes))
+        {
+            if (y > page.Height - 150)
+            {
+                page = document.AddPage();
+                gfx = XGraphics.FromPdfPage(page);
+                y = 40;
+            }
+            DrawSectionHeader(gfx, "Specialist Results", headerFont, L, ref y);
+            DrawWrappedText(gfx, referral.ResultNotes, regularFont, L, ref y, W);
+            y += 10;
+            gfx.DrawString($"Completed: {referral.CompletedAt:MMMM dd, yyyy}", smallFont, XBrushes.Gray, L, y);
+            y += 20;
+        }
+
+        // Footer
+        y = page.Height - 60;
+        gfx.DrawLine(XPens.LightGray, L, y, L + W, y);
+        y += 10;
+        gfx.DrawString("This document was generated by PIYA Healthcare Platform and is intended for medical use only.",
+            smallFont, XBrushes.Gray, new XRect(L, y, W, 20), XStringFormats.TopCenter);
+
+        using var ms = new MemoryStream();
+        document.Save(ms, false);
+        return ms.ToArray();
+    }
 }

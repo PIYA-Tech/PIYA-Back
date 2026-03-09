@@ -24,4 +24,9 @@ public interface IPdfExportService
     /// Generate patient medical summary PDF
     /// </summary>
     Task<byte[]> GeneratePatientMedicalSummaryPdfAsync(Guid userId);
+
+    /// <summary>
+    /// Generate referral letter PDF
+    /// </summary>
+    Task<byte[]> GenerateReferralLetterPdfAsync(Guid referralId);
 }
