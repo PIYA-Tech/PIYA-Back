@@ -31,7 +31,9 @@ try
 {
     Log.Information("Starting PIYA Healthcare API");
 
-    // Enable legacy timestamp behavior for Npgsql to handle non-UTC DateTimes
+    // TODO(#13): Npgsql legacy timestamp behavior — keeps DateTimeKind.Unspecified working with PostgreSQL.
+    // To remove this: migrate all DateTime columns to timestamptz, store/read only UTC DateTimes,
+    // and switch to NodaTime or always use DateTime.SpecifyKind(dt, DateTimeKind.Utc).
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
     var builder = WebApplication.CreateBuilder(args);
@@ -160,12 +162,19 @@ builder.Services.AddCors(options =>
               .WithExposedHeaders("X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset");
     });
     
-    // Development policy - allow all origins
+    // Development policy — explicit localhost origins required for AllowCredentials()
     options.AddPolicy("Development", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(
+                "http://localhost:3000",
+                "http://localhost:4200",
+                "http://localhost:5173",
+                "http://localhost:8080",
+                "https://localhost:3000",
+                "https://localhost:5173")
               .AllowAnyMethod()
               .AllowAnyHeader()
+              .AllowCredentials()
               .WithExposedHeaders("X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset");
     });
 });

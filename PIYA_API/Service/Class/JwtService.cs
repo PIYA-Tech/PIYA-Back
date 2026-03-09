@@ -202,7 +202,11 @@ public class JwtService(PharmacyApiDbContext dbContext, IConfiguration configura
         }
     }
 
-    public string? ValidateToken(string token)    {
+    public string? ValidateToken(string token)
+    {
+        // TODO(#14): JWT token revocation is not enforced here — even revoked access tokens will pass
+        // signature validation until they expire (up to 15 min). To fix: on each validation call,
+        // look up the token's jti claim in a revocation store (Redis or DB) and reject if present.
         try
         {
             var secretKey = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
