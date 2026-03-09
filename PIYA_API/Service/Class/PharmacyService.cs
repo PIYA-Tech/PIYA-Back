@@ -38,26 +38,26 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
         return pharmacies;
     }
 
-    public Task<Pharmacy> Create(Pharmacy pharmacy)
+    public async Task<Pharmacy> Create(Pharmacy pharmacy)
     {
         dbContext.Pharmacies.Add(pharmacy);
-        dbContext.SaveChanges();
-        return Task.FromResult(pharmacy);
+        await dbContext.SaveChangesAsync();
+        return pharmacy;
     }
 
-    public Task Delete(Guid id)
+    public async Task Delete(Guid id)
     {
-        var pharmacy = dbContext.Pharmacies.Find(id) ?? throw new KeyNotFoundException("Pharmacy not found");
+        var pharmacy = await dbContext.Pharmacies.FindAsync(id)
+            ?? throw new KeyNotFoundException("Pharmacy not found");
         dbContext.Pharmacies.Remove(pharmacy);
-        dbContext.SaveChanges();
-        return Task.CompletedTask;
+        await dbContext.SaveChangesAsync();
     }
-    
-    public Task<Pharmacy> Update(Pharmacy pharmacy)
+
+    public async Task<Pharmacy> Update(Pharmacy pharmacy)
     {
-        var existingPharmacy = dbContext.Pharmacies
+        var existingPharmacy = await dbContext.Pharmacies
             .Include(p => p.Coordinates)
-            .FirstOrDefault(p => p.Id == pharmacy.Id)
+            .FirstOrDefaultAsync(p => p.Id == pharmacy.Id)
             ?? throw new KeyNotFoundException("Pharmacy not found");
         existingPharmacy.Name = pharmacy.Name;
         existingPharmacy.Address = pharmacy.Address;
@@ -82,7 +82,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
             }
         }
 
-        dbContext.SaveChanges();
-        return Task.FromResult(existingPharmacy);
+        await dbContext.SaveChangesAsync();
+        return existingPharmacy;
     }
 }

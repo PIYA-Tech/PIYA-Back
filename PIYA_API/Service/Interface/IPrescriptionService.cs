@@ -68,6 +68,12 @@ public interface IPrescriptionService
     Task<List<Prescription>> GetAllAsync(PrescriptionStatus? status = null, int pageNumber = 1, int pageSize = 50);
 
     /// <summary>
+    /// Get Active/PartiallyFulfilled prescriptions assigned to a specific pharmacy.
+    /// Accessible by Pharmacist staff at that pharmacy and Admin.
+    /// </summary>
+    Task<List<Prescription>> GetByPharmacyAsync(Guid pharmacyId);
+
+    /// <summary>
     /// Permanently delete a prescription (Admin only)
     /// </summary>
     Task DeleteAsync(Guid id);

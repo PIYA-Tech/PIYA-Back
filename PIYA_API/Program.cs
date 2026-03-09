@@ -334,8 +334,9 @@ builder.Services.AddScoped<IPrescriptionRefillReminderService, PrescriptionRefil
 builder.Services.AddScoped<IGdprComplianceService, GdprComplianceService>();
 // Performance monitoring depends on scoped services like ICacheService; register scoped
 builder.Services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringService>();
-// Security hardening may need scoped services such as IAuditService; register scoped
-builder.Services.AddScoped<ISecurityHardeningService, SecurityHardeningService>();
+// SecurityHardeningService tracks per-IP failed-login counts in in-memory dictionaries;
+// must be Singleton so state persists across requests.
+builder.Services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
 
 // Configure Swagger with JWT support + file-upload operation filter (single registration)
 builder.Services.AddSwaggerGen(c =>
@@ -368,6 +369,9 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+// Global exception handler MUST be first so it wraps all downstream middleware exceptions.
+app.UseMiddleware<PIYA_API.Middleware.GlobalExceptionHandlingMiddleware>();
+
 // Configure CORS
 var isDevelopment = app.Environment.IsDevelopment();
 app.UseCors(isDevelopment ? "Development" : "PIYAPolicy");
@@ -398,9 +402,6 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-
-// Global exception handler must be first so it wraps everything downstream
-app.UseMiddleware<PIYA_API.Middleware.GlobalExceptionHandlingMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();

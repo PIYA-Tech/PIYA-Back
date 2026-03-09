@@ -19,6 +19,10 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     {
         try
         {
+            var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            if (callerId != id && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
+                return Forbid();
+
             var user = await _userService.GetById(id);
             
             return Ok(new UserResponse

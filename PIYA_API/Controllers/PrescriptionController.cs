@@ -169,7 +169,9 @@ public class PrescriptionController(
     }
 
     /// <summary>
-    /// Generate QR code for prescription (5-minute validity)
+    /// Generate QR code for prescription (5-minute validity).
+    /// Canonical endpoint: POST /api/qrvalidation/prescription/{id}/generate
+    /// This route is kept for backward-compatibility and delegates to the QR service directly.
     /// </summary>
     [HttpPost("{id:guid}/generate-qr")]
     [Authorize(Roles = "Patient")]
@@ -181,20 +183,20 @@ public class PrescriptionController(
             var prescription = await _prescriptionService.GetByIdAsync(id);
 
             if (prescription == null)
-            {
                 return NotFound(new { error = "Prescription not found" });
-            }
 
-            // Verify patient owns this prescription
             if (prescription.PatientId != userId)
-            {
                 return Forbid();
-            }
 
-            var qrToken = await _prescriptionService.GenerateQrCodeAsync(id);
-            return Ok(new 
-            { 
-                qrToken, 
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = Request.Headers.UserAgent.ToString();
+
+            var (token, tokenId) = await _qrService.GeneratePrescriptionQrTokenAsync(id, userId, ipAddress, userAgent);
+            return Ok(new
+            {
+                qrToken = token,
+                tokenId,
+                prescriptionId = id,
                 expiresAt = DateTime.UtcNow.AddMinutes(5),
                 message = "QR code is valid for 5 minutes"
             });
@@ -439,6 +441,34 @@ public class PrescriptionController(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving expiring prescriptions");
+            return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
+        }
+    }
+
+    /// <summary>
+    /// Get Active/PartiallyFulfilled prescriptions assigned to a specific pharmacy.
+    /// Pharmacist must be staff at that pharmacy; Admin may query any pharmacy.
+    /// </summary>
+    [HttpGet("pharmacy/{pharmacyId:guid}")]
+    [Authorize(Roles = "Pharmacist,PharmacyManager,Admin,SuperAdmin")]
+    public async Task<ActionResult<List<Prescription>>> GetByPharmacy(Guid pharmacyId)
+    {
+        try
+        {
+            // Pharmacists and PharmacyManagers must belong to the requested pharmacy
+            if (!User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
+            {
+                var callerId = Guid.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
+                if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, callerId))
+                    return Forbid();
+            }
+
+            var prescriptions = await _prescriptionService.GetByPharmacyAsync(pharmacyId);
+            return Ok(prescriptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving prescriptions for pharmacy {PharmacyId}", pharmacyId);
             return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
         }
     }

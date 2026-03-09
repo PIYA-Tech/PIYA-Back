@@ -210,15 +210,19 @@ public class AuthController(
             var requires2FA = await _twoFactorService.IsTwoFactorEnabledAsync(user.Id);
             if (requires2FA)
             {
-                var challengeToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+                // Issue a server-side challenge token — the client must present it when calling /2fa/verify.
+                // This prevents any anonymous caller from verifying codes for arbitrary user IDs.
+                var challengeToken = _twoFactorService.IssueChallenge(user.Id);
+
                 await _auditService.LogSecurityEventAsync(
                     "LoginPending2FA", user.Id, ipAddress, userAgent, true,
-                    $"Login successful, awaiting 2FA verification. Challenge: {challengeToken[..8]}…");
+                    "Login successful, awaiting 2FA verification");
 
                 return Ok(new
                 {
                     requires2FA = true,
                     userId = user.Id,
+                    challengeToken,
                     message = "Please provide 2FA code"
                 });
             }
@@ -466,7 +470,11 @@ public class ValidateTokenRequest
 
 public class RefreshTokenRequest
 {
-    public required string RefreshToken { get; set; }
+    /// <summary>
+    /// Optional for browser clients — they send the refresh token as an HttpOnly
+    /// cookie instead.  Required for API / mobile clients that cannot use cookies.
+    /// </summary>
+    public string? RefreshToken { get; set; }
 }
 
 public class AuthResponse

@@ -9,16 +9,28 @@ using System.Text.RegularExpressions;
 namespace PIYA_API.Service.Class;
 
 /// <summary>
-/// Security hardening service implementation
+/// Security hardening service implementation.
+/// Registered as Singleton so brute-force / blocked-IP dictionaries survive across requests.
+/// IAuditService is Scoped, so it is resolved per-call via IServiceScopeFactory.
 /// </summary>
 public class SecurityHardeningService(
     ILogger<SecurityHardeningService> logger,
-    IAuditService auditService) : ISecurityHardeningService
+    IServiceScopeFactory scopeFactory) : ISecurityHardeningService
 {
     private readonly ILogger<SecurityHardeningService> _logger = logger;
-    private readonly IAuditService _auditService = auditService;
+    private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly ConcurrentDictionary<string, BlockedIp> _blockedIps = new();
     private readonly ConcurrentDictionary<string, List<FailedLoginAttempt>> _failedLogins = new();
+
+    /// <summary>
+    /// Resolves a short-lived scope to audit-log without holding a scoped IAuditService instance.
+    /// </summary>
+    private async Task AuditAsync(Model.AuditLog entry)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var audit = scope.ServiceProvider.GetRequiredService<IAuditService>();
+        await audit.LogAsync(entry);
+    }
 
     // Common SQL injection patterns
     private static readonly Regex[] SqlInjectionPatterns = new[]
@@ -93,7 +105,7 @@ public class SecurityHardeningService(
 
         if (result.IsSuspicious)
         {
-            await _auditService.LogAsync(new Model.AuditLog
+            await AuditAsync(new Model.AuditLog
             {
                 Action = "SUSPICIOUS_LOGIN_DETECTED",
                 EntityType = "Security",
@@ -133,7 +145,7 @@ public class SecurityHardeningService(
 
         _blockedIps.AddOrUpdate(ipAddress, blockedIp, (_, _) => blockedIp);
 
-        await _auditService.LogAsync(new Model.AuditLog
+        await AuditAsync(new Model.AuditLog
         {
             Action = "IP_BLOCKED",
             EntityType = "Security",
@@ -149,7 +161,7 @@ public class SecurityHardeningService(
     {
         _blockedIps.TryRemove(ipAddress, out _);
         
-        await _auditService.LogAsync(new Model.AuditLog
+        await AuditAsync(new Model.AuditLog
         {
             Action = "IP_UNBLOCKED",
             EntityType = "Security",

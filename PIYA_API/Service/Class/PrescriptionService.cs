@@ -279,6 +279,20 @@ public class PrescriptionService(
             .ToListAsync();
     }
 
+    public async Task<List<Prescription>> GetByPharmacyAsync(Guid pharmacyId)
+    {
+        return await _context.Prescriptions
+            .Include(p => p.Patient)
+            .Include(p => p.Doctor)
+            .Include(p => p.Items)
+                .ThenInclude(i => i.Medication)
+            .Where(p => p.FulfilledByPharmacyId == pharmacyId &&
+                        (p.Status == PrescriptionStatus.Active ||
+                         p.Status == PrescriptionStatus.PartiallyFulfilled))
+            .OrderByDescending(p => p.IssuedAt)
+            .ToListAsync();
+    }
+
     public async Task DeleteAsync(Guid id)
     {
         var prescription = await _context.Prescriptions

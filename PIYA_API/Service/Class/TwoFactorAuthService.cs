@@ -18,6 +18,10 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
     // Note: for multi-instance deployments replace this with IDistributedCache (Redis).
     private static readonly ConcurrentDictionary<Guid, (string Code, DateTime ExpiresAt)> _tempCodes = new();
 
+    // Short-lived challenge tokens issued during the 2FA login flow.
+    // Key = userId, Value = (hashedToken, expiry). Single-use: consumed on first valid check.
+    private static readonly ConcurrentDictionary<Guid, (string HashedToken, DateTime ExpiresAt)> _challenges = new();
+
     /// <summary>Purge expired entries from <see cref="_tempCodes"/> to prevent unbounded growth.</summary>
     private static void PurgeExpiredTempCodes()
     {
@@ -346,5 +350,46 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         }
 
         return result.ToArray();
+    }
+
+    /// <inheritdoc/>
+    public string IssueChallenge(Guid userId)
+    {
+        // Purge stale challenges on each issue to prevent unbounded growth
+        var now = DateTime.UtcNow;
+        foreach (var key in _challenges.Keys)
+        {
+            if (_challenges.TryGetValue(key, out var stale) && stale.ExpiresAt <= now)
+                _challenges.TryRemove(key, out _);
+        }
+
+        var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        // Store a SHA-256 hash so the raw token never lives in memory longer than needed
+        var hashed = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+        _challenges[userId] = (hashed, now.AddMinutes(5));
+        return raw;
+    }
+
+    /// <inheritdoc/>
+    public bool ConsumeChallenge(Guid userId, string challengeToken)
+    {
+        if (!_challenges.TryGetValue(userId, out var stored))
+            return false;
+
+        if (stored.ExpiresAt <= DateTime.UtcNow)
+        {
+            _challenges.TryRemove(userId, out _);
+            return false;
+        }
+
+        var hashed = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(challengeToken)));
+        if (!CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(hashed),
+                System.Text.Encoding.UTF8.GetBytes(stored.HashedToken)))
+            return false;
+
+        // Single-use: remove immediately after successful validation
+        _challenges.TryRemove(userId, out _);
+        return true;
     }
 }

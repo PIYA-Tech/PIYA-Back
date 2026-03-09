@@ -51,4 +51,16 @@ public interface ITwoFactorAuthService
     /// Get 2FA status for a user
     /// </summary>
     Task<TwoFactorAuth?> GetTwoFactorStatusAsync(Guid userId);
+
+    /// <summary>
+    /// Issues a short-lived (5-min) challenge token that must be presented alongside the 2FA code.
+    /// Prevents anonymous callers from verifying codes for arbitrary user IDs.
+    /// </summary>
+    string IssueChallenge(Guid userId);
+
+    /// <summary>
+    /// Returns true if <paramref name="challengeToken"/> is valid for <paramref name="userId"/>
+    /// and has not yet expired, then immediately removes it (single-use).
+    /// </summary>
+    bool ConsumeChallenge(Guid userId, string challengeToken);
 }

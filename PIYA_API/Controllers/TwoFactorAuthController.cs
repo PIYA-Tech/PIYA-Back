@@ -61,17 +61,35 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     }
 
     /// <summary>
-    /// Verify a 2FA code
+    /// Verify a 2FA code.
+    /// When called during the login flow (unauthenticated), <c>ChallengeToken</c>
+    /// must match the token issued by POST /auth/login. This prevents unauthenticated callers
+    /// from probing codes for arbitrary user IDs.
+    /// When called by an already-authenticated user (e.g., confirming setup), no challenge is required.
     /// </summary>
     [HttpPost("verify")]
     [AllowAnonymous]
     public async Task<ActionResult> VerifyCode([FromBody] VerifyCodeRequest request)
     {
-        // Allow unauthenticated calls only when the request carries a valid pre-auth challenge
-        // token issued by the login flow.  Fully-authenticated callers must match their own id.
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userIdClaim != null && Guid.TryParse(userIdClaim, out var callerId) && callerId != request.UserId)
-            return Forbid();
+        Guid callerId = Guid.Empty;
+        bool isAuthenticated = userIdClaim != null && Guid.TryParse(userIdClaim, out callerId);
+
+        if (isAuthenticated)
+        {
+            // Authenticated caller: must be acting on their own account
+            if (callerId != request.UserId)
+                return Forbid();
+        }
+        else
+        {
+            // Unauthenticated caller (login 2FA flow): must present a valid challenge token
+            if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
+                !_twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+            {
+                return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
+            }
+        }
 
         var isValid = await _twoFactorService.VerifyCodeAsync(request.UserId, request.Code);
 
@@ -210,6 +228,14 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
 
 // DTOs
 public record EnableTwoFactorRequest(TwoFactorMethod Method);
-public record VerifyCodeRequest(Guid UserId, string Code);
+
+/// <param name="UserId">The user to verify 2FA for.</param>
+/// <param name="Code">The 6-digit TOTP / SMS / email code.</param>
+/// <param name="ChallengeToken">
+/// Required for unauthenticated (login-flow) calls.
+/// Omit when the caller is already authenticated.
+/// </param>
+public record VerifyCodeRequest(Guid UserId, string Code, string? ChallengeToken = null);
+
 public record VerifyBackupCodeRequest(Guid UserId, string BackupCode);
 public record SendCodeRequest(Guid UserId);
