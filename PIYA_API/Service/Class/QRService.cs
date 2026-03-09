@@ -61,7 +61,8 @@ public class QRService : IQRService
                 throw new InvalidOperationException("Prescription has already been fulfilled");
             }
 
-            if (prescription.Status == PrescriptionStatus.Expired || prescription.ExpiresAt < DateTime.UtcNow)
+            if (prescription.Status == PrescriptionStatus.Expired || 
+                (prescription.ExpiresAt > DateTime.MinValue && prescription.ExpiresAt < DateTime.UtcNow))
             {
                 throw new InvalidOperationException("Prescription has expired");
             }

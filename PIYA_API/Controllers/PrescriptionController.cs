@@ -58,7 +58,7 @@ public class PrescriptionController(
                 DoctorId = userRole == "Doctor" ? userId : dto.DoctorId,
                 Diagnosis = dto.Diagnosis,
                 Instructions = dto.Instructions,
-                ExpiresAt = dto.ExpiresAt,
+                ExpiresAt = dto.ExpiresAt == default ? DateTime.UtcNow.AddDays(30) : dto.ExpiresAt,
                 Items = dto.Items?.Select(i => new PrescriptionItem
                 {
                     MedicationId = i.MedicationId,
