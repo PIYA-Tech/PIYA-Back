@@ -64,7 +64,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Get appointment by ID
     /// </summary>
     [HttpGet("{id}")]
-    public async Task<ActionResult<Appointment>> GetById(Guid id)
+    public async Task<ActionResult<Appointment>> GetById(Guid id, CancellationToken ct)
     {
         try
         {
@@ -96,7 +96,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Get my appointments (patient or doctor)
     /// </summary>
     [HttpGet("my-appointments")]
-    public async Task<ActionResult<List<Appointment>>> GetMyAppointments([FromQuery] string? status = null)
+    public async Task<ActionResult<List<Appointment>>> GetMyAppointments([FromQuery] string? status = null, CancellationToken ct = default)
     {
         try
         {

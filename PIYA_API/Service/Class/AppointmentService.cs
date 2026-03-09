@@ -65,6 +65,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<Appointment?> GetByIdAsync(Guid id)
     {
         return await _context.Appointments
+            .AsNoTracking()
             .Include(a => a.Patient)
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
@@ -74,6 +75,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null)
     {
         var query = _context.Appointments
+            .AsNoTracking()
             .Include(a => a.Doctor)
             .Include(a => a.Hospital)
             .Where(a => a.PatientId == patientId);
@@ -91,6 +93,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null)
     {
         var query = _context.Appointments
+            .AsNoTracking()
             .Include(a => a.Patient)
             .Include(a => a.Hospital)
             .Where(a => a.DoctorId == doctorId);
