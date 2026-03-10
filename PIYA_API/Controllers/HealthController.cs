@@ -34,10 +34,10 @@ public class HealthController(
     }
 
     /// <summary>
-    /// Detailed health check with component status
+    /// Detailed health check with component status (Admin only)
     /// </summary>
     [HttpGet("detailed")]
-    [AllowAnonymous]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> GetDetailed()
     {
         var healthChecks = new Dictionary<string, object>();

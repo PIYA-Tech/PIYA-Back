@@ -24,7 +24,9 @@ public class PrescriptionService(
 
     public async Task<Prescription> CreatePrescriptionAsync(Prescription prescription)
     {
-        prescription.Id = Guid.NewGuid();
+        // Only assign a new Id if one wasn't already set by the caller
+        if (prescription.Id == Guid.Empty)
+            prescription.Id = Guid.NewGuid();
         prescription.IssuedAt = DateTime.UtcNow;
         prescription.Status = PrescriptionStatus.Active;
         prescription.CreatedAt = DateTime.UtcNow;
@@ -76,13 +78,18 @@ public class PrescriptionService(
             .ToListAsync();
     }
 
-    public async Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId)
+    public async Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null)
     {
-        return await _context.Prescriptions
+        var query = _context.Prescriptions
             .Include(p => p.Patient)
             .Include(p => p.Items)
                 .ThenInclude(i => i.Medication)
-            .Where(p => p.DoctorId == doctorId)
+            .Where(p => p.DoctorId == doctorId);
+
+        if (status.HasValue)
+            query = query.Where(p => p.Status == status.Value);
+
+        return await query
             .OrderByDescending(p => p.IssuedAt)
             .ToListAsync();
     }
@@ -281,14 +288,16 @@ public class PrescriptionService(
 
     public async Task<List<Prescription>> GetByPharmacyAsync(Guid pharmacyId)
     {
+        // Only returns prescriptions directly linked to this pharmacy:
+        //   - Fulfilled/PartiallyFulfilled ones where FulfilledByPharmacyId == pharmacyId
+        // We deliberately do NOT return all system-wide Active prescriptions here —
+        // those are only accessible via QR scan (QRValidationController).
         return await _context.Prescriptions
             .Include(p => p.Patient)
             .Include(p => p.Doctor)
             .Include(p => p.Items)
                 .ThenInclude(i => i.Medication)
-            .Where(p => p.FulfilledByPharmacyId == pharmacyId &&
-                        (p.Status == PrescriptionStatus.Active ||
-                         p.Status == PrescriptionStatus.PartiallyFulfilled))
+            .Where(p => p.FulfilledByPharmacyId == pharmacyId)
             .OrderByDescending(p => p.IssuedAt)
             .ToListAsync();
     }
@@ -310,6 +319,21 @@ public class PrescriptionService(
             Guid.Empty,
             $"Prescription {id} permanently deleted by admin"
         );
+    }
+
+    public async Task<int> CountDoctorPrescriptionsAsync(Guid doctorId, DateTime? issuedFrom = null, PrescriptionStatus? status = null)
+    {
+        var query = _context.Prescriptions
+            .AsNoTracking()
+            .Where(p => p.DoctorId == doctorId);
+
+        if (issuedFrom.HasValue)
+            query = query.Where(p => p.IssuedAt >= issuedFrom.Value);
+
+        if (status.HasValue)
+            query = query.Where(p => p.Status == status.Value);
+
+        return await query.CountAsync();
     }
 
     private string GenerateDigitalSignature(Prescription prescription)

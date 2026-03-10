@@ -335,6 +335,21 @@ public class SecurityHardeningService(
             AttemptedAt = DateTime.UtcNow,
             FailureReason = "InvalidCredentials"
         });
+
+        // Prune stale entries to prevent unbounded memory growth.
+        // Keep only entries within twice the lockout window; anything older
+        // will never trigger a lockout anyway.
+        var cutoff = DateTime.UtcNow.AddMinutes(-120); // generous 2-hour sweep
+        _failedLogins.Keys.ToList().ForEach(key =>
+        {
+            if (_failedLogins.TryGetValue(key, out var attempts))
+            {
+                attempts.RemoveAll(a => a.AttemptedAt < cutoff);
+                if (attempts.Count == 0)
+                    _failedLogins.TryRemove(key, out _);
+            }
+        });
+
         await Task.CompletedTask;
     }
 

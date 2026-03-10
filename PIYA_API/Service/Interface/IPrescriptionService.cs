@@ -25,7 +25,7 @@ public interface IPrescriptionService
     /// <summary>
     /// Get all prescriptions created by a doctor
     /// </summary>
-    Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId);
+    Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null);
     
     /// <summary>
     /// Generate QR code for prescription (5-minute validity)
@@ -77,4 +77,10 @@ public interface IPrescriptionService
     /// Permanently delete a prescription (Admin only)
     /// </summary>
     Task DeleteAsync(Guid id);
+
+    /// <summary>
+    /// DB-level count of a doctor's prescriptions issued within a date window.
+    /// Used by dashboard stats to avoid loading full prescription lists into memory.
+    /// </summary>
+    Task<int> CountDoctorPrescriptionsAsync(Guid doctorId, DateTime? issuedFrom = null, PrescriptionStatus? status = null);
 }

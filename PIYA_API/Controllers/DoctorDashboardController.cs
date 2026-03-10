@@ -315,26 +315,6 @@ public class DoctorDashboardController(
     #region Appointments
 
     /// <summary>
-    /// Get doctor's upcoming appointments
-    /// </summary>
-    [HttpGet("appointments/upcoming")]
-    public async Task<ActionResult<List<Appointment>>> GetUpcomingAppointments()
-    {
-        try
-        {
-            var userId = GetUserId();
-            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
-            
-            return Ok(appointments);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving upcoming appointments");
-            return StatusCode(500, new { error = "Failed to retrieve appointments" });
-        }
-    }
-
-    /// <summary>
     /// Get doctor's appointments for a specific date
     /// </summary>
     [HttpGet("appointments/date/{date}")]
@@ -683,32 +663,6 @@ public class DoctorDashboardController(
     }
 
     /// <summary>
-    /// Get doctor's prescriptions
-    /// </summary>
-    [HttpGet("prescriptions")]
-    public async Task<ActionResult<List<Prescription>>> GetMyPrescriptions([FromQuery] PrescriptionStatus? status = null)
-    {
-        try
-        {
-            var userId = GetUserId();
-            var prescriptions = await _prescriptionService.GetDoctorPrescriptionsAsync(userId);
-            
-            // Filter by status if provided
-            if (status.HasValue)
-            {
-                prescriptions = prescriptions.Where(p => p.Status == status.Value).ToList();
-            }
-            
-            return Ok(prescriptions);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving prescriptions");
-            return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
-        }
-    }
-
-    /// <summary>
     /// Get prescriptions for specific patient — all prescriptions visible to this doctor.
     /// Access is granted when the calling doctor has at least one non-cancelled appointment
     /// with the patient.
@@ -720,18 +674,11 @@ public class DoctorDashboardController(
         {
             var userId = GetUserId();
 
-            // Gate: doctor must have an appointment with this patient
-            var doctorAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
-            var hasRelationship = doctorAppointments.Any(a =>
-                a.PatientId == patientId &&
-                a.Status != AppointmentStatus.Cancelled);
-
-            if (!hasRelationship)
+            // Single DB EXISTS query — no full appointment list loaded into memory
+            if (!await _appointmentService.HasDoctorPatientRelationshipAsync(userId, patientId))
                 return Forbid();
 
-            // Return ALL prescriptions for this patient (full medical history)
             var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(patientId);
-
             return Ok(prescriptions);
         }
         catch (Exception ex)
@@ -753,20 +700,19 @@ public class DoctorDashboardController(
         {
             var userId = GetUserId();
 
-            // Gate: doctor must have a non-cancelled appointment with this patient
-            var doctorAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
-            var patientAppointments = doctorAppointments
-                .Where(a => a.PatientId == patientId)
-                .ToList();
-
-            if (!patientAppointments.Any(a => a.Status != AppointmentStatus.Cancelled))
+            // Single DB EXISTS query for the access gate
+            if (!await _appointmentService.HasDoctorPatientRelationshipAsync(userId, patientId))
                 return Forbid();
 
-            // All prescriptions (full medical history across all doctors)
-            var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(patientId);
+            // Fetch only this doctor's appointments with this patient (not all doctor appointments)
+            var patientAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
+            var filteredAppointments = patientAppointments
+                .Where(a => a.PatientId == patientId)
+                .OrderByDescending(a => a.ScheduledAt)
+                .ToList();
 
-            // Patient info from first appointment
-            var patientInfo = patientAppointments.First().Patient;
+            var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(patientId);
+            var patientInfo = filteredAppointments.FirstOrDefault()?.Patient;
 
             var result = new
             {
@@ -780,18 +726,16 @@ public class DoctorDashboardController(
                     patientInfo.DateOfBirth,
                 },
                 Prescriptions = prescriptions,
-                AppointmentHistory = patientAppointments
-                    .OrderByDescending(a => a.ScheduledAt)
-                    .Select(a => new
-                    {
-                        a.Id,
-                        a.ScheduledAt,
-                        a.Status,
-                        a.Reason,
-                        a.AppointmentNotes,
-                        a.DurationMinutes,
-                        Hospital = a.Hospital == null ? null : new { a.Hospital.Id, a.Hospital.Name },
-                    }),
+                AppointmentHistory = filteredAppointments.Select(a => new
+                {
+                    a.Id,
+                    a.ScheduledAt,
+                    a.Status,
+                    a.Reason,
+                    a.AppointmentNotes,
+                    a.DurationMinutes,
+                    Hospital = a.Hospital == null ? null : new { a.Hospital.Id, a.Hospital.Name },
+                }),
             };
 
             return Ok(result);
@@ -851,38 +795,22 @@ public class DoctorDashboardController(
         try
         {
             var userId = GetUserId();
-            
-            // Get all appointments for the doctor
-            var allAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, null);
-            
-            // Filter upcoming appointments (future and scheduled/confirmed)
-            var upcomingAppointments = allAppointments
-                .Where(a => a.ScheduledAt > DateTime.UtcNow && 
-                           (a.Status == AppointmentStatus.Scheduled || a.Status == AppointmentStatus.Confirmed))
-                .ToList();
-            
-            // Get today's appointments
-            var todayStart = DateTime.UtcNow.Date;
-            var todayEnd = todayStart.AddDays(1);
-            var todayAppointments = allAppointments
-                .Where(a => a.ScheduledAt >= todayStart && a.ScheduledAt < todayEnd)
-                .ToList();
-            
-            // Get all prescriptions and filter
-            var allPrescriptions = await _prescriptionService.GetDoctorPrescriptionsAsync(userId);
-            var activePrescriptions = allPrescriptions.Where(p => p.Status == PrescriptionStatus.Active).ToList();
-            var last30DaysStart = DateTime.UtcNow.AddDays(-30);
-            var last30DaysPrescriptions = allPrescriptions
-                .Where(p => p.IssuedAt >= last30DaysStart)
-                .ToList();
+            var now = DateTime.UtcNow;
+
+            // Single DB round-trip for all appointment counts
+            var apptCounts = await _appointmentService.GetDoctorAppointmentCountsAsync(userId, now);
+
+            // DB-level counts — no full list loaded into memory
+            var activePrescriptionCount = await _prescriptionService.CountDoctorPrescriptionsAsync(userId, status: PrescriptionStatus.Active);
+            var last30DaysPrescriptionCount = await _prescriptionService.CountDoctorPrescriptionsAsync(userId, issuedFrom: now.AddDays(-30));
 
             var stats = new DoctorDashboardStats
             {
-                TodayAppointmentsCount = todayAppointments.Count,
-                UpcomingAppointmentsCount = upcomingAppointments.Count,
-                ActivePrescriptionsCount = activePrescriptions.Count,
-                Last30DaysPrescriptionsCount = last30DaysPrescriptions.Count,
-                NextAppointment = upcomingAppointments.OrderBy(a => a.ScheduledAt).FirstOrDefault()
+                TodayAppointmentsCount = apptCounts.TodayCount,
+                UpcomingAppointmentsCount = apptCounts.UpcomingCount,
+                ActivePrescriptionsCount = activePrescriptionCount,
+                Last30DaysPrescriptionsCount = last30DaysPrescriptionCount,
+                NextAppointment = apptCounts.NextAppointment
             };
 
             return Ok(stats);

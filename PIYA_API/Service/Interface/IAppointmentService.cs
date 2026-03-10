@@ -56,4 +56,20 @@ public interface IAppointmentService
     /// Get upcoming appointments for a hospital
     /// </summary>
     Task<List<Appointment>> GetHospitalAppointmentsAsync(Guid hospitalId, DateTime? date = null);
+
+    /// <summary>
+    /// Returns true when the doctor has at least one non-cancelled appointment with the patient.
+    /// Used to gate access to patient records without loading full appointment lists.
+    /// </summary>
+    Task<bool> HasDoctorPatientRelationshipAsync(Guid doctorId, Guid patientId);
+
+    /// <summary>
+    /// Returns appointment counts for the doctor dashboard stats in a single DB query.
+    /// </summary>
+    Task<DoctorAppointmentCounts> GetDoctorAppointmentCountsAsync(Guid doctorId, DateTime asOf);
 }
+
+/// <summary>
+/// Lightweight struct returned by <see cref="IAppointmentService.GetDoctorAppointmentCountsAsync"/>.
+/// </summary>
+public record DoctorAppointmentCounts(int TodayCount, int UpcomingCount, Appointment? NextAppointment);

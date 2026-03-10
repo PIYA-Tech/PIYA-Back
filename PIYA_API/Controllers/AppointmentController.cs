@@ -26,12 +26,23 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            // Patients can only book for themselves; only Admins may override the PatientId
+            // Validate required HospitalId
+            if (request.HospitalId == Guid.Empty)
+                return BadRequest(new { error = "HospitalId is required to book an appointment." });
+
+            // Patients can only book for themselves; Admins may override the PatientId;
+            // Doctors must explicitly supply a PatientId (they cannot book themselves as patient)
             Guid patientId;
             if (userRole == "Patient")
                 patientId = userId;
             else if (userRole == "Admin" && request.PatientId.HasValue)
                 patientId = request.PatientId.Value;
+            else if (userRole == "Doctor")
+            {
+                if (!request.PatientId.HasValue)
+                    return BadRequest(new { error = "PatientId is required when a Doctor books an appointment." });
+                patientId = request.PatientId.Value;
+            }
             else
                 patientId = request.PatientId ?? userId;
 

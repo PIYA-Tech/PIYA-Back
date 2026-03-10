@@ -160,6 +160,39 @@ public class SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityH
             }
         }
 
+        // Check JSON request bodies — enable buffering so body can be read without
+        // consuming the stream that downstream middleware / controllers will also need.
+        var contentType = context.Request.ContentType ?? "";
+        if (contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase)
+            && context.Request.ContentLength > 0
+            && context.Request.ContentLength < 1_048_576) // skip bodies > 1 MB
+        {
+            context.Request.EnableBuffering();
+            var body = await new System.IO.StreamReader(
+                context.Request.Body,
+                System.Text.Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: false,
+                leaveOpen: true).ReadToEndAsync();
+            context.Request.Body.Position = 0; // reset for downstream
+
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                if (await securityService.DetectSqlInjectionAsync(body))
+                {
+                    _logger.LogWarning("SQL injection attempt detected in JSON body from IP: {IpAddress}", ipAddress);
+                    await BlockRequest(context, ipAddress, "SQL injection in JSON body", securityService);
+                    return true;
+                }
+
+                if (await securityService.DetectXssAsync(body))
+                {
+                    _logger.LogWarning("XSS attempt detected in JSON body from IP: {IpAddress}", ipAddress);
+                    await BlockRequest(context, ipAddress, "XSS in JSON body", securityService);
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 

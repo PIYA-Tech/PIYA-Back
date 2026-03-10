@@ -100,6 +100,15 @@ builder.Services.AddOptions<SecurityOptions>()
     }, "Security:QrSigningKey must be configured, at least 32 characters, and changed from default. Generate with: openssl rand -base64 64")
     .ValidateOnStart();
 
+// Validate database connection string on startup
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DefaultConnection is required. " +
+        "Set it via appsettings.json or the CONNECTIONSTRINGS__DEFAULTCONNECTION environment variable.");
+}
+
 // Configure Redis Distributed Cache
 var cacheProvider = builder.Configuration["Caching:Provider"];
 if (cacheProvider == "Redis")

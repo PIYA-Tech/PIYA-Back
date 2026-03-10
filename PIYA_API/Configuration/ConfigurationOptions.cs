@@ -57,37 +57,8 @@ public class SecurityOptions
     /// Allowed CORS origins
     /// </summary>
     public string[] AllowedOrigins { get; set; } = Array.Empty<string>();
-
-    /// <summary>
-    /// Validates security configuration on startup
-    /// </summary>
-    public void Validate()
-    {
-        if (string.IsNullOrWhiteSpace(QrSigningKey))
-        {
-            throw new InvalidOperationException("Security:QrSigningKey is required. Generate with: openssl rand -base64 32");
-        }
-
-        if (QrSigningKey.Length < 32)
-        {
-            throw new InvalidOperationException("Security:QrSigningKey must be at least 32 characters for security. Current length: " + QrSigningKey.Length);
-        }
-
-        if (QrSigningKey.Contains("CHANGE") || QrSigningKey.Contains("REPLACE"))
-        {
-            throw new InvalidOperationException("Security:QrSigningKey must be changed from default value in production.");
-        }
-
-        if (QrTokenExpiryMinutes < 1 || QrTokenExpiryMinutes > 60)
-        {
-            throw new InvalidOperationException("Security:QrTokenExpiryMinutes must be between 1 and 60 minutes.");
-        }
-
-        if (PasswordHashWorkFactor < 10 || PasswordHashWorkFactor > 15)
-        {
-            throw new InvalidOperationException("Security:PasswordHashWorkFactor must be between 10 and 15.");
-        }
-    }
+    // Note: startup validation is performed in Program.cs via
+    // AddOptions<SecurityOptions>().Validate(...).ValidateOnStart()
 }
 
 /// <summary>

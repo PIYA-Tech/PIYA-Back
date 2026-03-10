@@ -84,7 +84,7 @@ public class JwtService(
         var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
         var jwtToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
         var refreshToken = GenerateRefreshToken();
-        var refreshExpiry = DateTime.UtcNow.AddDays(7);
+        var refreshTokenHash = HashToken(refreshToken);
 
         // ── Session limit enforcement ────────────────────────────────────────
         var maxSessions = _securityOptions.MaxConcurrentSessions;
@@ -118,7 +118,8 @@ public class JwtService(
             Id = Guid.NewGuid(),
             UserId = user.Id,
             AccessToken = jwtToken,
-            RefreshToken = refreshToken,
+            // Store SHA-256 hash — raw token never persisted to DB
+            RefreshToken = refreshTokenHash,
             Family = Guid.NewGuid(),        // each new login starts a fresh family
             ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
             CreationTime = DateTime.UtcNow,
@@ -173,13 +174,13 @@ public class JwtService(
             throw new RefreshTokenReuseException(usedEntry.UserId);
         }
 
-        // ── Find the active token row ────────────────────────────────────────
+        // ── Find the active token row (by hash) ──────────────────────────────
         var tokenEntity = await _dbContext.Tokens
-            .FirstOrDefaultAsync(t => t.RefreshToken == refreshToken);
+            .FirstOrDefaultAsync(t => t.RefreshToken == hash);
 
         if (tokenEntity == null) return null;
 
-        // Refresh window: 7 days from creation
+        // Absolute expiry: 7 days from original issuance (non-sliding)
         if (tokenEntity.CreationTime.AddDays(7) < DateTime.UtcNow) return null;
 
         var user = tokenEntity.UserId.HasValue
@@ -190,23 +191,26 @@ public class JwtService(
         var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
         var newAccessToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
         var newRefreshToken = GenerateRefreshToken();
+        var newRefreshHash = HashToken(newRefreshToken);
         var newExpiry = DateTime.UtcNow.AddMinutes(expiryMinutes);
 
-        // ── Record the old refresh token as "used" (for reuse detection) ────
+        // ── Record the old refresh token hash as "used" (for reuse detection) ─
         _dbContext.UsedRefreshTokens.Add(new UsedRefreshToken
         {
             TokenHash = hash,
             Family = tokenEntity.Family,
             UserId = user.Id,
-            ExpiresAt = tokenEntity.CreationTime.AddDays(7 + 1), // keep 1 extra day for clock skew
+            ExpiresAt = tokenEntity.CreationTime.AddDays(8), // keep 1 extra day for clock skew
         });
 
-        // ── Rotate in-place ──────────────────────────────────────────────────
+        // ── Rotate in-place — store new hash, do NOT reset CreationTime ─────
+        // Keeping CreationTime fixed enforces an absolute 7-day expiry window
+        // regardless of how frequently the token is refreshed.
         tokenEntity.UserId = user.Id;
         tokenEntity.AccessToken = newAccessToken;
-        tokenEntity.RefreshToken = newRefreshToken;
+        tokenEntity.RefreshToken = newRefreshHash;
         tokenEntity.ExpiresAt = newExpiry;
-        tokenEntity.CreationTime = DateTime.UtcNow; // reset 7-day window
+        // CreationTime intentionally NOT updated — prevents perpetual sliding window
 
         await _dbContext.SaveChangesAsync();
 
@@ -224,8 +228,9 @@ public class JwtService(
 
     public async Task RevokeRefreshTokenAsync(string refreshToken)
     {
+        var hash = HashToken(refreshToken);
         var tokenEntity = await _dbContext.Tokens
-            .FirstOrDefaultAsync(t => t.RefreshToken == refreshToken);
+            .FirstOrDefaultAsync(t => t.RefreshToken == hash);
         if (tokenEntity != null)
         {
             _dbContext.Tokens.Remove(tokenEntity);
@@ -320,8 +325,12 @@ public class JwtService(
             var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
             if (!string.IsNullOrWhiteSpace(jti))
             {
-                // Synchronous check used by the legacy ValidateToken path
-                var revoked = _dbContext.RevokedTokens.Any(r => r.Jti == jti);
+                // Use async-over-sync as last resort — this legacy path is only called
+                // by POST /api/auth/validate-token which is not a hot path.
+                // The JWT middleware (hot path) uses IsJtiRevokedAsync properly.
+                var revoked = _dbContext.RevokedTokens
+                    .AsNoTracking()
+                    .Any(r => r.Jti == jti);
                 if (revoked) throw new UnauthorizedAccessException("Token has been revoked");
             }
 

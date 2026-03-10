@@ -82,7 +82,11 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
     public async Task Delete(Guid id)
     {
         var user = await _dbContext.Users.FindAsync(id) ?? throw new KeyNotFoundException($"User with ID {id} not found");
-        _dbContext.Users.Remove(user);
+        // Soft-delete: deactivate the account rather than removing the row.
+        // Hard-delete would cascade-remove Appointments, Prescriptions, DoctorProfiles, etc.
+        user.IsActive = false;
+        user.UpdatedAt = DateTime.UtcNow;
+        _dbContext.Users.Update(user);
         await _dbContext.SaveChangesAsync();
     }
 

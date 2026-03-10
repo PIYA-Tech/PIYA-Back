@@ -326,4 +326,38 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .OrderBy(a => a.ScheduledAt)
             .ToListAsync();
     }
+
+    public async Task<bool> HasDoctorPatientRelationshipAsync(Guid doctorId, Guid patientId)
+    {
+        return await _context.Appointments
+            .AsNoTracking()
+            .AnyAsync(a =>
+                a.DoctorId == doctorId &&
+                a.PatientId == patientId &&
+                a.Status != AppointmentStatus.Cancelled);
+    }
+
+    public async Task<DoctorAppointmentCounts> GetDoctorAppointmentCountsAsync(Guid doctorId, DateTime asOf)
+    {
+        var todayStart = asOf.Date;
+        var todayEnd   = todayStart.AddDays(1);
+
+        // Single round-trip: pull only upcoming + today appointments for this doctor.
+        // We avoid loading cancelled/completed appointments entirely.
+        var activeStatuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed };
+
+        var relevant = await _context.Appointments
+            .AsNoTracking()
+            .Where(a => a.DoctorId == doctorId
+                        && activeStatuses.Contains(a.Status)
+                        && a.ScheduledAt >= todayStart)
+            .OrderBy(a => a.ScheduledAt)
+            .ToListAsync();
+
+        var todayCount    = relevant.Count(a => a.ScheduledAt < todayEnd);
+        var upcomingCount = relevant.Count(a => a.ScheduledAt > asOf);
+        var next          = relevant.FirstOrDefault(a => a.ScheduledAt > asOf);
+
+        return new DoctorAppointmentCounts(todayCount, upcomingCount, next);
+    }
 }

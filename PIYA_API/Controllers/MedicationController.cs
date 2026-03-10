@@ -7,6 +7,7 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class MedicationController(IMedicationService medicationService, ILogger<MedicationController> logger) : ControllerBase
 {
     private readonly IMedicationService _medicationService = medicationService;

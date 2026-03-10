@@ -22,12 +22,12 @@ public class HospitalController(
     /// </summary>
     [HttpGet]
     [AllowAnonymous]
-    public async Task<ActionResult<List<Hospital>>> GetAll()
+    public async Task<ActionResult<List<HospitalPublicDto>>> GetAll()
     {
         try
         {
             var hospitals = await _hospitalService.GetAllAsync();
-            return Ok(hospitals);
+            return Ok(hospitals.Select(ToPublicDto).ToList());
         }
         catch (Exception ex)
         {
@@ -41,7 +41,7 @@ public class HospitalController(
     /// </summary>
     [HttpGet("{id}")]
     [AllowAnonymous]
-    public async Task<ActionResult<Hospital>> GetById(Guid id)
+    public async Task<ActionResult<HospitalPublicDto>> GetById(Guid id)
     {
         try
         {
@@ -51,7 +51,7 @@ public class HospitalController(
                 return NotFound(new { error = "Hospital not found" });
             }
 
-            return Ok(hospital);
+            return Ok(ToPublicDto(hospital));
         }
         catch (Exception ex)
         {
@@ -65,12 +65,12 @@ public class HospitalController(
     /// </summary>
     [HttpGet("city/{city}")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<Hospital>>> GetByCity(string city)
+    public async Task<ActionResult<List<HospitalPublicDto>>> GetByCity(string city)
     {
         try
         {
             var hospitals = await _hospitalService.GetByCityAsync(city);
-            return Ok(hospitals);
+            return Ok(hospitals.Select(ToPublicDto).ToList());
         }
         catch (Exception ex)
         {
@@ -84,12 +84,12 @@ public class HospitalController(
     /// </summary>
     [HttpGet("department/{department}")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<Hospital>>> GetByDepartment(string department)
+    public async Task<ActionResult<List<HospitalPublicDto>>> GetByDepartment(string department)
     {
         try
         {
             var hospitals = await _hospitalService.GetByDepartmentAsync(department);
-            return Ok(hospitals);
+            return Ok(hospitals.Select(ToPublicDto).ToList());
         }
         catch (Exception ex)
         {
@@ -103,12 +103,12 @@ public class HospitalController(
     /// </summary>
     [HttpGet("active")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<Hospital>>> GetActive()
+    public async Task<ActionResult<List<HospitalPublicDto>>> GetActive()
     {
         try
         {
             var hospitals = await _hospitalService.GetActiveHospitalsAsync();
-            return Ok(hospitals);
+            return Ok(hospitals.Select(ToPublicDto).ToList());
         }
         catch (Exception ex)
         {
@@ -163,6 +163,24 @@ public class HospitalController(
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static HospitalPublicDto ToPublicDto(Hospital h) => new()
+    {
+        Id           = h.Id,
+        Name         = h.Name,
+        Address      = h.Address,
+        City         = h.City,
+        Country      = h.Country,
+        PhoneNumber  = h.PhoneNumber,
+        Email        = h.Email,
+        Website      = h.Website,
+        Departments  = h.Departments,
+        IsActive     = h.IsActive,
+        OperatingHours = h.OperatingHours,
+        Coordinates  = h.Coordinates is { } c
+            ? new CoordinatesDto { Lat = c.Latitude, Lng = c.Longitude }
+            : null,
+    };
 
     private static Hospital DtoToHospital(HospitalUpsertDto dto) => new()
     {

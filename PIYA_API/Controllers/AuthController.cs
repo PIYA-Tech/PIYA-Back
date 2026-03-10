@@ -116,7 +116,9 @@ public class AuthController(
                 email = createdUser.Email,
                 accessToken = tokenResponse.AccessToken,
                 expiresAt = tokenResponse.ExpiresAt,
-                refreshToken = tokenResponse.RefreshToken,
+                // refreshToken is NOT included here — it is already set as an HttpOnly
+                // cookie by SetRefreshTokenCookie above. Browser clients must use the
+                // cookie. Mobile clients that cannot use cookies should use POST /refresh.
                 role = createdUser.Role.ToString(),
                 isEmailVerified = createdUser.IsEmailVerified,
                 // legacy short key used by some tests

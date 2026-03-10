@@ -28,7 +28,8 @@ public class PharmacyController(
     public async Task<IActionResult> GetAll()
     {
         var pharmacies = await _pharmacyService.GetAll();
-        return Ok(pharmacies);
+        var dtos = pharmacies.Select(ToPublicDto).ToList();
+        return Ok(dtos);
     }
 
     [HttpGet("{id:guid}")]
@@ -40,7 +41,7 @@ public class PharmacyController(
         {
             return NotFound("Pharmacy not found.");
         }
-        return Ok(pharmacy);
+        return Ok(ToPublicDto(pharmacy));
     }
 
     [HttpPost("create")]
@@ -364,6 +365,28 @@ public class PharmacyController(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static PharmacyPublicDto ToPublicDto(Pharmacy p) => new()
+    {
+        Id             = p.Id,
+        Name           = p.Name,
+        Country        = p.Country,
+        Address        = p.Address,
+        City           = p.City,
+        PhoneNumber    = p.PhoneNumber,
+        Email          = p.Email,
+        Website        = p.Website,
+        OperatingHours = p.OperatingHours,
+        Services       = p.Services,
+        IsActive       = p.IsActive,
+        Is24Hours      = p.Is24Hours,
+        AverageRating  = p.AverageRating,
+        TotalRatings   = p.TotalRatings,
+        CompanyName    = p.Company?.Name,
+        Coordinates    = p.Coordinates is { } c
+            ? new CoordinatesDto { Lat = c.Latitude, Lng = c.Longitude }
+            : null,
+    };
 
     private static Pharmacy DtoToPharmacy(PharmacyUpsertDto dto) => new()
     {

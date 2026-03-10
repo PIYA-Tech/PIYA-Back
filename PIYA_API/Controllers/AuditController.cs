@@ -53,13 +53,30 @@ public class AuditController(IAuditService auditService) : ControllerBase
     /// </summary>
     [HttpGet("user/{userId}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
-    public async Task<ActionResult<List<AuditLog>>> GetUserLogs(
+    public async Task<ActionResult> GetUserLogs(
         Guid userId,
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 50)
     {
         var logs = await _auditService.GetUserLogsAsync(userId, pageNumber, pageSize);
-        return Ok(logs);
+        var result = logs.Select(log => new
+        {
+            log.Id,
+            log.Action,
+            log.EntityType,
+            log.EntityId,
+            log.Description,
+            log.IpAddress,
+            log.UserAgent,
+            log.HttpMethod,
+            log.Endpoint,
+            log.StatusCode,
+            log.IsSuccess,
+            log.ErrorMessage,
+            log.Metadata,
+            log.CreatedAt
+        }).ToList();
+        return Ok(result);
     }
 
     /// <summary>
