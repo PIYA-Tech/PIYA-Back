@@ -10,6 +10,7 @@ namespace PIYA_API.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class PharmacyController(
     ISearchService searchService,
     IPharmacyService pharmacyService,
@@ -30,9 +31,9 @@ public class PharmacyController(
         return Ok(pharmacies);
     }
 
-    [HttpGet("getById")]
+    [HttpGet("{id:guid}")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetPharmacy([FromQuery] Guid id)
+    public async Task<IActionResult> GetPharmacy(Guid id)
     {
         var pharmacy = await _pharmacyService.GetById(id);
         if (pharmacy == null)

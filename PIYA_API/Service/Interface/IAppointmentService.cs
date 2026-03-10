@@ -25,7 +25,7 @@ public interface IAppointmentService
     /// <summary>
     /// Get all appointments for a doctor
     /// </summary>
-    Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null);
+    Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null);
     
     /// <summary>
     /// Check if doctor is available at specified time

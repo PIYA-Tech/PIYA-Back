@@ -163,13 +163,14 @@ public class DoctorDashboardController(
                 ? DateTime.UtcNow.Date
                 : null;
 
-            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date);
-
+            AppointmentStatus? parsedStatus = null;
             if (!string.IsNullOrWhiteSpace(status) &&
-                Enum.TryParse<AppointmentStatus>(status, true, out var parsedStatus))
+                Enum.TryParse<AppointmentStatus>(status, true, out var s))
             {
-                appointments = appointments.Where(a => a.Status == parsedStatus).ToList();
+                parsedStatus = s;
             }
+
+            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date, parsedStatus);
 
             return Ok(appointments);
         }

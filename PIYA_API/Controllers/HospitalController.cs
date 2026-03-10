@@ -7,6 +7,7 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class HospitalController(
     IHospitalService hospitalService,
     IDoctorProfileService doctorProfileService,

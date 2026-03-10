@@ -116,7 +116,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             }
             else if (userRole == "Doctor")
             {
-                appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId);
+                appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, status: appointmentStatus);
             }
             else
             {

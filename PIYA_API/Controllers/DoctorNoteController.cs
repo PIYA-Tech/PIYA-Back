@@ -8,6 +8,7 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/doctor-notes")]
+[Authorize]
 public class DoctorNoteController(
     IDoctorNoteService doctorNoteService,
     IDoctorProfileService doctorProfileService,

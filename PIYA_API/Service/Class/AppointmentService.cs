@@ -103,7 +103,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .ToListAsync();
     }
 
-    public async Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null)
+    public async Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null)
     {
         var query = _context.Appointments
             .AsNoTracking()
@@ -116,6 +116,11 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             var startOfDay = date.Value.Date;
             var endOfDay = startOfDay.AddDays(1);
             query = query.Where(a => a.ScheduledAt >= startOfDay && a.ScheduledAt < endOfDay);
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(a => a.Status == status.Value);
         }
 
         return await query
