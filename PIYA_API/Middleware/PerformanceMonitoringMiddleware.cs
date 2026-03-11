@@ -61,10 +61,7 @@ public class PerformanceMonitoringMiddleware(RequestDelegate next, ILogger<Perfo
                     context.Response.Headers["X-Response-Time-Ms"] = durationMs.ToString();
                     context.Response.Headers["X-Memory-Used-Bytes"] = memoryUsed.ToString();
                 }
-                else
-                {
-                    _logger.LogWarning("Response already started; cannot append performance headers for {Endpoint}", endpoint);
-                }
+                // Streaming / chunked responses start before the finally block runs — skip silently
             }
             catch (Exception ex)
             {
