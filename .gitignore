@@ -372,6 +372,7 @@ FodyWeavers.xsd
 /PIYA_API/appsettings.Production.json
 /PIYA_API/appsettings.Staging.json
 /PIYA_API/appsettings.Local.json
+/PIYA_API/appsettings.LoadTest.json
 /PIYA_API/appsettings.*.local.json
 
 # Environment files
