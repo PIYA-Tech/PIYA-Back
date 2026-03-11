@@ -158,38 +158,56 @@ public class QRService : IQRService
         {
             _logger.LogInformation("Validating prescription QR token by pharmacist {PharmacistId}", pharmacistUserId);
 
-            // Validate token structure and signature
-            var (isValid, entityId, entityType, expiresAt, errorMessage) = await ValidateQrTokenAsync(token);
-
-            if (!isValid)
+            // Open a serializable transaction so that the validate + mark-used are atomic.
+            // This eliminates the TOCTOU race condition where two concurrent scans both
+            // pass validation before either writes the IsUsed flag.
+            await using var tx = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+            try
             {
-                return (false, Guid.Empty, errorMessage);
-            }
+                // Validate token structure and signature (does NOT increment counter here)
+                var (isValid, entityId, entityType, expiresAt, errorMessage) = await ValidateQrTokenAsync(token);
 
-            if (entityType != "Prescription")
+                if (!isValid)
+                {
+                    await tx.RollbackAsync();
+                    return (false, Guid.Empty, errorMessage);
+                }
+
+                if (entityType != "Prescription")
+                {
+                    await tx.RollbackAsync();
+                    return (false, Guid.Empty, "Invalid token type - expected Prescription QR token");
+                }
+
+                // Mark token as used AND increment the counter in the same transaction.
+                var marked = await MarkTokenAsUsedAsync(token, pharmacistUserId, ipAddress, userAgent);
+                if (!marked)
+                {
+                    await tx.RollbackAsync();
+                    return (false, Guid.Empty, "Token was already used or not found");
+                }
+
+                await tx.CommitAsync();
+
+                // NOTE: The caller (QRValidationController) is responsible for calling
+                // IPrescriptionService.FulfillPrescriptionAsync to update the prescription status,
+                // trigger item-level fulfillment, and write the audit trail.
+                // We intentionally do NOT update prescription.Status here to avoid a duplicate save.
+
+                // Audit log
+                await _auditService.LogEntityActionAsync("PRESCRIPTION_QR_SCANNED", "Prescription", entityId.ToString(), pharmacistUserId, 
+                    $"Scanned and validated prescription {entityId}");
+
+                _logger.LogInformation("Successfully validated and used prescription QR token for prescription {PrescriptionId}", entityId);
+
+                return (true, entityId, string.Empty);
+            }
+            catch
             {
-                return (false, Guid.Empty, "Invalid token type - expected Prescription QR token");
+                await tx.RollbackAsync();
+                throw;
             }
-
-            // Mark token as used
-            var marked = await MarkTokenAsUsedAsync(token, pharmacistUserId, ipAddress, userAgent);
-            if (!marked)
-            {
-                return (false, Guid.Empty, "Failed to mark token as used");
-            }
-
-            // NOTE: The caller (QRValidationController) is responsible for calling
-            // IPrescriptionService.FulfillPrescriptionAsync to update the prescription status,
-            // trigger item-level fulfillment, and write the audit trail.
-            // We intentionally do NOT update prescription.Status here to avoid a duplicate save.
-
-            // Audit log
-            await _auditService.LogEntityActionAsync("PRESCRIPTION_QR_SCANNED", "Prescription", entityId.ToString(), pharmacistUserId, 
-                $"Scanned and validated prescription {entityId}");
-
-            _logger.LogInformation("Successfully validated and used prescription QR token for prescription {PrescriptionId}", entityId);
-
-            return (true, entityId, string.Empty);
         }
         catch (Exception ex)
         {
@@ -263,10 +281,9 @@ public class QRService : IQRService
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token expired at {expiresAt:yyyy-MM-dd HH:mm:ss} UTC");
             }
 
-            // Only increment validation attempts on structurally-valid, non-revoked, non-expired tokens
-            dbToken.ValidationAttempts++;
-            dbToken.LastValidationAttempt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+            // ValidateQrTokenAsync is a read-only check. The ValidationAttempts counter
+            // is incremented inside MarkTokenAsUsedAsync so that preview/status endpoints
+            // do not artificially inflate the count and trigger false-positive alerts.
 
             return (true, entityId, entityType, expiresAt, string.Empty);
         }
@@ -306,6 +323,10 @@ public class QRService : IQRService
             dbToken.UsedByUserId = usedByUserId;
             dbToken.UsedFromIp = ipAddress;
             dbToken.UsedFromDevice = userAgent;
+            // Record the actual scan in the validation counter (moved here from ValidateQrTokenAsync
+            // so that read-only preview calls don't inflate the count).
+            dbToken.ValidationAttempts++;
+            dbToken.LastValidationAttempt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 

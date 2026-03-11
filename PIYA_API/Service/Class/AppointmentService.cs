@@ -24,7 +24,24 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> BookAppointmentAsync(Appointment appointment)
     {
-        // Check for conflicts
+        // Validate that the referenced hospital and doctor exist BEFORE running the
+        // conflict check, so we never query availability for a non-existent entity.
+        if (appointment.HospitalId != Guid.Empty)
+        {
+            var hospitalExists = await _context.Set<PIYA_API.Model.Hospital>().AnyAsync(h => h.Id == appointment.HospitalId);
+            if (!hospitalExists)
+                throw new KeyNotFoundException($"Hospital {appointment.HospitalId} not found.");
+        }
+
+        if (appointment.DoctorId != Guid.Empty)
+        {
+            var doctorExists = await _context.Set<PIYA_API.Model.User>()
+                .AnyAsync(u => u.Id == appointment.DoctorId && u.Role == PIYA_API.Model.UserRole.Doctor);
+            if (!doctorExists)
+                throw new KeyNotFoundException($"Doctor {appointment.DoctorId} not found.");
+        }
+
+        // Check for scheduling conflicts
         var isAvailable = await IsDoctorAvailableAsync(
             appointment.DoctorId,
             appointment.ScheduledAt,
@@ -40,23 +57,6 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         appointment.Status = AppointmentStatus.Scheduled;
         appointment.CreatedAt = DateTime.UtcNow;
         appointment.UpdatedAt = DateTime.UtcNow;
-
-        // Validate the referenced hospital exists
-        if (appointment.HospitalId != Guid.Empty)
-        {
-            var hospitalExists = await _context.Set<PIYA_API.Model.Hospital>().AnyAsync(h => h.Id == appointment.HospitalId);
-            if (!hospitalExists)
-                throw new KeyNotFoundException($"Hospital {appointment.HospitalId} not found.");
-        }
-
-        // Validate the referenced doctor exists
-        if (appointment.DoctorId != Guid.Empty)
-        {
-            var doctorExists = await _context.Set<PIYA_API.Model.User>()
-                .AnyAsync(u => u.Id == appointment.DoctorId && u.Role == PIYA_API.Model.UserRole.Doctor);
-            if (!doctorExists)
-                throw new KeyNotFoundException($"Doctor {appointment.DoctorId} not found.");
-        }
 
         _context.Appointments.Add(appointment);
         await _context.SaveChangesAsync();
@@ -134,7 +134,9 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
         var conflict = await _context.Appointments
             .Where(a => a.DoctorId == doctorId)
-            .Where(a => a.Status == AppointmentStatus.Scheduled || a.Status == AppointmentStatus.Confirmed)
+            .Where(a => a.Status == AppointmentStatus.Scheduled
+                     || a.Status == AppointmentStatus.Confirmed
+                     || a.Status == AppointmentStatus.Rescheduled)
             .Where(a =>
                 (a.ScheduledAt < endTime && a.ScheduledAt.AddMinutes(a.DurationMinutes) > scheduledAt)
             )
@@ -232,14 +234,17 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             throw new InvalidOperationException($"Cannot reschedule a {appointment.Status} appointment");
         }
 
-        // Check if new time is available
-        var isAvailable = await IsDoctorAvailableAsync(
-            appointment.DoctorId,
-            newScheduledAt,
-            appointment.DurationMinutes
-        );
+        // Check if new time is available (exclude this appointment from its own conflict check)
+        var endTime = newScheduledAt.AddMinutes(appointment.DurationMinutes);
+        var conflict = await _context.Appointments
+            .Where(a => a.DoctorId == appointment.DoctorId && a.Id != id)
+            .Where(a => a.Status == AppointmentStatus.Scheduled
+                     || a.Status == AppointmentStatus.Confirmed
+                     || a.Status == AppointmentStatus.Rescheduled)
+            .Where(a => a.ScheduledAt < endTime && a.ScheduledAt.AddMinutes(a.DurationMinutes) > newScheduledAt)
+            .AnyAsync();
 
-        if (!isAvailable)
+        if (conflict)
         {
             throw new InvalidOperationException("Doctor is not available at the new time");
         }
@@ -344,7 +349,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
         // Single round-trip: pull only upcoming + today appointments for this doctor.
         // We avoid loading cancelled/completed appointments entirely.
-        var activeStatuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed };
+        var activeStatuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed, AppointmentStatus.Rescheduled };
 
         var relevant = await _context.Appointments
             .AsNoTracking()
@@ -354,7 +359,10 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .OrderBy(a => a.ScheduledAt)
             .ToListAsync();
 
-        var todayCount    = relevant.Count(a => a.ScheduledAt < todayEnd);
+        // todayCount  = all appointments within today's calendar day
+        // upcomingCount = appointments strictly after the current moment (future, excludes today's past slots)
+        // These two counts intentionally overlap: an appointment later today is counted in both.
+        var todayCount    = relevant.Count(a => a.ScheduledAt >= todayStart && a.ScheduledAt < todayEnd);
         var upcomingCount = relevant.Count(a => a.ScheduledAt > asOf);
         var next          = relevant.FirstOrDefault(a => a.ScheduledAt > asOf);
 

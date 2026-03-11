@@ -265,6 +265,19 @@ public class QRValidationController(
     {
         try
         {
+            // Patients may only view QR history for their own prescriptions.
+            // Admins may query any prescription.
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            if (userRole == "Patient")
+            {
+                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+                if (prescription == null)
+                    return NotFound(new { error = "Prescription not found" });
+                if (prescription.PatientId != callerId)
+                    return Forbid();
+            }
+
             var history = await _qrService.GetTokenHistoryAsync(prescriptionId, "Prescription");
 
             var result = history.Select(token => new QRTokenHistoryDto

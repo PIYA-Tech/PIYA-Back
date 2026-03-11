@@ -71,7 +71,7 @@ public class EhrIntegrationService : IEhrIntegrationService
                 ],
                 Telecom = [],
                 Gender = "unknown",
-                BirthDate = user.DateOfBirth.ToString("yyyy-MM-dd"),
+                BirthDate = user.DateOfBirth?.ToString("yyyy-MM-dd"),
                 Address = []
             };
 
@@ -183,7 +183,9 @@ public class EhrIntegrationService : IEhrIntegrationService
                 LastName = name.Family,
                 Email = email,
                 PhoneNumber = phone ?? "",
-                DateOfBirth = DateTime.Parse(fhirPatient.BirthDate),
+                DateOfBirth = string.IsNullOrWhiteSpace(fhirPatient.BirthDate)
+                    ? null
+                    : DateTime.Parse(fhirPatient.BirthDate),
                 Role = UserRole.Patient,
                 IsActive = fhirPatient.Active,
                 CreatedAt = DateTime.UtcNow,

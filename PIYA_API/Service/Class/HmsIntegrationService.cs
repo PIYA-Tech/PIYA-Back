@@ -74,7 +74,7 @@ public class HmsIntegrationService : IHmsIntegrationService
                 lastName = user.LastName,
                 email = user.Email,
                 phoneNumber = user.PhoneNumber,
-                dateOfBirth = user.DateOfBirth.ToString("yyyy-MM-dd"),
+                dateOfBirth = user.DateOfBirth?.ToString("yyyy-MM-dd"),
                 syncedAt = DateTime.UtcNow
             };
 

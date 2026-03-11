@@ -15,10 +15,13 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
     private readonly ILogger<TwoFactorAuthService> _logger = logger;
 
     // Thread-safe in-memory store for SMS/Email OTP codes.
-    // Note: for multi-instance deployments replace this with IDistributedCache (Redis).
+    // TODO: Replace with IDistributedCache (Redis) before deploying more than one instance.
+    //       Current static fields are lost on restart and are NOT shared across replicas.
+    //       Suggested key pattern: "2fa:otp:{userId}" with 5-minute sliding expiry.
     private static readonly ConcurrentDictionary<Guid, (string Code, DateTime ExpiresAt)> _tempCodes = new();
 
     // Short-lived challenge tokens issued during the 2FA login flow.
+    // TODO: Same as above — migrate to IDistributedCache for multi-instance safety.
     // Key = userId, Value = (hashedToken, expiry). Single-use: consumed on first valid check.
     private static readonly ConcurrentDictionary<Guid, (string HashedToken, DateTime ExpiresAt)> _challenges = new();
 
@@ -171,7 +174,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
 
         // TODO: Integrate with SMS service (Twilio, etc.)
-        _logger.LogInformation("SMS 2FA code for user {UserId}: {Code}", userId, code);
+        _logger.LogInformation("SMS 2FA code generated for user {UserId}", userId);
 
         return true;
     }
@@ -187,7 +190,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
 
         // TODO: Integrate with email service (SendGrid, etc.)
-        _logger.LogInformation("Email 2FA code for user {UserId}: {Code}", userId, code);
+        _logger.LogInformation("Email 2FA code generated for user {UserId}", userId);
 
         return true;
     }

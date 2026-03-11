@@ -234,7 +234,33 @@ public class PrescriptionController(
                 return BadRequest(new { error = errorMessage });
             }
 
-            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+            // Fulfill the prescription (deduct stock, mark Fulfilled) — consistent with
+            // QRValidationController.ScanPrescriptionQR which also calls FulfillPrescriptionAsync.
+            var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(userId, activeOnly: true);
+            var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
+
+            Prescription? prescription;
+            if (pharmacyId.HasValue)
+            {
+                try
+                {
+                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} after QR validation: {Message}",
+                        prescriptionId, ex.Message);
+                    // Return the prescription data even if already fulfilled or stock issue
+                    prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Pharmacist {UserId} has no active pharmacy assignment; prescription {PrescriptionId} not fulfilled",
+                    userId, prescriptionId);
+                prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+            }
+
             if (prescription == null)
             {
                 return NotFound(new { error = "Prescription not found" });

@@ -142,6 +142,12 @@ public interface IInventoryService
     Task<(bool CanFulfill, List<Guid> MissingMedicationIds)> CanFulfillPrescriptionAsync(
         Guid pharmacyId, 
         List<Guid> medicationIds);
+
+    /// <summary>
+    /// Get the current available quantity for a specific medication at a pharmacy.
+    /// Returns 0 if no inventory record exists.
+    /// </summary>
+    Task<int> GetAvailableStockAsync(Guid pharmacyId, Guid medicationId);
     
     #endregion
 }

@@ -174,7 +174,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Check if doctor is available at a specific time
     /// </summary>
     [HttpGet("doctor/{doctorId}/availability")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<object>> CheckAvailability(Guid doctorId, [FromQuery] DateTime scheduledAt, [FromQuery] int durationMinutes = 30)
     {
         try

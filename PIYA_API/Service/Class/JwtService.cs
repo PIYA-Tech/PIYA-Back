@@ -86,55 +86,65 @@ public class JwtService(
         var refreshToken = GenerateRefreshToken();
         var refreshTokenHash = HashToken(refreshToken);
 
-        // ── Session limit enforcement ────────────────────────────────────────
-        var maxSessions = _securityOptions.MaxConcurrentSessions;
-        if (maxSessions > 0)
+        await using var tx = await _dbContext.Database.BeginTransactionAsync();
+        try
         {
-            var sessions = await _dbContext.Tokens
-                .Where(t => t.UserId == user.Id)
-                .OrderBy(t => t.CreationTime)
-                .ToListAsync();
-
-            // Evict oldest sessions until we are below the limit (leaving room for the new one)
-            while (sessions.Count >= maxSessions)
+            // ── Session limit enforcement ──────────────────────────────────────
+            var maxSessions = _securityOptions.MaxConcurrentSessions;
+            if (maxSessions > 0)
             {
-                var oldest = sessions[0];
-                _dbContext.Tokens.Remove(oldest);
-                sessions.RemoveAt(0);
-                _logger.LogInformation(
-                    "Session limit: evicted oldest session for user {UserId} (family {Family})",
-                    user.Id, oldest.Family);
+                var sessions = await _dbContext.Tokens
+                    .Where(t => t.UserId == user.Id)
+                    .OrderBy(t => t.CreationTime)
+                    .ToListAsync();
+
+                // Evict oldest sessions until we are below the limit (leaving room for the new one)
+                while (sessions.Count >= maxSessions)
+                {
+                    var oldest = sessions[0];
+                    _dbContext.Tokens.Remove(oldest);
+                    sessions.RemoveAt(0);
+                    _logger.LogInformation(
+                        "Session limit: evicted oldest session for user {UserId} (family {Family})",
+                        user.Id, oldest.Family);
+                }
             }
+            else
+            {
+                // Legacy behaviour: remove all prior sessions
+                var existing = await _dbContext.Tokens.Where(t => t.UserId == user.Id).ToListAsync();
+                if (existing.Count > 0) _dbContext.Tokens.RemoveRange(existing);
+            }
+
+            var tokenEntity = new Token
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                AccessToken = jwtToken,
+                // Store SHA-256 hash — raw token never persisted to DB
+                RefreshToken = refreshTokenHash,
+                Family = Guid.NewGuid(),        // each new login starts a fresh family
+                ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
+                CreationTime = DateTime.UtcNow,
+                DeviceInfo = "Web",
+            };
+
+            _dbContext.Tokens.Add(tokenEntity);
+            await _dbContext.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return new TokenResponse
+            {
+                AccessToken = jwtToken,
+                RefreshToken = refreshToken,
+                ExpiresAt = tokenEntity.ExpiresAt,
+            };
         }
-        else
+        catch
         {
-            // Legacy behaviour: remove all prior sessions
-            var existing = await _dbContext.Tokens.Where(t => t.UserId == user.Id).ToListAsync();
-            if (existing.Count > 0) _dbContext.Tokens.RemoveRange(existing);
+            await tx.RollbackAsync();
+            throw;
         }
-
-        var tokenEntity = new Token
-        {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            AccessToken = jwtToken,
-            // Store SHA-256 hash — raw token never persisted to DB
-            RefreshToken = refreshTokenHash,
-            Family = Guid.NewGuid(),        // each new login starts a fresh family
-            ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
-            CreationTime = DateTime.UtcNow,
-            DeviceInfo = "Web",
-        };
-
-        _dbContext.Tokens.Add(tokenEntity);
-        await _dbContext.SaveChangesAsync();
-
-        return new TokenResponse
-        {
-            AccessToken = jwtToken,
-            RefreshToken = refreshToken,
-            ExpiresAt = tokenEntity.ExpiresAt,
-        };
     }
 
     public string GenerateRefreshToken()
@@ -300,10 +310,16 @@ public class JwtService(
     // Validation
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Legacy stub — kept for interface compatibility only.
+    /// The method performed a synchronous EF query (thread-pool blocking) and is no longer
+    /// called by any code path. Callers should extract the user ID from JWT claims instead.
+    /// </summary>
+    [Obsolete("Extract user ID from ClaimTypes.NameIdentifier claims instead of calling this method.")]
     public Guid GetId(string token)
     {
-        var tokenObj = _dbContext.Tokens.FirstOrDefault(t => t.AccessToken == token);
-        return tokenObj == null ? Guid.Empty : tokenObj.Id;
+        // Intentionally empty — do not add synchronous DB access here.
+        return Guid.Empty;
     }
 
     public string? ValidateToken(string token)

@@ -135,34 +135,50 @@ public class InventoryService(
         Guid? userId = null,
         string? notes = null)
     {
-        var inventory = await _context.PharmacyInventories.FindAsync(inventoryId) ?? throw new InvalidOperationException("Inventory item not found");
-        int oldQuantity = inventory.QuantityInStock;
-        int quantityChanged = newQuantity - oldQuantity;
-        
-        inventory.QuantityInStock = newQuantity;
-        inventory.UpdatedAt = DateTime.UtcNow;
+        if (newQuantity < 0)
+            throw new ArgumentException("Stock quantity cannot be negative", nameof(newQuantity));
 
-        if (newQuantity > oldQuantity)
+        await using var tx = await _context.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead);
+        try
         {
-            inventory.LastRestockedAt = DateTime.UtcNow;
+            var inventory = await _context.PharmacyInventories.FindAsync(inventoryId)
+                ?? throw new InvalidOperationException("Inventory item not found");
+
+            int oldQuantity = inventory.QuantityInStock;
+            int quantityChanged = newQuantity - oldQuantity;
+
+            inventory.QuantityInStock = newQuantity;
+            inventory.UpdatedAt = DateTime.UtcNow;
+
+            if (newQuantity > oldQuantity)
+            {
+                inventory.LastRestockedAt = DateTime.UtcNow;
+            }
+
+            // Record history
+            await RecordInventoryHistoryAsync(
+                inventory.Id,
+                null,
+                InventoryTransactionType.Adjustment,
+                quantityChanged,
+                oldQuantity,
+                newQuantity,
+                userId,
+                notes: notes ?? $"Manual stock adjustment from {oldQuantity} to {newQuantity}"
+            );
+
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+            await CheckAndTriggerLowStockAlertAsync(inventory);
+
+            return inventory;
         }
-
-        // Record history
-        await RecordInventoryHistoryAsync(
-            inventory.Id,
-            null,
-            InventoryTransactionType.Adjustment,
-            quantityChanged,
-            oldQuantity,
-            newQuantity,
-            userId,
-            notes: notes ?? $"Manual stock adjustment from {oldQuantity} to {newQuantity}"
-        );
-
-        await _context.SaveChangesAsync();
-        await CheckAndTriggerLowStockAlertAsync(inventory);
-
-        return inventory;
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<PharmacyInventory> DecreaseStockAsync(
@@ -597,6 +613,15 @@ public class InventoryService(
         }
 
         return (missingMedicationIds.Count == 0, missingMedicationIds);
+    }
+
+    public async Task<int> GetAvailableStockAsync(Guid pharmacyId, Guid medicationId)
+    {
+        var inventory = await _context.PharmacyInventories
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId);
+
+        return inventory?.QuantityInStock ?? 0;
     }
 
     #endregion

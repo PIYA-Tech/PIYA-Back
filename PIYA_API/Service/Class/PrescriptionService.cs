@@ -144,6 +144,24 @@ public class PrescriptionService(
             throw new InvalidOperationException($"Cannot fulfill a prescription with status '{prescription.Status}'");
         }
 
+        // Verify adequate stock exists for ALL items BEFORE making any state changes.
+        // This prevents a prescription being marked Fulfilled when stock is insufficient.
+        var stockErrors = new List<string>();
+        foreach (var item in prescription.Items)
+        {
+            var available = await _inventoryService.GetAvailableStockAsync(pharmacyId, item.MedicationId);
+            if (available < item.Quantity)
+            {
+                stockErrors.Add(
+                    $"Medication {item.MedicationId}: required {item.Quantity}, available {available}");
+            }
+        }
+        if (stockErrors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Insufficient stock to fulfill prescription. " + string.Join("; ", stockErrors));
+        }
+
         prescription.Status = PrescriptionStatus.Fulfilled;
         prescription.FulfilledAt = DateTime.UtcNow;
         prescription.FulfilledByPharmacyId = pharmacyId;
@@ -162,30 +180,23 @@ public class PrescriptionService(
             await _qrService.RevokeTokenAsync(prescription.QrToken, prescription.PatientId, "Prescription fulfilled");
         }
 
-        await _context.SaveChangesAsync();
-
-        // Deduct stock for each prescription item — best-effort (don't block fulfillment on stock error)
+        // Deduct stock for each prescription item — executed BEFORE the status commit so
+        // a stock failure rolls back the entire operation atomically.
+        var referenceNumber = $"RX-{prescriptionId.ToString()[..8]}";
         foreach (var item in prescription.Items)
         {
-            try
-            {
-                await _inventoryService.DecreaseStockAsync(
-                    pharmacyId,
-                    item.MedicationId,
-                    item.Quantity,
-                    prescription.PatientId,
-                    prescriptionId,
-                    referenceNumber: $"RX-{prescriptionId.ToString()[..8]}"
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Stock deduction failed for medication {MedicationId} at pharmacy {PharmacyId} (prescription {PrescriptionId}). " +
-                    "Fulfillment still recorded — manual stock correction may be needed.",
-                    item.MedicationId, pharmacyId, prescriptionId);
-            }
+            await _inventoryService.DecreaseStockAsync(
+                pharmacyId,
+                item.MedicationId,
+                item.Quantity,
+                prescription.PatientId,
+                prescriptionId,
+                referenceNumber: referenceNumber
+            );
         }
+
+        // Persist the prescription status only after all stock has been successfully deducted.
+        await _context.SaveChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "FulfillPrescription",
@@ -339,9 +350,12 @@ public class PrescriptionService(
     private string GenerateDigitalSignature(Prescription prescription)
     {
         var data = $"{prescription.Id}|{prescription.PatientId}|{prescription.DoctorId}|{prescription.IssuedAt:O}";
-        // Use the configured QR signing key so the signature differs per environment
-        var signingKey = _configuration["Security:QrSigningKey"]
-            ?? throw new InvalidOperationException("Security:QrSigningKey is not configured");
+        // Use a dedicated prescription signing key that is separate from the QR signing key.
+        // Reusing the same key for two distinct cryptographic purposes violates key-separation
+        // best practice and could expose one scheme's signatures to the other.
+        var signingKey = _configuration["Security:PrescriptionSigningKey"]
+            ?? _configuration["Security:QrSigningKey"]   // fallback for legacy deploys
+            ?? throw new InvalidOperationException("Security:PrescriptionSigningKey is not configured");
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(signingKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
         return Convert.ToBase64String(hash);

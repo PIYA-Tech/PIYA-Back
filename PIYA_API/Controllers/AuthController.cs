@@ -69,7 +69,9 @@ public class AuthController(
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
-                DateOfBirth = parsedDob ?? DateTime.UtcNow.AddYears(-18),
+                // DateOfBirth is optional. We store null rather than silently defaulting
+                // to 18-years-ago, which would produce incorrect data for users who omit it.
+                DateOfBirth = parsedDob,
                 Role = roleEnum,
             };
 
@@ -254,8 +256,11 @@ public class AuthController(
                 LastName = user.LastName,
                 Role = user.Role.ToString(),
                 AccessToken = tokenResponse.AccessToken,
-                // Still include RefreshToken in body for API clients / mobile that can't use cookies
-                RefreshToken = tokenResponse.RefreshToken,
+                // RefreshToken is intentionally NOT included in the body — it is set as
+                // an HttpOnly cookie above. Mobile clients that cannot use cookies must
+                // call POST /api/auth/refresh using the cookie or store the token securely
+                // via their platform keychain, never in plain memory/storage.
+                RefreshToken = null,
                 ExpiresAt = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified
             });

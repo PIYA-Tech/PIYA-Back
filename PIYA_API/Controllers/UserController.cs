@@ -255,7 +255,7 @@ public class UpdateUserRequest
     public string? MiddleName { get; set; }
     public required string LastName { get; set; }
     public required string PhoneNumber { get; set; }
-    public DateTime DateOfBirth { get; set; }
+    public DateTime? DateOfBirth { get; set; }
     public string? Password { get; set; }
 }
 
@@ -279,7 +279,7 @@ public class UserResponse
     public string? MiddleName { get; set; }
     public required string LastName { get; set; }
     public required string PhoneNumber { get; set; }
-    public DateTime DateOfBirth { get; set; }
+    public DateTime? DateOfBirth { get; set; }
     public string? Role { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

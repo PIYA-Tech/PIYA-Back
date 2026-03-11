@@ -15,7 +15,11 @@ public class User
     public required string LastName { get; set; }
     public required string Email { get; set; }
     public required string PhoneNumber { get; set; }
-    public required DateTime DateOfBirth { get; set; }
+    /// <summary>
+    /// Optional date of birth. Null when the user did not provide it during registration.
+    /// Must be at least 18 years in the past when supplied.
+    /// </summary>
+    public DateTime? DateOfBirth { get; set; }
     public Token? TokensInfo { get; set; }
     public string? SigningKey { get; set; }
     

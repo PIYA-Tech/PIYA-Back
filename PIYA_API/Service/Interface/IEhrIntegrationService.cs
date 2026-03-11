@@ -59,7 +59,7 @@ public class FhirPatientResource
     public List<FhirName> Name { get; set; } = [];
     public List<FhirTelecom> Telecom { get; set; } = [];
     public string Gender { get; set; } = string.Empty;
-    public string BirthDate { get; set; } = string.Empty;
+    public string? BirthDate { get; set; }
     public List<FhirAddress> Address { get; set; } = [];
     public string? MaritalStatus { get; set; }
     public List<FhirCommunication> Communication { get; set; } = [];
