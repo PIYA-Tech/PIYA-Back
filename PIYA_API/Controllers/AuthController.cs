@@ -171,7 +171,10 @@ public class AuthController(
         var userAgent = Request.Headers.UserAgent.ToString();
         try
         {
-            var identifier = string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username;
+            // Accept identifier from the dedicated Identifier field (mobile/API clients),
+            // or fall back to Username / Email for backward compatibility with web clients.
+            var identifier = request.Identifier
+                ?? (string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username);
 
             if (string.IsNullOrWhiteSpace(identifier))
             {
@@ -478,6 +481,11 @@ public class RegisterRequest
 
 public class LoginRequest
 {
+    /// <summary>
+    /// Mobile / API clients send a single identifier (email or username).
+    /// Web clients may send Username and Email separately; all three are accepted.
+    /// </summary>
+    public string? Identifier { get; set; }
     public string? Username { get; set; }
     public string? Email { get; set; }
     public required string Password { get; set; }
