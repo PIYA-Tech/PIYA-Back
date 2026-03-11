@@ -122,18 +122,17 @@ public class RateLimitingMiddleware
                     try
                     {
                         using var doc = System.Text.Json.JsonDocument.Parse(body);
-                        if (doc.RootElement.TryGetProperty("username", out var u))
-                        {
-                            var username = u.GetString();
-                            if (!string.IsNullOrEmpty(username))
-                                rateLimitKey = $"{clientId}:user:{username.ToLowerInvariant()}";
-                        }
+                        // Accept 'identifier' (mobile/API clients), 'username', or 'email'
+                        string? resolvedKey = null;
+                        if (doc.RootElement.TryGetProperty("identifier", out var id))
+                            resolvedKey = id.GetString();
+                        else if (doc.RootElement.TryGetProperty("username", out var u))
+                            resolvedKey = u.GetString();
                         else if (doc.RootElement.TryGetProperty("email", out var e))
-                        {
-                            var email = e.GetString();
-                            if (!string.IsNullOrEmpty(email))
-                                rateLimitKey = $"{clientId}:user:{email.ToLowerInvariant()}";
-                        }
+                            resolvedKey = e.GetString();
+
+                        if (!string.IsNullOrEmpty(resolvedKey))
+                            rateLimitKey = $"{clientId}:user:{resolvedKey.ToLowerInvariant()}";
                     }
                     catch
                     {

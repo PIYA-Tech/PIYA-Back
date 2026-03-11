@@ -70,8 +70,7 @@ try
     builder.Services.AddHttpClient();
 
     // Configure strongly-typed configuration options
-    builder.Services.Configure<SecurityOptions>(
-        builder.Configuration.GetSection(SecurityOptions.SectionName));
+    // Note: SecurityOptions is registered below via AddOptions<> with validation.
     builder.Services.Configure<ExternalApisOptions>(
         builder.Configuration.GetSection(ExternalApisOptions.SectionName));
 builder.Services.Configure<FeaturesOptions>(
