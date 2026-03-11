@@ -137,9 +137,16 @@ else
     builder.Services.AddDistributedMemoryCache();
 }
 
-builder.Services.AddDbContext<PharmacyApiDbContext>(options =>
+// Use AddDbContextPool for efficient connection reuse across requests.
+// The pool keeps PharmacyApiDbContext instances alive and resets their state between uses,
+// reducing the overhead of creating a new connection per request and preventing pool exhaustion.
+builder.Services.AddDbContextPool<PharmacyApiDbContext>(options =>
 {
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql => npgsql.EnableRetryOnFailure(
+            maxRetryCount: 3,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorCodesToAdd: null));
 
     // In CI/LoadTest we allow DB update even if model drift exists.
     // EF tools may construct the context through runtime service provider.
@@ -155,7 +162,7 @@ builder.Services.AddDbContext<PharmacyApiDbContext>(options =>
         options.ConfigureWarnings(w =>
             w.Ignore(RelationalEventId.PendingModelChangesWarning));
     }
-});
+}, poolSize: 128);
 
 // Configure CORS
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
