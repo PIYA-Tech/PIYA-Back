@@ -381,7 +381,7 @@ public class AuthController(
                 "Refresh token reuse attack detected for user {UserId}. All sessions revoked.",
                 ex.UserId);
             Response.Cookies.Delete("piya_refresh_token",
-                new CookieOptions { Path = "/api/auth" });
+                new CookieOptions { Path = "/api/auth", Domain = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment() ? null : ".piya.life" });
             await _auditService.LogSecurityEventAsync(
                 "RefreshTokenReuseDetected",
                 ex.UserId,
@@ -398,18 +398,27 @@ public class AuthController(
         }
     }
 
-    /// <summary>Sets the refresh token as an HttpOnly Secure SameSite=Strict cookie (7-day window).</summary>
+    /// <summary>Sets the refresh token as an HttpOnly Secure SameSite=None cookie (7-day window).
+    /// SameSite=None is required because the browser frontend (test.piya.life / piya.life) and
+    /// the API (api.piya.life) are on different subdomains — browsers block SameSite=Strict/Lax
+    /// cookies on cross-origin requests. SameSite=None mandates Secure=true per browser spec.
+    /// Domain=.piya.life makes the cookie visible to all *.piya.life subdomains.</summary>
     private void SetRefreshTokenCookie(string? refreshToken)
     {
         if (string.IsNullOrWhiteSpace(refreshToken)) return;
 
+        var isDev = HttpContext.RequestServices
+                        .GetRequiredService<IWebHostEnvironment>()
+                        .IsDevelopment();
+
         Response.Cookies.Append("piya_refresh_token", refreshToken, new CookieOptions
         {
             HttpOnly = true,
-            Secure   = !HttpContext.RequestServices
-                           .GetRequiredService<IWebHostEnvironment>()
-                           .IsDevelopment(), // allow non-HTTPS in local dev only
-            SameSite = SameSiteMode.Strict,
+            Secure   = true,          // required by spec when SameSite=None; fine in dev with HTTPS
+            SameSite = isDev
+                ? SameSiteMode.Lax    // localhost dev: same-site, Lax is sufficient
+                : SameSiteMode.None,  // production: cross-subdomain (test.piya.life → api.piya.life)
+            Domain   = isDev ? null : ".piya.life",  // share across all *.piya.life subdomains
             Expires  = DateTimeOffset.UtcNow.AddDays(7),
             Path     = "/api/auth", // only sent to auth endpoints — reduces cookie surface
         });
@@ -436,7 +445,7 @@ public class AuthController(
 
             // Clear the HttpOnly cookie regardless of how the refresh token arrived
             Response.Cookies.Delete("piya_refresh_token",
-                new CookieOptions { Path = "/api/auth" });
+                new CookieOptions { Path = "/api/auth", Domain = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment() ? null : ".piya.life" });
 
             // Revoke the access token jti so it is rejected immediately (before expiry)
             if (!string.IsNullOrWhiteSpace(request.AccessToken))
