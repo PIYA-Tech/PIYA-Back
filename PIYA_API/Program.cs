@@ -428,10 +428,18 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// Enable HTTPS redirection in production/staging
+// Behind a reverse-proxy (nginx / Caddy) the proxy terminates TLS and forwards
+// plain HTTP to Kestrel.  UseForwardedHeaders rewrites the scheme/host so that
+// redirect URLs, cookie Secure flag logic and HSTS all see the original HTTPS
+// request.  We do NOT call UseHttpsRedirection — that would 307 every request
+// because the proxy-to-Kestrel hop is plain HTTP.
 if (!app.Environment.IsDevelopment())
 {
-    app.UseHttpsRedirection();
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                         | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+    });
 }
 
 app.UseAuthentication();
