@@ -61,14 +61,23 @@ public class EmailVerificationService : IEmailVerificationService
         _context.EmailVerificationTokens.Add(verificationToken);
         await _context.SaveChangesAsync();
 
-        // Send verification email
+        // Send verification email — best-effort: log and continue if the email
+        // provider rejects the message so the token is still usable via manual link.
         var verificationUrl = $"{_frontendUrl}/verify-email?token={token}";
-        await _emailService.SendEmailVerificationAsync(
-            user.Email,
-            $"{user.FirstName} {user.LastName}",
-            token,
-            verificationUrl
-        );
+        try
+        {
+            await _emailService.SendEmailVerificationAsync(
+                user.Email,
+                $"{user.FirstName} {user.LastName}",
+                token,
+                verificationUrl
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send verification email to {Email} — token saved, user can retry", user.Email);
+            // Do NOT rethrow — the token was persisted; the user can request another resend.
+        }
 
         _logger.LogInformation("Email verification token generated for user {UserId}", userId);
 

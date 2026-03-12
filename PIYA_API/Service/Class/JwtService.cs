@@ -86,6 +86,12 @@ public class JwtService(
         var refreshToken = GenerateRefreshToken();
         var refreshTokenHash = HashToken(refreshToken);
 
+        // NpgsqlRetryingExecutionStrategy requires all manual transactions to be
+        // wrapped in CreateExecutionStrategy so the strategy can retry on transient
+        // failures without throwing "does not support user-initiated transactions".
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
         await using var tx = await _dbContext.Database.BeginTransactionAsync();
         try
         {
@@ -145,6 +151,7 @@ public class JwtService(
             await tx.RollbackAsync();
             throw;
         }
+        });
     }
 
     public string GenerateRefreshToken()
