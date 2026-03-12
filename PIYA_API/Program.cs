@@ -171,7 +171,9 @@ builder.Services.AddDbContextPool<PharmacyApiDbContext>(options =>
 
 // Configure CORS
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? ["http://localhost:3000", "http://localhost:5173"];
+    ?? throw new InvalidOperationException(
+        "Cors:AllowedOrigins configuration is required. " +
+        "Set it via appsettings.json or the CORS__ALLOWEDORIGINS environment variable as a JSON array of allowed origins.");
 
 builder.Services.AddCors(options =>
 {
@@ -188,11 +190,11 @@ builder.Services.AddCors(options =>
     options.AddPolicy("Development", policy =>
     {
         policy.WithOrigins(
-                "http://localhost:3000",
+                "http://https://test.piya.life",
                 "http://localhost:4200",
                 "http://localhost:5173",
                 "http://localhost:8080",
-                "https://localhost:3000",
+                "https://https://test.piya.life",
                 "https://localhost:5173")
               .AllowAnyMethod()
               .AllowAnyHeader()
