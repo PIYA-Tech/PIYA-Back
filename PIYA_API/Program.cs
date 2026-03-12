@@ -32,8 +32,14 @@ try
     Log.Information("Starting PIYA Healthcare API");
 
     // TODO(#13): Npgsql legacy timestamp behavior — keeps DateTimeKind.Unspecified working with PostgreSQL.
-    // To remove this: migrate all DateTime columns to timestamptz, store/read only UTC DateTimes,
-    // and switch to NodaTime or always use DateTime.SpecifyKind(dt, DateTimeKind.Utc).
+    // Migration checklist to remove this switch:
+    //   1. Add `.HasConversion<UtcDateTimeConverter>()` (or use NodaTime) on all DateTime columns.
+    //   2. Update all DateTime properties in models to be stored/read as UTC only
+    //      (use DateTime.UtcNow instead of DateTime.Now everywhere; run
+    //       `grep -r "DateTime.Now" --include="*.cs"` to find remaining callsites).
+    //   3. Generate a new EF migration — the column types will change from `timestamp` to `timestamptz`.
+    //   4. Remove this AppContext.SetSwitch call and the Npgsql.EnableLegacyTimestampBehavior entry
+    //      from appsettings.json if it exists there.
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
     var builder = WebApplication.CreateBuilder(args);

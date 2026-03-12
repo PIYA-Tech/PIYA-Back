@@ -1,4 +1,5 @@
 using FluentValidation;
+using PIYA_API.Controllers;
 
 namespace PIYA_API.Validators;
 
@@ -107,5 +108,118 @@ public class RegisterRequestValidator : AbstractValidator<PIYA_API.Controllers.R
         if (string.IsNullOrWhiteSpace(dateString)) return false;
         if (!DateTime.TryParse(dateString, out var dob)) return false;
         return dob <= DateTime.UtcNow.AddYears(-18);
+    }
+}
+
+/// <summary>
+/// Validator for booking a new appointment.
+/// </summary>
+public class AppointmentRequestValidator : AbstractValidator<AppointmentRequest>
+{
+    public AppointmentRequestValidator()
+    {
+        RuleFor(x => x.DoctorId)
+            .NotEmpty().WithMessage("DoctorId is required.");
+
+        RuleFor(x => x.HospitalId)
+            .NotEmpty().WithMessage("HospitalId is required.");
+
+        RuleFor(x => x.ScheduledAt)
+            .NotEmpty().WithMessage("ScheduledAt is required.")
+            .GreaterThan(DateTime.UtcNow).WithMessage("Appointment must be scheduled in the future.");
+
+        RuleFor(x => x.Reason)
+            .NotEmpty().WithMessage("A reason for the appointment is required.")
+            .MaximumLength(500).WithMessage("Reason must not exceed 500 characters.");
+    }
+}
+
+/// <summary>
+/// Validator for individual prescription line items.
+/// </summary>
+public class CreatePrescriptionItemDtoValidator : AbstractValidator<CreatePrescriptionItemDto>
+{
+    public CreatePrescriptionItemDtoValidator()
+    {
+        RuleFor(x => x.MedicationId)
+            .NotEmpty().WithMessage("MedicationId is required for each prescription item.");
+
+        RuleFor(x => x.Dosage)
+            .NotEmpty().WithMessage("Dosage is required.")
+            .MaximumLength(100).WithMessage("Dosage must not exceed 100 characters.");
+
+        RuleFor(x => x.Frequency)
+            .NotEmpty().WithMessage("Frequency is required.")
+            .MaximumLength(100).WithMessage("Frequency must not exceed 100 characters.");
+
+        RuleFor(x => x.Duration)
+            .NotEmpty().WithMessage("Duration is required.")
+            .MaximumLength(100).WithMessage("Duration must not exceed 100 characters.");
+
+        RuleFor(x => x.Quantity)
+            .GreaterThan(0).WithMessage("Quantity must be greater than zero.")
+            .LessThanOrEqualTo(1000).WithMessage("Quantity cannot exceed 1000.");
+    }
+}
+
+/// <summary>
+/// Validator for creating a new prescription.
+/// </summary>
+public class CreatePrescriptionDtoValidator : AbstractValidator<CreatePrescriptionDto>
+{
+    public CreatePrescriptionDtoValidator()
+    {
+        RuleFor(x => x.PatientId)
+            .NotEmpty().WithMessage("PatientId is required.");
+
+        RuleFor(x => x.Diagnosis)
+            .MaximumLength(1000).WithMessage("Diagnosis must not exceed 1000 characters.")
+            .When(x => x.Diagnosis != null);
+
+        RuleFor(x => x.Instructions)
+            .MaximumLength(2000).WithMessage("Instructions must not exceed 2000 characters.")
+            .When(x => x.Instructions != null);
+
+        RuleFor(x => x.ExpiresAt)
+            .GreaterThan(DateTime.UtcNow).WithMessage("ExpiresAt must be in the future.")
+            .When(x => x.ExpiresAt != default);
+
+        RuleFor(x => x.Items)
+            .NotEmpty().WithMessage("At least one prescription item is required.")
+            .Must(items => items!.Count <= 20).WithMessage("A prescription may not contain more than 20 items.");
+
+        RuleForEach(x => x.Items).SetValidator(new CreatePrescriptionItemDtoValidator());
+    }
+}
+
+/// <summary>
+/// Validator for creating a new doctor note / medical certificate.
+/// </summary>
+public class CreateDoctorNoteRequestValidator : AbstractValidator<CreateDoctorNoteRequest>
+{
+    public CreateDoctorNoteRequestValidator()
+    {
+        RuleFor(x => x.PatientId)
+            .NotEmpty().WithMessage("PatientId is required.");
+
+        RuleFor(x => x.Title)
+            .NotEmpty().WithMessage("Title is required.")
+            .MaximumLength(200).WithMessage("Title must not exceed 200 characters.");
+
+        RuleFor(x => x.Summary)
+            .MaximumLength(2000).WithMessage("Summary must not exceed 2000 characters.")
+            .When(x => x.Summary != null);
+
+        RuleFor(x => x.ClinicName)
+            .MaximumLength(200).WithMessage("ClinicName must not exceed 200 characters.")
+            .When(x => x.ClinicName != null);
+
+        RuleFor(x => x.ValidFrom)
+            .NotEmpty().WithMessage("ValidFrom is required.");
+
+        RuleFor(x => x.ValidTo)
+            .NotEmpty().WithMessage("ValidTo is required.")
+            .GreaterThan(x => x.ValidFrom).WithMessage("ValidTo must be after ValidFrom.")
+            .GreaterThan(DateTime.UtcNow).WithMessage("ValidTo cannot be in the past.");
     }
 }
