@@ -251,7 +251,36 @@ public class UserController(IUserService userService, ILogger<UserController> lo
         }
     }
 
-    [HttpPost("{id}/change-password")]
+    // ─────────────────────────────────────────────────────────────────────────
+    // PATCH /api/user/{id}/active — activate or deactivate a user
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Set a user's active status. Admin/SuperAdmin only.
+    /// Body: { "isActive": true|false }
+    /// </summary>
+    [HttpPatch("{id}/active")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<IActionResult> SetActive(Guid id, [FromBody] SetActiveRequest request)
+    {
+        try
+        {
+            await _userService.SetActiveAsync(id, request.IsActive);
+            var state = request.IsActive ? "activated" : "deactivated";
+            return Ok(new { message = $"User {state} successfully" });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error setting active status for user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred" });
+        }
+    }
+
+
     public async Task<IActionResult> ChangePassword(Guid id, [FromBody] ChangePasswordRequest request)
     {
         try
@@ -437,4 +466,9 @@ public class UserResponse
     public bool IsEmailVerified { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+}
+
+public class SetActiveRequest
+{
+    public bool IsActive { get; set; }
 }

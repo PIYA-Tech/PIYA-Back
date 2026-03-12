@@ -172,4 +172,14 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
             .ThenBy(u => u.FirstName)
             .ToListAsync();
     }
+
+    public async Task SetActiveAsync(Guid id, bool isActive)
+    {
+        var user = await _dbContext.Users.FindAsync(id)
+            ?? throw new KeyNotFoundException($"User with ID {id} not found");
+        user.IsActive = isActive;
+        user.UpdatedAt = DateTime.UtcNow;
+        _dbContext.Users.Update(user);
+        await _dbContext.SaveChangesAsync();
+    }
 }
