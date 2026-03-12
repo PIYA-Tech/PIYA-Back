@@ -454,6 +454,9 @@ app.MapControllers();
     app.MapHub<PIYA_API.Hubs.PharmacyHub>("/hubs/pharmacy");
     app.MapHub<PIYA_API.Hubs.InventoryHub>("/hubs/inventory");
 
+    // Credentials are read from SuperAdmin:* config / PIYA__SuperAdmin__* env vars.
+    await ProductionSeeder.SeedAsync(app.Services);
+
     // Seed demo users when explicitly enabled via env-var OR appsettings DemoSeeding:Enabled.
     // Set ENABLE_DEMO_SEEDING=true in CI test steps and local dev; never in production.
     var seedEnabled =
