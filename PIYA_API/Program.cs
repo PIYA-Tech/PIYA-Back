@@ -367,34 +367,37 @@ builder.Services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringS
 // must be Singleton so state persists across requests.
 builder.Services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
 
-// Configure Swagger with JWT support + file-upload operation filter (single registration)
-builder.Services.AddSwaggerGen(c =>
+// Configure Swagger — dev only; never exposed in Production/Staging
+if (builder.Environment.IsDevelopment())
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "PIYA Pharmacy API", Version = "v1" });
-
-    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    builder.Services.AddSwaggerGen(c =>
     {
-        Description = "JWT Authorization header. Enter 'Bearer {token}'",
-        Name = "Authorization",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
-    });
+        c.SwaggerDoc("v1", new OpenApiInfo { Title = "PIYA API", Version = "v1" });
 
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
+        c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
-            },
-            Array.Empty<string>()
-        }
-    });
+            Description = "JWT Authorization header. Enter 'Bearer {token}'",
+            Name = "Authorization",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
+        });
 
-    // Support IFormFile / multipart file upload endpoints
-    c.OperationFilter<PIYA_API.Swagger.FileUploadOperationFilter>();
-});
+        c.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+                },
+                Array.Empty<string>()
+            }
+        });
+
+        // Support IFormFile / multipart file upload endpoints
+        c.OperationFilter<PIYA_API.Swagger.FileUploadOperationFilter>();
+    });
+}
 
 var app = builder.Build();
 
@@ -417,12 +420,11 @@ app.UseMiddleware<PIYA_API.Middleware.PerformanceMonitoringMiddleware>();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    // Enable Swagger UI
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Pharmacy API V1");
-        c.RoutePrefix = string.Empty; // Set Swagger UI at the app's root
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "PIYA API V1");
+        c.RoutePrefix = "swagger"; // Available at /swagger — never at root in any env
     });
 }
 
