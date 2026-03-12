@@ -12,4 +12,5 @@ public interface IUserService
     public Task Delete(Guid id);
     public Task<List<User>> GetUsersByRoleAsync(UserRole role);
     public Task SetActiveAsync(Guid id, bool isActive);
+    public Task HardDeleteAsync(Guid id);
 }

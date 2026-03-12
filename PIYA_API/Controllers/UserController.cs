@@ -280,7 +280,40 @@ public class UserController(IUserService userService, ILogger<UserController> lo
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // DELETE /api/user/{id}/purge — permanently remove a user (SuperAdmin only)
+    // ─────────────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Permanently and irreversibly deletes a user and all their owned data.
+    /// SuperAdmin only. Cannot be used to delete yourself.
+    /// </summary>
+    [HttpDelete("{id}/purge")]
+    [Authorize(Roles = "SuperAdmin")]
+    public async Task<IActionResult> Purge(Guid id)
+    {
+        try
+        {
+            var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            if (callerId == id)
+                return BadRequest(new { message = "You cannot permanently delete your own account." });
+
+            await _userService.HardDeleteAsync(id);
+            return Ok(new { message = "User permanently deleted." });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error purging user {UserId}", id);
+            return StatusCode(500, new { message = "An error occurred while deleting the user." });
+        }
+    }
+
+
+    [HttpPost("{id}/change-password")]
     public async Task<IActionResult> ChangePassword(Guid id, [FromBody] ChangePasswordRequest request)
     {
         try

@@ -182,4 +182,39 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         _dbContext.Users.Update(user);
         await _dbContext.SaveChangesAsync();
     }
+
+    public async Task HardDeleteAsync(Guid id)
+    {
+        var user = await _dbContext.Users.FindAsync(id)
+            ?? throw new KeyNotFoundException($"User with ID {id} not found");
+
+        // ── Nullify Restrict FK references so the DB will allow the row deletion ──
+
+        // MedicalDocuments where this user is the owner/uploader/verifier
+        await _dbContext.MedicalDocuments
+            .Where(md => md.UserId == id)
+            .ExecuteDeleteAsync();
+
+        await _dbContext.MedicalDocuments
+            .Where(md => md.UploadedByUserId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(md => md.UploadedByUserId, (Guid?)null));
+
+        await _dbContext.MedicalDocuments
+            .Where(md => md.VerifiedByUserId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(md => md.VerifiedByUserId, (Guid?)null));
+
+        // Referrals where this user is the patient or referring doctor
+        await _dbContext.Referrals
+            .Where(r => r.PatientId == id || r.ReferringDoctorId == id)
+            .ExecuteDeleteAsync();
+
+        // MedicalTests where this user ordered them (Restrict FK)
+        await _dbContext.MedicalTests
+            .Where(mt => mt.OrderedByDoctorId == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(mt => mt.OrderedByDoctorId, (Guid?)null));
+
+        // Now EF cascade + SetNull rules handle the rest; remove the user row
+        _dbContext.Users.Remove(user);
+        await _dbContext.SaveChangesAsync();
+    }
 }
