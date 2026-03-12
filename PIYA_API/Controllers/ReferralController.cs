@@ -24,7 +24,7 @@ public class ReferralController(
     /// Doctor creates a referral from an existing appointment
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> Create([FromBody] CreateReferralRequest req)
     {
         try
@@ -94,7 +94,7 @@ public class ReferralController(
     /// Patient: list my referrals
     /// </summary>
     [HttpGet("my-referrals")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<IActionResult> GetMyReferrals()
     {
         try
@@ -113,7 +113,7 @@ public class ReferralController(
     /// Doctor: list referrals I sent
     /// </summary>
     [HttpGet("sent")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> GetSent()
     {
         try
@@ -132,7 +132,7 @@ public class ReferralController(
     /// Doctor: list referrals sent to me
     /// </summary>
     [HttpGet("received")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> GetReceived()
     {
         try
@@ -172,7 +172,7 @@ public class ReferralController(
     /// Patient assigns a specific doctor to a pending referral
     /// </summary>
     [HttpPost("{id:guid}/assign-doctor")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<IActionResult> AssignDoctor(Guid id, [FromBody] AssignDoctorRequest req)
     {
         try
@@ -197,7 +197,7 @@ public class ReferralController(
     /// Doctor accepts a referral
     /// </summary>
     [HttpPost("{id:guid}/accept")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> Accept(Guid id)
     {
         try
@@ -222,7 +222,7 @@ public class ReferralController(
     /// Doctor declines a referral
     /// </summary>
     [HttpPost("{id:guid}/decline")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> Decline(Guid id, [FromBody] DeclineReferralRequest req)
     {
         try
@@ -247,7 +247,7 @@ public class ReferralController(
     /// Doctor marks referral complete with result notes
     /// </summary>
     [HttpPost("{id:guid}/complete")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> Complete(Guid id, [FromBody] CompleteReferralRequest req)
     {
         try

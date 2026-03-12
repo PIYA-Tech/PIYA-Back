@@ -14,6 +14,138 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     private readonly IUserService _userService = userService;
     private readonly ILogger<UserController> _logger = logger;
 
+    private bool IsAdminOrSuperAdmin() =>
+        User.IsInRole("Admin") || User.IsInRole("SuperAdmin");
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/user — list all users (Admin / SuperAdmin)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Get all users — Admin and SuperAdmin only.
+    /// </summary>
+    [HttpGet]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<IActionResult> GetAll()
+    {
+        try
+        {
+            // Fetch all known roles and union the results
+            var roles = Enum.GetValues<UserRole>();
+            var all = new List<User>();
+            foreach (var role in roles)
+                all.AddRange(await _userService.GetUsersByRoleAsync(role));
+
+            var distinct = all.DistinctBy(u => u.Id).OrderBy(u => u.CreatedAt);
+
+            return Ok(distinct.Select(u => new UserResponse
+            {
+                Id          = u.Id,
+                Username    = u.Username,
+                Email       = u.Email,
+                FirstName   = u.FirstName,
+                MiddleName  = u.MiddleName,
+                LastName    = u.LastName,
+                PhoneNumber = u.PhoneNumber,
+                DateOfBirth = u.DateOfBirth,
+                Role        = u.Role.ToString(),
+                IsActive    = u.IsActive,
+                IsEmailVerified = u.IsEmailVerified,
+                CreatedAt   = u.CreatedAt,
+                UpdatedAt   = u.UpdatedAt,
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing all users");
+            return StatusCode(500, new { message = "An error occurred while listing users" });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /api/user — create user with any role (Admin / SuperAdmin)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Create a new user with a specified role — Admin and SuperAdmin only.
+    /// Use this to provision Doctors, Pharmacists, other Admins, etc.
+    /// </summary>
+    [HttpPost]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
+    {
+        try
+        {
+            if (!Enum.TryParse<UserRole>(request.Role, true, out var roleEnum))
+                return BadRequest(new { message = $"Invalid role '{request.Role}'. Valid values: {string.Join(", ", Enum.GetNames<UserRole>())}" });
+
+            // SuperAdmin creation is restricted to SuperAdmin only
+            if (roleEnum == UserRole.SuperAdmin && !User.IsInRole("SuperAdmin"))
+                return Forbid();
+
+            DateTime? parsedDob = null;
+            if (!string.IsNullOrWhiteSpace(request.DateOfBirth))
+            {
+                if (!DateTime.TryParse(request.DateOfBirth, out var dob))
+                    return BadRequest(new { message = "Invalid DateOfBirth format. Expected ISO 8601 (yyyy-MM-dd)." });
+                parsedDob = dob;
+            }
+
+            var user = new User
+            {
+                Username        = request.Username,
+                Email           = request.Email,
+                FirstName       = request.FirstName,
+                MiddleName      = request.MiddleName,
+                LastName        = request.LastName,
+                PhoneNumber     = request.PhoneNumber,
+                DateOfBirth     = parsedDob,
+                Role            = roleEnum,
+                IsEmailVerified = true,   // admin-created accounts skip email verification
+                IsActive        = true,
+            };
+
+            var created = await _userService.Create(user, request.Password);
+
+            _logger.LogInformation("User {Username} (role: {Role}) created by {Admin}",
+                created.Username, created.Role, User.Identity?.Name);
+
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, new UserResponse
+            {
+                Id          = created.Id,
+                Username    = created.Username,
+                Email       = created.Email,
+                FirstName   = created.FirstName,
+                MiddleName  = created.MiddleName,
+                LastName    = created.LastName,
+                PhoneNumber = created.PhoneNumber,
+                DateOfBirth = created.DateOfBirth,
+                Role        = created.Role.ToString(),
+                IsActive    = created.IsActive,
+                IsEmailVerified = created.IsEmailVerified,
+                CreatedAt   = created.CreatedAt,
+                UpdatedAt   = created.UpdatedAt,
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating user");
+            return StatusCode(500, new { message = "An error occurred while creating the user" });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/user/{id}
+    // ─────────────────────────────────────────────────────────────────────────
+
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(Guid id)
     {
@@ -27,17 +159,19 @@ public class UserController(IUserService userService, ILogger<UserController> lo
             
             return Ok(new UserResponse
             {
-                Id = user.Id,
-                Username = user.Username,
-                Email = user.Email,
-                FirstName = user.FirstName,
-                MiddleName = user.MiddleName,
-                LastName = user.LastName,
-                PhoneNumber = user.PhoneNumber,
-                DateOfBirth = user.DateOfBirth,
-                Role = user.Role.ToString(),
-                CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
+                Id              = user.Id,
+                Username        = user.Username,
+                Email           = user.Email,
+                FirstName       = user.FirstName,
+                MiddleName      = user.MiddleName,
+                LastName        = user.LastName,
+                PhoneNumber     = user.PhoneNumber,
+                DateOfBirth     = user.DateOfBirth,
+                Role            = user.Role.ToString(),
+                IsActive        = user.IsActive,
+                IsEmailVerified = user.IsEmailVerified,
+                CreatedAt       = user.CreatedAt,
+                UpdatedAt       = user.UpdatedAt,
             });
         }
         catch (KeyNotFoundException ex)
@@ -51,13 +185,14 @@ public class UserController(IUserService userService, ILogger<UserController> lo
         }
     }
 
+    // Fix the inline role checks that previously only tested "Admin"
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserRequest request)
     {
         try
         {
             var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-            if (callerId != id && !User.IsInRole("Admin"))
+            if (callerId != id && !IsAdminOrSuperAdmin())
                 return Forbid();
             var user = new User
             {
@@ -100,7 +235,7 @@ public class UserController(IUserService userService, ILogger<UserController> lo
         try
         {
             var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-            if (callerId != id && !User.IsInRole("Admin"))
+            if (callerId != id && !IsAdminOrSuperAdmin())
                 return Forbid();
             await _userService.Delete(id);
             return Ok(new { message = "User deleted successfully" });
@@ -122,7 +257,7 @@ public class UserController(IUserService userService, ILogger<UserController> lo
         try
         {
             var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-            if (callerId != id && !User.IsInRole("Admin"))
+            if (callerId != id && !IsAdminOrSuperAdmin())
                 return Forbid();
 
             var user = await _userService.GetById(id);
@@ -227,16 +362,19 @@ public class UserController(IUserService userService, ILogger<UserController> lo
 
             return Ok(users.Select(u => new UserResponse
             {
-                Id = u.Id,
-                Username = u.Username,
-                Email = u.Email,
-                FirstName = u.FirstName,
-                MiddleName = u.MiddleName,
-                LastName = u.LastName,
-                PhoneNumber = u.PhoneNumber,
-                DateOfBirth = u.DateOfBirth,
-                CreatedAt = u.CreatedAt,
-                UpdatedAt = u.UpdatedAt
+                Id              = u.Id,
+                Username        = u.Username,
+                Email           = u.Email,
+                FirstName       = u.FirstName,
+                MiddleName      = u.MiddleName,
+                LastName        = u.LastName,
+                PhoneNumber     = u.PhoneNumber,
+                DateOfBirth     = u.DateOfBirth,
+                Role            = u.Role.ToString(),
+                IsActive        = u.IsActive,
+                IsEmailVerified = u.IsEmailVerified,
+                CreatedAt       = u.CreatedAt,
+                UpdatedAt       = u.UpdatedAt,
             }).ToList());
         }
         catch (Exception ex)
@@ -245,6 +383,20 @@ public class UserController(IUserService userService, ILogger<UserController> lo
             return StatusCode(500, new { message = "An error occurred while retrieving users" });
         }
     }
+}
+
+public class CreateUserRequest
+{
+    public required string Username { get; set; }
+    public required string Email { get; set; }
+    public required string FirstName { get; set; }
+    public string? MiddleName { get; set; }
+    public required string LastName { get; set; }
+    public required string PhoneNumber { get; set; }
+    public string? DateOfBirth { get; set; }
+    public required string Password { get; set; }
+    /// <summary>Patient | Doctor | Pharmacist | PharmacyManager | Admin | SuperAdmin</summary>
+    public required string Role { get; set; }
 }
 
 public class UpdateUserRequest
@@ -281,6 +433,8 @@ public class UserResponse
     public required string PhoneNumber { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public string? Role { get; set; }
+    public bool IsActive { get; set; }
+    public bool IsEmailVerified { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

@@ -8,7 +8,7 @@ namespace PIYA_API.Controllers;
 
 [ApiController]
 [Route("api/doctor")]
-[Authorize(Roles = "Doctor")]
+[Authorize(Roles = "Doctor,SuperAdmin")]
 public class DoctorDashboardController(
     IDoctorProfileService doctorProfileService,
     IAppointmentService appointmentService,

@@ -117,7 +117,7 @@ public class PrescriptionController(
     /// Get my prescriptions (Patient view)
     /// </summary>
     [HttpGet("my-prescriptions")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<ActionResult<List<Prescription>>> GetMyPrescriptions([FromQuery] string? status = null)
     {
         try
@@ -174,7 +174,7 @@ public class PrescriptionController(
     /// This route is kept for backward-compatibility and delegates to the QR service directly.
     /// </summary>
     [HttpPost("{id:guid}/generate-qr")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<ActionResult<object>> GenerateQrCode(Guid id)
     {
         try

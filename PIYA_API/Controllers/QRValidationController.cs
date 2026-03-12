@@ -27,7 +27,7 @@ public class QRValidationController(
     /// Generate QR code for a prescription (Patient only)
     /// </summary>
     [HttpPost("prescription/{prescriptionId}/generate")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     [ProducesResponseType(typeof(QRTokenResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -76,7 +76,7 @@ public class QRValidationController(
     /// Validate and use QR code to retrieve prescription (Pharmacist only)
     /// </summary>
     [HttpPost("prescription/scan")]
-    [Authorize(Roles = "Pharmacist")]
+    [Authorize(Roles = "Pharmacist,SuperAdmin")]
     [ProducesResponseType(typeof(PrescriptionScanResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -207,7 +207,7 @@ public class QRValidationController(
     /// Revoke a QR token (Patient or Doctor only)
     /// </summary>
     [HttpPost("revoke")]
-    [Authorize(Roles = "Patient,Doctor")]
+    [Authorize(Roles = "Patient,Doctor,SuperAdmin")]
     [ProducesResponseType(typeof(RevokeResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

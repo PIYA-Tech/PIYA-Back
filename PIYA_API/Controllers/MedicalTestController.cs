@@ -74,7 +74,7 @@ public class MedicalTestController(
     /// Update test status and optionally add findings (Doctor only)
     /// </summary>
     [HttpPost("{id:guid}/status")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateTestStatusRequest req)
     {
         try
@@ -94,7 +94,7 @@ public class MedicalTestController(
     /// Attach an uploaded document to a test result (Doctor only)
     /// </summary>
     [HttpPost("{id:guid}/documents")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<IActionResult> AttachDocument(Guid id, [FromBody] AttachDocumentRequest req)
     {
         try

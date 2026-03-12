@@ -30,7 +30,7 @@ public class DoctorNoteController(
     /// </remarks>
 
     [HttpPost]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<ActionResult<CreateDoctorNoteResponse>> CreateNote([FromBody] CreateDoctorNoteRequest request)
     {
         try
@@ -133,7 +133,7 @@ public class DoctorNoteController(
     /// Get all notes created by the current doctor
     /// </summary>
     [HttpGet("my-notes")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<ActionResult<List<DoctorNoteDto>>> GetMyNotes()
     {
         try
@@ -154,7 +154,7 @@ public class DoctorNoteController(
     /// Get all notes for current patient
     /// </summary>
     [HttpGet("patient/my-notes")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<ActionResult<List<DoctorNoteDto>>> GetMyPatientNotes()
     {
         try
@@ -179,7 +179,7 @@ public class DoctorNoteController(
     /// The patient uses this to generate a QR code to present to their employer/school.
     /// </remarks>
     [HttpPost("{id}/patient-token")]
-    [Authorize(Roles = "Patient")]
+    [Authorize(Roles = "Patient,SuperAdmin")]
     public async Task<ActionResult<PatientTokenResponse>> GetPatientToken(Guid id)
     {
         try
@@ -213,7 +213,7 @@ public class DoctorNoteController(
     /// Only the doctor who created the note can revoke it.
     /// </remarks>
     [HttpPost("{id}/revoke")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<ActionResult<DoctorNoteDto>> RevokeNote(Guid id, [FromBody] RevokeNoteRequest? request)
     {
         try
@@ -310,7 +310,7 @@ public class DoctorNoteController(
     /// Get notes expiring soon (Doctor only)
     /// </summary>
     [HttpGet("expiring-soon")]
-    [Authorize(Roles = "Doctor")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
     public async Task<ActionResult<List<DoctorNoteDto>>> GetExpiringSoon([FromQuery] int daysThreshold = 7)
     {
         try
