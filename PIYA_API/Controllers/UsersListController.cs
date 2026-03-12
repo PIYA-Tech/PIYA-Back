@@ -15,7 +15,7 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/v{version:apiVersion}/[controller]")]
 [ApiVersion("1.0")]
-[Authorize(Roles = "Admin")]
+[Authorize(Roles = "Admin,SuperAdmin")]
 public class UsersListController(PharmacyApiDbContext context, ILogger<UsersListController> logger) : ControllerBase
 {
     private readonly PharmacyApiDbContext _context = context;

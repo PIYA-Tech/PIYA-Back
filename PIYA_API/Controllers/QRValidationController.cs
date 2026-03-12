@@ -258,7 +258,7 @@ public class QRValidationController(
     /// Get QR token history for a prescription (Patient or Admin only)
     /// </summary>
     [HttpGet("prescription/{prescriptionId}/history")]
-    [Authorize(Roles = "Patient,Admin")]
+    [Authorize(Roles = "Patient,Admin,SuperAdmin")]
     [ProducesResponseType(typeof(List<QRTokenHistoryDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<List<QRTokenHistoryDto>>> GetQRHistory(Guid prescriptionId)

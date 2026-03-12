@@ -26,7 +26,7 @@ public class PharmacyStaffController(
     /// Assign a user to pharmacy staff
     /// </summary>
     [HttpPost("assign")]
-    [Authorize(Roles = "Admin,PharmacyManager")]
+    [Authorize(Roles = "Admin,SuperAdmin,PharmacyManager")]
     public async Task<ActionResult<PharmacyStaff>> AssignStaff([FromBody] AssignStaffRequest request)
     {
         try
@@ -63,7 +63,7 @@ public class PharmacyStaffController(
     /// Remove staff member from pharmacy
     /// </summary>
     [HttpDelete("remove")]
-    [Authorize(Roles = "Admin,PharmacyManager")]
+    [Authorize(Roles = "Admin,SuperAdmin,PharmacyManager")]
     public async Task<ActionResult> RemoveStaff([FromQuery] Guid pharmacyId, [FromQuery] Guid userId)
     {
         try
@@ -95,7 +95,7 @@ public class PharmacyStaffController(
     /// Update staff details
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin,PharmacyManager")]
+    [Authorize(Roles = "Admin,SuperAdmin,PharmacyManager")]
     public async Task<ActionResult<PharmacyStaff>> UpdateStaff(
         Guid id,
         [FromBody] UpdateStaffRequest request)
@@ -129,7 +129,7 @@ public class PharmacyStaffController(
     /// Get all staff for a pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}")]
-    [Authorize(Roles = "Admin,PharmacyManager,Pharmacist")]
+    [Authorize(Roles = "Admin,SuperAdmin,PharmacyManager,Pharmacist")]
     public async Task<ActionResult<List<PharmacyStaff>>> GetPharmacyStaff(
         Guid pharmacyId,
         [FromQuery] bool activeOnly = true)
@@ -228,7 +228,7 @@ public class PharmacyStaffController(
     /// Assign manager to pharmacy
     /// </summary>
     [HttpPost("assign-manager")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyStaff>> AssignManager([FromBody] AssignManagerRequest request)
     {
         try
@@ -253,7 +253,7 @@ public class PharmacyStaffController(
     /// Transfer pharmacy management
     /// </summary>
     [HttpPost("transfer-management")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyStaff>> TransferManagement([FromBody] TransferManagementRequest request)
     {
         try

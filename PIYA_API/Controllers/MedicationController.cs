@@ -72,7 +72,7 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// Get all medications for admin — no availability filter, supports search/filter/paging
     /// </summary>
     [HttpGet("admin")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> GetAllAdmin(
         [FromQuery] string? search = null,
         [FromQuery] bool? requiresPrescription = null,
@@ -130,7 +130,7 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// Create new medication (Admin only)
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<Medication>> Create([FromBody] Medication medication)
     {
         try
@@ -168,7 +168,7 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// Update medication — Admin only
     /// </summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<Medication>> Update(Guid id, [FromBody] Medication medication)
     {
         try
@@ -192,7 +192,7 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// Soft-delete (deactivate) a medication — Admin only
     /// </summary>
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         try

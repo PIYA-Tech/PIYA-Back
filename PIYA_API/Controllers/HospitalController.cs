@@ -121,7 +121,7 @@ public class HospitalController(
     /// Create new hospital (Admin only)
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<Hospital>> Create([FromBody] HospitalUpsertDto dto)
     {
         try
@@ -141,7 +141,7 @@ public class HospitalController(
     /// Update hospital (Admin only)
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<Hospital>> Update(Guid id, [FromBody] HospitalUpsertDto dto)
     {
         try
@@ -203,7 +203,7 @@ public class HospitalController(
     /// Delete hospital (Admin only)
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult> Delete(Guid id)
     {
         try
@@ -226,7 +226,7 @@ public class HospitalController(
     /// Deactivate hospital (Admin only)
     /// </summary>
     [HttpPost("{id}/deactivate")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult> Deactivate(Guid id)
     {
         try
@@ -249,7 +249,7 @@ public class HospitalController(
     /// Activate hospital (Admin only)
     /// </summary>
     [HttpPost("{id}/activate")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult> Activate(Guid id)
     {
         try
@@ -295,7 +295,7 @@ public class HospitalController(
     /// Body: { "hospitalIds": ["guid", ...] }
     /// </summary>
     [HttpPut("doctors/{doctorProfileId}/hospitals")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<DoctorProfile>> AssignHospitals(
         Guid doctorProfileId,
         [FromBody] AssignHospitalsRequest request)
@@ -321,7 +321,7 @@ public class HospitalController(
     /// DELETE /api/hospital/{hospitalId}/doctors/{doctorProfileId}
     /// </summary>
     [HttpDelete("{hospitalId}/doctors/{doctorProfileId}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult> RemoveDoctorFromHospital(Guid hospitalId, Guid doctorProfileId)
     {
         try

@@ -18,7 +18,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Book a new appointment
     /// </summary>
     [HttpPost("book")]
-    [Authorize(Roles = "Patient,Doctor,Admin")]
+    [Authorize(Roles = "Patient,Doctor,Admin,SuperAdmin")]
     public async Task<ActionResult<Appointment>> BookAppointment([FromBody] AppointmentRequest request)
     {
         try
@@ -265,7 +265,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Complete appointment (Doctor only)
     /// </summary>
     [HttpPost("{id}/complete")]
-    [Authorize(Roles = "Doctor,Admin")]
+    [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
     public async Task<ActionResult<Appointment>> Complete(Guid id, [FromBody] CompleteAppointmentRequest request)
     {
         try
@@ -302,7 +302,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Get hospital appointments (Admin only)
     /// </summary>
     [HttpGet("hospital/{hospitalId}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<List<Appointment>>> GetHospitalAppointments(Guid hospitalId, [FromQuery] DateTime? date = null)
     {
         try

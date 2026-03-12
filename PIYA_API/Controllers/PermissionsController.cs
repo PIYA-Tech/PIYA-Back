@@ -221,7 +221,7 @@ public class PermissionsController(
     /// Check if user can access admin dashboard
     /// </summary>
     [HttpGet("user/{userId}/can-access-dashboard")]
-    [Authorize(Roles = "Admin,PharmacyManager")]
+    [Authorize(Roles = "Admin,SuperAdmin,PharmacyManager")]
     public async Task<ActionResult<AccessCheckResponse>> CanAccessDashboard(Guid userId)
     {
         try
@@ -240,7 +240,7 @@ public class PermissionsController(
     /// Check if user can manage other users
     /// </summary>
     [HttpGet("user/{userId}/can-manage-users")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<AccessCheckResponse>> CanManageUsers(Guid userId)
     {
         try
@@ -259,7 +259,7 @@ public class PermissionsController(
     /// Check if user can view audit logs
     /// </summary>
     [HttpGet("user/{userId}/can-view-audit-logs")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<AccessCheckResponse>> CanViewAuditLogs(Guid userId)
     {
         try

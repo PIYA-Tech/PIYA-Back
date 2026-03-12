@@ -36,7 +36,7 @@ public class PharmacyInventoryController(
     /// Get all inventory for a pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<PharmacyInventory>>> GetPharmacyInventory(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))
@@ -57,7 +57,7 @@ public class PharmacyInventoryController(
     /// Get inventory item by ID
     /// </summary>
     [HttpGet("{id}")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyInventory>> GetInventoryItem(Guid id)
     {
         try
@@ -80,7 +80,7 @@ public class PharmacyInventoryController(
     /// Add or update inventory item
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyInventory>> AddOrUpdateInventory(
         [FromBody] PharmacyInventoryRequest request)
     {
@@ -117,7 +117,7 @@ public class PharmacyInventoryController(
     /// Delete inventory item
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult> DeleteInventory(Guid id)
     {
         try
@@ -152,7 +152,7 @@ public class PharmacyInventoryController(
     /// Update stock quantity
     /// </summary>
     [HttpPut("{id}/stock")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyInventory>> UpdateStock(
         Guid id,
         [FromBody] UpdateStockRequest request)
@@ -181,7 +181,7 @@ public class PharmacyInventoryController(
     /// Increase stock (restock)
     /// </summary>
     [HttpPost("restock")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyInventory>> Restock([FromBody] RestockRequest request)
     {
         if (!await CanAccessPharmacy(request.PharmacyId))
@@ -217,7 +217,7 @@ public class PharmacyInventoryController(
     /// Decrease stock (sale/fulfillment)
     /// </summary>
     [HttpPost("decrease")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyInventory>> DecreaseStock([FromBody] DecreaseStockRequest request)
     {
         if (!await CanAccessPharmacy(request.PharmacyId))
@@ -258,7 +258,7 @@ public class PharmacyInventoryController(
     /// Add new inventory batch
     /// </summary>
     [HttpPost("batch")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<InventoryBatch>> AddBatch([FromBody] BatchRequest request)
     {
         try
@@ -294,7 +294,7 @@ public class PharmacyInventoryController(
     /// Get batches for inventory item
     /// </summary>
     [HttpGet("{inventoryId}/batches")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<InventoryBatch>>> GetBatches(
         Guid inventoryId,
         [FromQuery] bool activeOnly = true)
@@ -315,7 +315,7 @@ public class PharmacyInventoryController(
     /// Get expiring batches (system-wide or pharmacy-specific)
     /// </summary>
     [HttpGet("batches/expiring")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<InventoryBatch>>> GetExpiringBatches([FromQuery] int days = 30)
     {
         try
@@ -334,7 +334,7 @@ public class PharmacyInventoryController(
     /// Remove expired batches
     /// </summary>
     [HttpPost("batches/remove-expired")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult> RemoveExpiredBatches()
     {
         try
@@ -359,7 +359,7 @@ public class PharmacyInventoryController(
     /// Get stock history for inventory item
     /// </summary>
     [HttpGet("{inventoryId}/history")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<InventoryHistory>>> GetStockHistory(
         Guid inventoryId,
         [FromQuery] DateTime? startDate = null,
@@ -382,7 +382,7 @@ public class PharmacyInventoryController(
     /// Get all stock history for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/history")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<InventoryHistory>>> GetPharmacyStockHistory(
         Guid pharmacyId,
         [FromQuery] DateTime? startDate = null,
@@ -410,7 +410,7 @@ public class PharmacyInventoryController(
     /// Get low stock items for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/low-stock")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<PharmacyInventory>>> GetLowStockItems(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))
@@ -431,7 +431,7 @@ public class PharmacyInventoryController(
     /// Get expiring items for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/expiring")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<List<PharmacyInventory>>> GetExpiringItems(
         Guid pharmacyId,
         [FromQuery] int days = 30)
@@ -454,7 +454,7 @@ public class PharmacyInventoryController(
     /// Get reorder suggestions
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/reorder-suggestions")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<Dictionary<Guid, int>>> GetReorderSuggestions(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))

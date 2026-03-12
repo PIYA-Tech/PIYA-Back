@@ -45,7 +45,7 @@ public class PharmacyController(
     }
 
     [HttpPost("create")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> CreatePharmacy([FromBody] PharmacyUpsertDto dto)
     {
         var pharmacy = DtoToPharmacy(dto);
@@ -56,7 +56,7 @@ public class PharmacyController(
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> UpdatePharmacy(Guid id, [FromBody] PharmacyUpsertDto dto)
     {
         try
@@ -75,7 +75,7 @@ public class PharmacyController(
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> DeletePharmacy(Guid id)
     {
         try

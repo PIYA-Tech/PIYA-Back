@@ -87,7 +87,7 @@ public class PharmacyCompaniesController(
     /// Create a new pharmacy company (Admin only)
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyCompanyDto>> Create([FromBody] CreatePharmacyCompanyRequest request)
     {
         try
@@ -125,7 +125,7 @@ public class PharmacyCompaniesController(
     /// Update pharmacy company (Admin only)
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult<PharmacyCompanyDto>> Update(Guid id, [FromBody] UpdatePharmacyCompanyRequest request)
     {
         try
@@ -163,7 +163,7 @@ public class PharmacyCompaniesController(
     /// Delete pharmacy company (Admin only)
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<ActionResult> Delete(Guid id)
     {
         try

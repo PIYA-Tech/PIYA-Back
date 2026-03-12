@@ -157,7 +157,7 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     /// Assign role to user (Admin only)
     /// </summary>
     [HttpPost("{id}/assign-role")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest request)
     {
         try
@@ -213,7 +213,7 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     /// Get all users by role (Admin only)
     /// </summary>
     [HttpGet("by-role/{role}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public async Task<IActionResult> GetUsersByRole(string role)
     {
         try

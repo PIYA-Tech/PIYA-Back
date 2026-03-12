@@ -26,7 +26,7 @@ public class PrescriptionController(
     /// Create a new prescription (Doctor only)
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Doctor,Admin")]
+    [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
     public async Task<ActionResult<Prescription>> Create([FromBody] CreatePrescriptionDto dto)
     {
         try
@@ -144,7 +144,7 @@ public class PrescriptionController(
     /// Get prescriptions created by doctor
     /// </summary>
     [HttpGet("doctor/{doctorId}")]
-    [Authorize(Roles = "Doctor,Admin")]
+    [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
     public async Task<ActionResult<List<Prescription>>> GetDoctorPrescriptions(Guid doctorId)
     {
         try
@@ -216,7 +216,7 @@ public class PrescriptionController(
     /// Validate QR code and mark it as used (Pharmacist only — one-time scan)
     /// </summary>
     [HttpPost("validate-qr")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<Prescription>> ValidateQrCode([FromBody] ValidateQrRequest request)
     {
         try
@@ -279,7 +279,7 @@ public class PrescriptionController(
     /// Fulfill prescription (Pharmacist only)
     /// </summary>
     [HttpPost("{id:guid}/fulfill")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<Prescription>> FulfillPrescription(Guid id, [FromBody] FulfillPrescriptionRequest request)
     {
         try
@@ -314,7 +314,7 @@ public class PrescriptionController(
     /// Fulfill prescription item (Pharmacist only)
     /// </summary>
     [HttpPost("item/{itemId:guid}/fulfill")]
-    [Authorize(Roles = "Pharmacist,Admin")]
+    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
     public async Task<ActionResult<PrescriptionItem>> FulfillPrescriptionItem(Guid itemId)
     {
         try
@@ -337,7 +337,7 @@ public class PrescriptionController(
     /// Cancel prescription (Doctor only)
     /// </summary>
     [HttpPost("{id:guid}/cancel")]
-    [Authorize(Roles = "Doctor,Admin")]
+    [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
     public async Task<ActionResult<Prescription>> Cancel(Guid id, [FromBody] CancelPrescriptionRequest request)
     {
         try
@@ -456,7 +456,7 @@ public class PrescriptionController(
     /// Get prescriptions expiring soon (Admin/Pharmacist)
     /// </summary>
     [HttpGet("expiring-soon")]
-    [Authorize(Roles = "Admin,Pharmacist")]
+    [Authorize(Roles = "Admin,SuperAdmin,Pharmacist")]
     public async Task<ActionResult<List<Prescription>>> GetExpiringSoon([FromQuery] int daysThreshold = 7)
     {
         try
