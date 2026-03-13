@@ -279,6 +279,72 @@ public class AuthController(
         }
     }
 
+    /// <summary>
+    /// Complete the 2FA login flow for mobile / API clients that cannot use HttpOnly cookies.
+    /// Verifies the OTP code against the challenge token, then issues access + refresh tokens
+    /// in the response body so the client can persist them via platform secure storage.
+    /// </summary>
+    [HttpPost("login/complete-2fa")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CompleteLogin2FA([FromBody] Complete2FARequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        try
+        {
+            // Validate challenge token (consumed one-time)
+            if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
+                !_twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+            {
+                return Unauthorized(new { message = "Invalid or expired challenge token. Please log in again." });
+            }
+
+            // Verify the OTP code
+            var isValid = await _twoFactorService.VerifyCodeAsync(request.UserId, request.Code);
+            if (!isValid)
+            {
+                await _auditService.LogSecurityEventAsync(
+                    "Login2FAFailed", request.UserId, ipAddress, userAgent, false, "Invalid 2FA code");
+                return Unauthorized(new { message = "Invalid or expired code" });
+            }
+
+            // Fetch user and issue tokens
+            var user = await _userService.GetByIdAsync(request.UserId);
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            var tokenResponse = await _jwtService.GenerateSecurityToken(user.Username);
+            if (tokenResponse == null)
+                return StatusCode(500, new { message = "Failed to generate token" });
+
+            await _auditService.LogSecurityEventAsync(
+                "LoginSuccess2FA", user.Id, ipAddress, userAgent, true,
+                $"User completed 2FA login: {user.Username}");
+
+            // For browser clients, also set the cookie
+            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+
+            return Ok(new AuthResponse
+            {
+                UserId        = user.Id,
+                Username      = user.Username,
+                Email         = user.Email,
+                FirstName     = user.FirstName,
+                LastName      = user.LastName,
+                Role          = user.Role.ToString(),
+                AccessToken   = tokenResponse.AccessToken,
+                RefreshToken  = tokenResponse.RefreshToken, // included for mobile clients
+                ExpiresAt     = tokenResponse.ExpiresAt,
+                IsEmailVerified = user.IsEmailVerified,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error completing 2FA login for user {UserId}", request.UserId);
+            return StatusCode(500, new { message = "An error occurred during 2FA verification" });
+        }
+    }
+
     [HttpPost("validate-token")]
     public IActionResult ValidateToken([FromBody] ValidateTokenRequest request)
     {
@@ -503,6 +569,13 @@ public class LoginRequest
     public string? Username { get; set; }
     public string? Email { get; set; }
     public required string Password { get; set; }
+}
+
+public class Complete2FARequest
+{
+    public Guid   UserId         { get; set; }
+    public required string Code           { get; set; }
+    public required string ChallengeToken { get; set; }
 }
 
 public class ValidateTokenRequest

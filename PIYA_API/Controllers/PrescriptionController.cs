@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -14,12 +16,14 @@ public class PrescriptionController(
     IQRService qrService,
     IPharmacyStaffService pharmacyStaffService,
     IAppointmentService appointmentService,
+    IOptions<SecurityOptions> securityOptions,
     ILogger<PrescriptionController> logger) : ControllerBase
 {
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
     private readonly IQRService _qrService = qrService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
     private readonly IAppointmentService _appointmentService = appointmentService;
+    private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<PrescriptionController> _logger = logger;
 
     /// <summary>
@@ -197,8 +201,8 @@ public class PrescriptionController(
                 qrToken = token,
                 tokenId,
                 prescriptionId = id,
-                expiresAt = DateTime.UtcNow.AddMinutes(5),
-                message = "QR code is valid for 5 minutes"
+                expiresAt = DateTime.UtcNow.AddMinutes(_securityOptions.QrTokenExpiryMinutes),
+                message = $"QR code is valid for {_securityOptions.QrTokenExpiryMinutes} minutes"
             });
         }
         catch (InvalidOperationException ex)
