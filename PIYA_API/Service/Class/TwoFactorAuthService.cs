@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -8,33 +7,23 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher passwordHasher, ILogger<TwoFactorAuthService> logger) : ITwoFactorAuthService
+public class TwoFactorAuthService(
+    PharmacyApiDbContext context,
+    IPasswordHasher passwordHasher,
+    IDistributedCacheWrapper cache,
+    ILogger<TwoFactorAuthService> logger) : ITwoFactorAuthService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IPasswordHasher _passwordHasher = passwordHasher;
+    private readonly IDistributedCacheWrapper _cache = cache;
     private readonly ILogger<TwoFactorAuthService> _logger = logger;
 
-    // Thread-safe in-memory store for SMS/Email OTP codes.
-    // TODO: Replace with IDistributedCache (Redis) before deploying more than one instance.
-    //       Current static fields are lost on restart and are NOT shared across replicas.
-    //       Suggested key pattern: "2fa:otp:{userId}" with 5-minute sliding expiry.
-    private static readonly ConcurrentDictionary<Guid, (string Code, DateTime ExpiresAt)> _tempCodes = new();
+    // Cache key helpers — one-time OTP codes and login challenge tokens.
+    // Stored in IDistributedCache (Redis or in-memory) so multi-instance deploys share state.
+    private static string OtpKey(Guid userId)       => $"2fa:otp:{userId}";
+    private static string ChallengeKey(Guid userId) => $"2fa:challenge:{userId}";
 
-    // Short-lived challenge tokens issued during the 2FA login flow.
-    // TODO: Same as above — migrate to IDistributedCache for multi-instance safety.
-    // Key = userId, Value = (hashedToken, expiry). Single-use: consumed on first valid check.
-    private static readonly ConcurrentDictionary<Guid, (string HashedToken, DateTime ExpiresAt)> _challenges = new();
 
-    /// <summary>Purge expired entries from <see cref="_tempCodes"/> to prevent unbounded growth.</summary>
-    private static void PurgeExpiredTempCodes()
-    {
-        var now = DateTime.UtcNow;
-        foreach (var key in _tempCodes.Keys)
-        {
-            if (_tempCodes.TryGetValue(key, out var entry) && entry.ExpiresAt <= now)
-                _tempCodes.TryRemove(key, out _);
-        }
-    }
 
     public async Task<(string SecretKey, string QrCodeUri, List<string> BackupCodes)> EnableTwoFactorAsync(Guid userId, TwoFactorMethod method = TwoFactorMethod.TOTP)
     {
@@ -106,7 +95,7 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
                 break;
             case TwoFactorMethod.SMS:
             case TwoFactorMethod.Email:
-                isValid = VerifyTempCode(userId, code);
+                isValid = await VerifyTempCodeAsync(userId, code);
                 break;
         }
 
@@ -169,13 +158,10 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         if (user?.TwoFactorAuth == null || !user.TwoFactorAuth.IsEnabled)
             return false;
 
-        PurgeExpiredTempCodes();
         var code = GenerateNumericCode();
-        _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
+        await _cache.SetStringAsync(OtpKey(userId), code, TimeSpan.FromMinutes(5));
 
-        // TODO: Integrate with SMS service (Twilio, etc.)
         _logger.LogInformation("SMS 2FA code generated for user {UserId}", userId);
-
         return true;
     }
 
@@ -185,13 +171,11 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         if (user?.TwoFactorAuth == null || !user.TwoFactorAuth.IsEnabled)
             return false;
 
-        PurgeExpiredTempCodes();
         var code = GenerateNumericCode();
-        _tempCodes[userId] = (code, DateTime.UtcNow.AddMinutes(5));
+        await _cache.SetStringAsync(OtpKey(userId), code, TimeSpan.FromMinutes(5));
 
         // TODO: Integrate with email service (SendGrid, etc.)
         _logger.LogInformation("Email 2FA code generated for user {UserId}", userId);
-
         return true;
     }
 
@@ -237,17 +221,13 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
         return num.ToString($"D{length}");
     }
 
-    private static bool VerifyTempCode(Guid userId, string code)
+    private async Task<bool> VerifyTempCodeAsync(Guid userId, string code)
     {
-        if (_tempCodes.TryGetValue(userId, out var tempCode))
-        {
-            if (tempCode.ExpiresAt > DateTime.UtcNow && tempCode.Code == code)
-            {
-                _tempCodes.TryRemove(userId, out _);
-                return true;
-            }
-        }
-        return false;
+        var stored = await _cache.GetStringAsync(OtpKey(userId));
+        if (stored == null || stored != code)
+            return false;
+        await _cache.RemoveAsync(OtpKey(userId));
+        return true;
     }
 
     private bool VerifyTotpCode(string secretKey, string code)
@@ -356,43 +336,30 @@ public class TwoFactorAuthService(PharmacyApiDbContext context, IPasswordHasher 
     }
 
     /// <inheritdoc/>
-    public string IssueChallenge(Guid userId)
+    public async Task<string> IssueChallenge(Guid userId)
     {
-        // Purge stale challenges on each issue to prevent unbounded growth
-        var now = DateTime.UtcNow;
-        foreach (var key in _challenges.Keys)
-        {
-            if (_challenges.TryGetValue(key, out var stale) && stale.ExpiresAt <= now)
-                _challenges.TryRemove(key, out _);
-        }
-
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        // Store a SHA-256 hash so the raw token never lives in memory longer than needed
+        // Store a SHA-256 hash so the raw token never lives in the cache as plaintext
         var hashed = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
-        _challenges[userId] = (hashed, now.AddMinutes(5));
+        await _cache.SetStringAsync(ChallengeKey(userId), hashed, TimeSpan.FromMinutes(5));
         return raw;
     }
 
     /// <inheritdoc/>
-    public bool ConsumeChallenge(Guid userId, string challengeToken)
+    public async Task<bool> ConsumeChallenge(Guid userId, string challengeToken)
     {
-        if (!_challenges.TryGetValue(userId, out var stored))
+        var storedHash = await _cache.GetStringAsync(ChallengeKey(userId));
+        if (storedHash == null)
             return false;
-
-        if (stored.ExpiresAt <= DateTime.UtcNow)
-        {
-            _challenges.TryRemove(userId, out _);
-            return false;
-        }
 
         var hashed = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(challengeToken)));
         if (!CryptographicOperations.FixedTimeEquals(
                 System.Text.Encoding.UTF8.GetBytes(hashed),
-                System.Text.Encoding.UTF8.GetBytes(stored.HashedToken)))
+                System.Text.Encoding.UTF8.GetBytes(storedHash)))
             return false;
 
         // Single-use: remove immediately after successful validation
-        _challenges.TryRemove(userId, out _);
+        await _cache.RemoveAsync(ChallengeKey(userId));
         return true;
     }
 }

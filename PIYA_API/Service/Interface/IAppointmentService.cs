@@ -15,17 +15,17 @@ public interface IAppointmentService
     /// <summary>
     /// Get appointment by ID
     /// </summary>
-    Task<Appointment?> GetByIdAsync(Guid id);
+    Task<Appointment?> GetByIdAsync(Guid id, CancellationToken ct = default);
     
     /// <summary>
     /// Get all appointments for a patient
     /// </summary>
-    Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null);
+    Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null, CancellationToken ct = default);
     
     /// <summary>
     /// Get all appointments for a doctor
     /// </summary>
-    Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null);
+    Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null, CancellationToken ct = default);
     
     /// <summary>
     /// Check if doctor is available at specified time

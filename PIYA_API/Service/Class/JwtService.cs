@@ -76,7 +76,7 @@ public class JwtService(
     // Generate (Login / Register)
     // ─────────────────────────────────────────────────────────────────────────
 
-    public async Task<TokenResponse?> GenerateSecurityToken(string username)
+    public async Task<TokenResponse?> GenerateSecurityToken(string username, string deviceInfo = "Unknown")
     {
         var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
         if (user == null) return null;
@@ -132,7 +132,7 @@ public class JwtService(
                 Family = Guid.NewGuid(),        // each new login starts a fresh family
                 ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
                 CreationTime = DateTime.UtcNow,
-                DeviceInfo = "Web",
+                DeviceInfo = deviceInfo,
             };
 
             _dbContext.Tokens.Add(tokenEntity);
@@ -200,9 +200,7 @@ public class JwtService(
         // Absolute expiry: 7 days from original issuance (non-sliding)
         if (tokenEntity.CreationTime.AddDays(7) < DateTime.UtcNow) return null;
 
-        var user = tokenEntity.UserId.HasValue
-            ? await _dbContext.Users.FindAsync(tokenEntity.UserId.Value)
-            : null;
+        var user = await _dbContext.Users.FindAsync(tokenEntity.UserId);
         if (user is null || !user.IsActive) return null;
 
         var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();

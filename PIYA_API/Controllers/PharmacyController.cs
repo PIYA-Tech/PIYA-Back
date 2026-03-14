@@ -14,11 +14,13 @@ namespace PIYA_API.Controllers;
 public class PharmacyController(
     ISearchService searchService,
     IPharmacyService pharmacyService,
-    IHubContext<PharmacyHub> pharmacyHub) : ControllerBase
+    IHubContext<PharmacyHub> pharmacyHub,
+    ILogger<PharmacyController> logger) : ControllerBase
 {
     private readonly ISearchService _searchService = searchService;
     private readonly IPharmacyService _pharmacyService = pharmacyService;
     private readonly IHubContext<PharmacyHub> _pharmacyHub = pharmacyHub;
+    private readonly ILogger<PharmacyController> _logger = logger;
 
     /// <summary>
     /// Get all pharmacies (public)
@@ -169,6 +171,7 @@ public class PharmacyController(
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to search pharmacies by medication");
             return StatusCode(500, new { error = "Failed to search pharmacies by medication", details = ex.Message });
         }
     }
@@ -225,6 +228,7 @@ public class PharmacyController(
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to search pharmacies by multiple medications");
             return StatusCode(500, new { error = "Failed to search pharmacies by multiple medications", details = ex.Message });
         }
     }
@@ -288,6 +292,7 @@ public class PharmacyController(
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to search pharmacies by prescription {PrescriptionId}", prescriptionId);
             return StatusCode(500, new { error = "Failed to search pharmacies by prescription", details = ex.Message });
         }
     }
@@ -360,6 +365,7 @@ public class PharmacyController(
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to perform smart pharmacy search");
             return StatusCode(500, new { error = "Failed to perform smart search", details = ex.Message });
         }
     }

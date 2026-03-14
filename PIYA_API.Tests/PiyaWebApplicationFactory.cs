@@ -2,8 +2,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
+using PIYA_API.Service.Interface;
+using PIYA_API.Service.Class;
 
 namespace PIYA_API.Tests;
 
@@ -80,6 +83,14 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
         // missing appsettings.Test.json that used to cause Serilog to crash
         // the host before any test could run.
         builder.UseEnvironment("LoadTest");
+
+        // Replace the Singleton SecurityHardeningService with a fresh instance so
+        // that failed-login counters and lockout state do NOT bleed between tests.
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<ISecurityHardeningService>();
+            services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
+        });
     }
 
     /// <summary>

@@ -34,38 +34,38 @@ public class AuthController(
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
 
-    try
-    {
-        // Role is always Patient on self-registration. Admins use POST /{id}/assign-role.
-        UserRole roleEnum = UserRole.Patient;
+        try
+        {
+            // Role is always Patient on self-registration. Admins use POST /{id}/assign-role.
+            UserRole roleEnum = UserRole.Patient;
 
-        // Validate DateOfBirth if provided
-        DateTime? parsedDob = null;
-        if (!string.IsNullOrWhiteSpace(request.DateOfBirth))
-        {
-            if (!DateTime.TryParse(request.DateOfBirth, out var dob))
-                return BadRequest(new { message = "Invalid DateOfBirth format. Expected ISO 8601 (yyyy-MM-dd)." });
-            parsedDob = dob;
-        }
-        if (parsedDob.HasValue && parsedDob.Value > DateTime.UtcNow.AddYears(-18))
-        {
-            return BadRequest(new { message = "You must be at least 18 years old to register." });
-        }
-        if(request.Role != null && request.Role != "Patient")
-        {
-            return BadRequest(new { message = "Invalid role specified. Role must be 'Patient' for self-registration." });
-        }
-        if(request.PhoneNumber == null || !System.Text.RegularExpressions.Regex.IsMatch(request.PhoneNumber, @"^\+?[1-9]\d{1,14}$"))
-        {
-            return BadRequest(new { message = "Invalid phone number format. Expected E.164 format (e.g. +1234567890)." });
-        }
+            // Validate DateOfBirth if provided
+            DateTime? parsedDob = null;
+            if (!string.IsNullOrWhiteSpace(request.DateOfBirth))
+            {
+                if (!DateTime.TryParse(request.DateOfBirth, out var dob))
+                    return BadRequest(new { message = "Invalid DateOfBirth format. Expected ISO 8601 (yyyy-MM-dd)." });
+                parsedDob = dob;
+            }
+            if (parsedDob.HasValue && parsedDob.Value > DateTime.UtcNow.AddYears(-18))
+            {
+                return BadRequest(new { message = "You must be at least 18 years old to register." });
+            }
+            if (request.Role != null && request.Role != "Patient")
+            {
+                return BadRequest(new { message = "Invalid role specified. Role must be 'Patient' for self-registration." });
+            }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(request.PhoneNumber, @"^\+?[1-9]\d{1,14}$"))
+            {
+                return BadRequest(new { message = "Invalid phone number format. Expected E.164 format (e.g. +1234567890)." });
+            }
 
-        var user = new User
-        {
-                    Username = string.IsNullOrWhiteSpace(request.Username)
-                        ? (request.Email?.Split('@')[0] ?? Guid.NewGuid().ToString())
-                        : request.Username,
-                    Email = request.Email ?? throw new ArgumentException("Email is required"),
+            var user = new User
+            {
+                Username = string.IsNullOrWhiteSpace(request.Username)
+                    ? (request.Email?.Split('@')[0] ?? Guid.NewGuid().ToString())
+                    : request.Username,
+                Email = request.Email ?? throw new ArgumentException("Email is required"),
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 PhoneNumber = request.PhoneNumber,
@@ -76,7 +76,7 @@ public class AuthController(
             };
 
             var createdUser = await _userService.Create(user, request.Password);
-            
+
             // Log registration
             await _auditService.LogSecurityEventAsync(
                 "UserRegistered",
@@ -86,13 +86,12 @@ public class AuthController(
                 true,
                 $"New user registered: {createdUser.Username} with role {createdUser.Role}"
             );
-            
-            var tokenResponse = await _jwtService.GenerateSecurityToken(createdUser.Username);
+
+            var tokenResponse = await _jwtService.GenerateSecurityToken(
+                createdUser.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
 
             if (tokenResponse == null)
-            {
                 return StatusCode(500, new { message = "Failed to generate token" });
-            }
 
             // Trigger email verification (best-effort — don't fail registration if email send fails)
             try
@@ -118,9 +117,9 @@ public class AuthController(
                 email = createdUser.Email,
                 accessToken = tokenResponse.AccessToken,
                 expiresAt = tokenResponse.ExpiresAt,
-                // refreshToken is NOT included here — it is already set as an HttpOnly
-                // cookie by SetRefreshTokenCookie above. Browser clients must use the
-                // cookie. Mobile clients that cannot use cookies should use POST /refresh.
+                // refreshToken is included for mobile/API clients that cannot use HttpOnly cookies.
+                // Browser clients should use the cookie set above instead.
+                refreshToken = tokenResponse.RefreshToken,
                 role = createdUser.Role.ToString(),
                 isEmailVerified = createdUser.IsEmailVerified,
                 // legacy short key used by some tests
@@ -219,7 +218,7 @@ public class AuthController(
             {
                 // Issue a server-side challenge token — the client must present it when calling /2fa/verify.
                 // This prevents any anonymous caller from verifying codes for arbitrary user IDs.
-                var challengeToken = _twoFactorService.IssueChallenge(user.Id);
+                var challengeToken = await _twoFactorService.IssueChallenge(user.Id);
 
                 await _auditService.LogSecurityEventAsync(
                     "LoginPending2FA", user.Id, ipAddress, userAgent, true,
@@ -234,7 +233,8 @@ public class AuthController(
                 });
             }
 
-            var tokenResponse = await _jwtService.GenerateSecurityToken(user.Username);
+            var tokenResponse = await _jwtService.GenerateSecurityToken(
+                user.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
 
@@ -294,7 +294,7 @@ public class AuthController(
         {
             // Validate challenge token (consumed one-time)
             if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                !_twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
             {
                 return Unauthorized(new { message = "Invalid or expired challenge token. Please log in again." });
             }
@@ -313,7 +313,8 @@ public class AuthController(
             if (user == null)
                 return NotFound(new { message = "User not found" });
 
-            var tokenResponse = await _jwtService.GenerateSecurityToken(user.Username);
+            var tokenResponse = await _jwtService.GenerateSecurityToken(
+                user.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
 
@@ -552,7 +553,7 @@ public class RegisterRequest
     public required string Password { get; set; }
     public required string FirstName { get; set; }
     public required string LastName { get; set; }
-    public string? PhoneNumber { get; set; }
+    public required string PhoneNumber { get; set; }
     public string? DateOfBirth { get; set; }
     public string? DeviceInfo { get; set; }
     // Accept role as string from clients/tests (e.g. "Patient") and parse below.

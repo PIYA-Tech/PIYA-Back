@@ -2,7 +2,12 @@
 
 public interface IJwtService
 {
-    public Task<TokenResponse?> GenerateSecurityToken(string username);
+    /// <summary>
+    /// Generates a new access + refresh token pair for the given username.
+    /// <paramref name="deviceInfo"/> is stored on the session row for audit purposes
+    /// (e.g. "Web", "iOS", "Android"). Defaults to "Unknown" when not supplied.
+    /// </summary>
+    public Task<TokenResponse?> GenerateSecurityToken(string username, string deviceInfo = "Unknown");
     public string? ValidateToken(string token);
     public Guid GetId(string token);
     public string GenerateRefreshToken();

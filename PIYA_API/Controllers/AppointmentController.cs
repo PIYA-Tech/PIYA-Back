@@ -79,7 +79,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     {
         try
         {
-            var appointment = await _appointmentService.GetByIdAsync(id);
+            var appointment = await _appointmentService.GetByIdAsync(id, ct);
             if (appointment == null)
             {
                 return NotFound(new { error = "Appointment not found" });
@@ -123,11 +123,11 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             List<Appointment> appointments;
             if (userRole == "Patient")
             {
-                appointments = await _appointmentService.GetPatientAppointmentsAsync(userId, appointmentStatus);
+                appointments = await _appointmentService.GetPatientAppointmentsAsync(userId, appointmentStatus, ct);
             }
             else if (userRole == "Doctor")
             {
-                appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, status: appointmentStatus);
+                appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, status: appointmentStatus, ct: ct);
             }
             else
             {

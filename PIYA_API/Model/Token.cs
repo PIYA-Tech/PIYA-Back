@@ -10,7 +10,7 @@ public class Token
     public string DeviceInfo { get; set; } = string.Empty;
 
     /// <summary>FK to the owning User — enables O(1) purge on login without parsing every JWT row.</summary>
-    public Guid? UserId { get; set; }
+    public Guid UserId { get; set; }
 
     /// <summary>
     /// Refresh token rotation family ID. All rotations of the same original token share this value.

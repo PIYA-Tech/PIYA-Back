@@ -72,10 +72,10 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         return appointment;
     }
 
-    public async Task<Appointment?> GetByIdAsync(Guid id)
+    public async Task<Appointment?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await QueryAppointments(asNoTracking: true)
-            .FirstOrDefaultAsync(a => a.Id == id);
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
     }
 
     private async Task<Appointment> GetTrackedByIdAsync(Guid id)
@@ -85,7 +85,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             ?? throw new InvalidOperationException("Appointment not found");
     }
 
-    public async Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null)
+    public async Task<List<Appointment>> GetPatientAppointmentsAsync(Guid patientId, AppointmentStatus? status = null, CancellationToken ct = default)
     {
         var query = _context.Appointments
             .AsNoTracking()
@@ -100,10 +100,10 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
         return await query
             .OrderByDescending(a => a.ScheduledAt)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
-    public async Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null)
+    public async Task<List<Appointment>> GetDoctorAppointmentsAsync(Guid doctorId, DateTime? date = null, AppointmentStatus? status = null, CancellationToken ct = default)
     {
         var query = _context.Appointments
             .AsNoTracking()
@@ -125,7 +125,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
         return await query
             .OrderBy(a => a.ScheduledAt)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
     public async Task<bool> IsDoctorAvailableAsync(Guid doctorId, DateTime scheduledAt, int durationMinutes = 30)

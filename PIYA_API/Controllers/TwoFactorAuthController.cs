@@ -67,6 +67,11 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     /// from probing codes for arbitrary user IDs.
     /// When called by an already-authenticated user (e.g., confirming setup), no challenge is required.
     /// </summary>
+    /// <remarks>
+    /// ⚠️ Deprecated for the login 2FA flow — use <c>POST /api/auth/login/complete-2fa</c> instead,
+    /// which issues tokens and sets the HttpOnly cookie in one step.
+    /// This endpoint remains for authenticated users confirming 2FA setup.
+    /// </remarks>
     [HttpPost("verify")]
     [AllowAnonymous]
     public async Task<ActionResult> VerifyCode([FromBody] VerifyCodeRequest request)
@@ -85,7 +90,7 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
         {
             // Unauthenticated caller (login 2FA flow): must present a valid challenge token
             if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                !_twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
             {
                 return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
             }
