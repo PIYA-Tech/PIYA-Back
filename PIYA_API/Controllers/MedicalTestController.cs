@@ -71,7 +71,9 @@ public class MedicalTestController(
     }
 
     /// <summary>
-    /// Update test status and optionally add findings (Doctor only)
+    /// Update test status and optionally add findings.
+    /// Only the doctor who was assigned to perform the test (PerformedByDoctorId)
+    /// or an Admin may update it — prevents any other doctor from modifying the record.
     /// </summary>
     [HttpPost("{id:guid}/status")]
     [Authorize(Roles = "Doctor,SuperAdmin")]
@@ -79,6 +81,16 @@ public class MedicalTestController(
     {
         try
         {
+            var test = await _medicalTestService.GetByIdAsync(id);
+            if (test is null) return NotFound(new { error = "Test not found" });
+
+            var callerId = GetUserId();
+            var role = GetRole();
+
+            // Enforce ownership: only the performing doctor (or admin) may update
+            if (role is not ("Admin" or "SuperAdmin") && test.PerformedByDoctorId != callerId)
+                return Forbid();
+
             var updated = await _medicalTestService.UpdateStatusAsync(id, req.Status, req.Findings);
             return Ok(updated);
         }
@@ -87,6 +99,62 @@ public class MedicalTestController(
         {
             _logger.LogError(ex, "Error updating test status {Id}", id);
             return StatusCode(500, new { error = "Failed to update test" });
+        }
+    }
+
+    /// <summary>
+    /// All tests for a patient (across all referrals and emergency/walk-in tests).
+    /// Patients can only query their own history; doctors and admins may query any patient.
+    /// </summary>
+    [HttpGet("patient/{patientId:guid}")]
+    public async Task<IActionResult> GetByPatient(Guid patientId)
+    {
+        try
+        {
+            var callerId = GetUserId();
+            var role = GetRole();
+
+            if (role is not ("Doctor" or "Admin" or "SuperAdmin") && callerId != patientId)
+                return Forbid();
+
+            var tests = await _medicalTestService.GetByPatientAsync(patientId);
+            return Ok(tests);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching tests for patient {PatientId}", patientId);
+            return StatusCode(500, new { error = "Failed to fetch patient tests" });
+        }
+    }
+
+    /// <summary>
+    /// Order a standalone (walk-in / ambulance) test for a patient without a referral.
+    /// Doctor only.
+    /// </summary>
+    [HttpPost("standalone")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
+    public async Task<IActionResult> CreateStandalone([FromBody] CreateStandaloneTestRequest req)
+    {
+        try
+        {
+            var doctorId = GetUserId();
+            var test = new MedicalTest
+            {
+                PatientId = req.PatientId,
+                OrderedByDoctorId = doctorId,
+                AppointmentId = req.AppointmentId,
+                TestType = req.TestType,
+                Notes = req.Notes,
+                IsEmergency = true
+            };
+            var created = await _medicalTestService.CreateStandaloneAsync(test);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+        }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating standalone test");
+            return StatusCode(500, new { error = "Failed to create test" });
         }
     }
 
@@ -109,9 +177,20 @@ public class MedicalTestController(
             return StatusCode(500, new { error = "Failed to attach document" });
         }
     }
+
+    private Guid GetUserId() =>
+        Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? throw new UnauthorizedAccessException("User ID claim missing."));
+
+    private string? GetRole() => User.FindFirst(ClaimTypes.Role)?.Value;
 }
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────
 
 public record UpdateTestStatusRequest(MedicalTestStatus Status, string? Findings);
 public record AttachDocumentRequest(Guid DocumentId);
+public record CreateStandaloneTestRequest(
+    Guid PatientId,
+    MedicalTestType TestType,
+    string? Notes,
+    Guid? AppointmentId);

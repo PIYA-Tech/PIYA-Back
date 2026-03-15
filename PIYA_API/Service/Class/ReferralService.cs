@@ -29,15 +29,17 @@ public class ReferralService(
 
         _context.Referrals.Add(referral);
 
-        // Order medical tests
+        // Order medical tests — always link PatientId for cross-referral queries
         foreach (var testType in orderedTests)
         {
             _context.MedicalTests.Add(new MedicalTest
             {
                 Id = Guid.NewGuid(),
+                PatientId = referral.PatientId,
                 ReferralId = referral.Id,
                 OrderedByDoctorId = referral.ReferringDoctorId,
                 TestType = testType,
+                IsEmergency = referral.Origin == ReferralOrigin.Emergency,
                 Status = MedicalTestStatus.Ordered,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -188,10 +190,28 @@ public class ReferralService(
     public async Task<Referral> DeclineAsync(Guid referralId, string? reason = null)
     {
         var referral = await RequireAsync(referralId);
-        referral.Status = ReferralStatus.Declined;
-        referral.UpdatedAt = DateTime.UtcNow;
+
+        // Store the decline reason in ResultNotes before clearing it for reassignment
         if (reason is not null)
             referral.ResultNotes = reason;
+
+        // Reset back to Pending so the patient can pick a different doctor
+        referral.Status = ReferralStatus.Pending;
+        referral.ReferredToDoctorId = null;
+        referral.UpdatedAt = DateTime.UtcNow;
+
+        // Cancel the shell appointment that was created for the declined doctor
+        if (referral.ResultAppointmentId.HasValue)
+        {
+            var shellAppt = await _context.Appointments.FindAsync(referral.ResultAppointmentId.Value);
+            if (shellAppt is not null && shellAppt.Status == AppointmentStatus.Scheduled)
+            {
+                shellAppt.Status = AppointmentStatus.Cancelled;
+                shellAppt.UpdatedAt = DateTime.UtcNow;
+            }
+            referral.ResultAppointmentId = null;
+        }
+
         await _context.SaveChangesAsync();
 
         await TrySendNotificationAsync(
@@ -252,6 +272,89 @@ public class ReferralService(
             .ToListAsync();
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Referral chain — forward to another specialist
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public async Task<Referral> ForwardAsync(
+        Guid referralId,
+        Guid forwardingDoctorId,
+        Guid? targetDoctorId,
+        MedicalSpecialization specialty,
+        string reason)
+    {
+        var parent = await RequireAsync(referralId);
+
+        // Only the currently assigned / receiving doctor can forward
+        if (parent.ReferredToDoctorId != forwardingDoctorId)
+            throw new UnauthorizedAccessException("Only the receiving doctor may forward a referral.");
+
+        if (parent.Status is ReferralStatus.Completed or ReferralStatus.Cancelled)
+            throw new InvalidOperationException($"Cannot forward a referral in status {parent.Status}.");
+
+        // Mark the parent as completed (the forwarding doctor has seen the patient)
+        parent.Status = ReferralStatus.Completed;
+        parent.CompletedAt = DateTime.UtcNow;
+        parent.UpdatedAt = DateTime.UtcNow;
+
+        // Create the child referral
+        var child = new Referral
+        {
+            Id = Guid.NewGuid(),
+            ParentReferralId = parent.Id,
+            Origin = ReferralOrigin.Internal,
+            ReferringDoctorId = forwardingDoctorId,
+            PatientId = parent.PatientId,
+            ReferredToSpecialty = specialty,
+            ReferredToDoctorId = targetDoctorId,
+            Reason = reason,
+            Urgency = parent.Urgency,
+            Status = ReferralStatus.Pending,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _context.Referrals.Add(child);
+
+        // Auto-create shell appointment if a target doctor was specified
+        if (targetDoctorId.HasValue)
+            await CreateShellAppointmentAsync(child);
+
+        await _context.SaveChangesAsync();
+
+        // Notify patient
+        await TrySendNotificationAsync(
+            parent.PatientId,
+            "Referral Forwarded",
+            $"Your specialist has referred you on to a {specialty} doctor.",
+            new Dictionary<string, string>
+            {
+                ["referralId"] = child.Id.ToString(),
+                ["parentReferralId"] = parent.Id.ToString(),
+                ["type"] = "referral_forwarded"
+            });
+
+        // Notify the newly assigned doctor (if one was specified)
+        if (targetDoctorId.HasValue)
+        {
+            await TrySendNotificationAsync(
+                targetDoctorId.Value,
+                "New Patient Referral",
+                "A patient has been referred to you from another specialist.",
+                new Dictionary<string, string>
+                {
+                    ["referralId"] = child.Id.ToString(),
+                    ["type"] = "referral_received"
+                });
+        }
+
+        _logger.LogInformation(
+            "Referral {ParentId} forwarded to new referral {ChildId} by doctor {DoctorId}",
+            parent.Id, child.Id, forwardingDoctorId);
+
+        return child;
+    }
+
     public async Task DeleteAsync(Guid id)
     {
         var referral = await RequireAsync(id);
@@ -275,13 +378,16 @@ public class ReferralService(
         else
             hospitalId = await _context.Hospitals.Select(h => h.Id).FirstOrDefaultAsync();
 
+        // Shell appointment — placeholder date 30 days out.
+        // The patient MUST reschedule; a notification is sent immediately.
+        var placeholder = DateTime.UtcNow.AddDays(30);
         var appointment = new Appointment
         {
             Id = Guid.NewGuid(),
             PatientId = referral.PatientId,
             DoctorId = referral.ReferredToDoctorId!.Value,
             HospitalId = hospitalId,
-            ScheduledAt = DateTime.UtcNow.AddDays(30), // Placeholder — patient reschedules
+            ScheduledAt = placeholder,
             Status = AppointmentStatus.Scheduled,
             Reason = $"Referral: {referral.Reason}",
             CreatedAt = DateTime.UtcNow,
@@ -292,6 +398,18 @@ public class ReferralService(
         _context.Appointments.Add(appointment);
         referral.ResultAppointmentId = appointment.Id;
         referral.Status = ReferralStatus.Scheduled;
+
+        // Notify the patient that a placeholder appointment was created and needs rescheduling
+        await TrySendNotificationAsync(
+            referral.PatientId,
+            "Appointment Needs Scheduling",
+            "A referral appointment has been provisionally booked. Please open the app to choose a convenient date and time.",
+            new Dictionary<string, string>
+            {
+                ["appointmentId"] = appointment.Id.ToString(),
+                ["referralId"] = referral.Id.ToString(),
+                ["type"] = "appointment_reschedule_required"
+            });
     }
 
     private async Task TrySendNotificationAsync(

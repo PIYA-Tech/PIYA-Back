@@ -37,11 +37,29 @@ public class MedicalTest
 {
     public Guid Id { get; set; }
 
+    // ── Patient link (always present) ────────────────────────────────────────
+
     /// <summary>
-    /// Parent referral
+    /// The patient this test belongs to. Required even for walk-in / ambulance tests
+    /// so the record is always reachable from the patient's history.
     /// </summary>
-    public Guid ReferralId { get; set; }
-    public Referral Referral { get; set; } = null!;
+    public Guid PatientId { get; set; }
+    public User Patient { get; set; } = null!;
+
+    // ── Referral link (optional) ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Parent referral. Null when the test was ordered for a walk-in / ambulance
+    /// encounter without a formal referral.
+    /// </summary>
+    public Guid? ReferralId { get; set; }
+    public Referral? Referral { get; set; }
+
+    /// <summary>
+    /// True when the test was ordered during an emergency / ambulance encounter
+    /// (no referral exists).
+    /// </summary>
+    public bool IsEmergency { get; set; } = false;
 
     /// <summary>
     /// Appointment where the test was actually performed (may differ from the referral result appointment)

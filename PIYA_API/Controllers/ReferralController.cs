@@ -35,6 +35,7 @@ public class ReferralController(
             {
                 ReferringDoctorId = doctorId,
                 PatientId = req.PatientId,
+                Origin = req.Origin ?? (req.SourceAppointmentId.HasValue ? ReferralOrigin.Appointment : ReferralOrigin.Emergency),
                 SourceAppointmentId = req.SourceAppointmentId,
                 ReferredToSpecialty = req.ReferredToSpecialty,
                 ReferredToDoctorId = req.ReferredToDoctorId,
@@ -295,6 +296,30 @@ public class ReferralController(
     // ── PDF Export ───────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Forward a referral to another specialist, creating a child referral in the chain.
+    /// Only the currently assigned (receiving) doctor may call this.
+    /// </summary>
+    [HttpPost("{id:guid}/forward")]
+    [Authorize(Roles = "Doctor,SuperAdmin")]
+    public async Task<IActionResult> Forward(Guid id, [FromBody] ForwardReferralRequest req)
+    {
+        try
+        {
+            var doctorId = GetUserId();
+            var child = await _referralService.ForwardAsync(id, doctorId, req.TargetDoctorId, req.Specialty, req.Reason);
+            return CreatedAtAction(nameof(GetById), new { id = child.Id }, child);
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error forwarding referral {Id}", id);
+            return StatusCode(500, new { error = "Failed to forward referral" });
+        }
+    }
+
+    /// <summary>
     /// Download a referral letter as PDF
     /// </summary>
     [HttpGet("{id:guid}/export-pdf")]
@@ -339,7 +364,8 @@ public class ReferralController(
 
 public record CreateReferralRequest(
     Guid PatientId,
-    Guid SourceAppointmentId,
+    Guid? SourceAppointmentId,        // Null for walk-in / ambulance referrals
+    ReferralOrigin? Origin,            // Defaults: Appointment when SourceAppointmentId set, else Emergency
     MedicalSpecialization ReferredToSpecialty,
     Guid? ReferredToDoctorId,
     ReferralUrgency Urgency,
@@ -349,6 +375,11 @@ public record CreateReferralRequest(
     string? ExternalProviderName,
     string? ExternalProviderContact,
     List<MedicalTestType>? OrderedTests);
+
+public record ForwardReferralRequest(
+    MedicalSpecialization Specialty,
+    string Reason,
+    Guid? TargetDoctorId);
 
 public record AssignDoctorRequest(Guid DoctorId);
 

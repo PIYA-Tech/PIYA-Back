@@ -381,6 +381,7 @@ namespace PIYA_API.Data
                 .HasOne(r => r.SourceAppointment)
                 .WithMany()
                 .HasForeignKey(r => r.SourceAppointmentId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // ResultAppointment: the generated appointment has a back-reference to this Referral
@@ -389,6 +390,14 @@ namespace PIYA_API.Data
                 .WithOne(a => a.Referral)
                 .HasForeignKey<Referral>(r => r.ResultAppointmentId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            // Self-referential chain: child referral → parent referral
+            modelBuilder.Entity<Referral>()
+                .HasOne(r => r.ParentReferral)
+                .WithMany(r => r.ChildReferrals)
+                .HasForeignKey(r => r.ParentReferralId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<Referral>()
                 .HasIndex(r => r.PatientId);
@@ -400,6 +409,9 @@ namespace PIYA_API.Data
                 .HasIndex(r => r.ReferredToDoctorId);
 
             modelBuilder.Entity<Referral>()
+                .HasIndex(r => r.ParentReferralId);
+
+            modelBuilder.Entity<Referral>()
                 .HasIndex(r => r.Status);
 
             modelBuilder.Entity<Referral>()
@@ -407,11 +419,20 @@ namespace PIYA_API.Data
 
             // ── MedicalTest ───────────────────────────────────────────────────────────
 
+            // ReferralId is now nullable — SetNull so deleting a referral doesn't cascade-delete tests
             modelBuilder.Entity<MedicalTest>()
                 .HasOne(mt => mt.Referral)
                 .WithMany(r => r.Tests)
                 .HasForeignKey(mt => mt.ReferralId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // Direct patient link — always populated, even for emergency/walk-in tests
+            modelBuilder.Entity<MedicalTest>()
+                .HasOne(mt => mt.Patient)
+                .WithMany()
+                .HasForeignKey(mt => mt.PatientId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<MedicalTest>()
                 .HasOne(mt => mt.Appointment)
@@ -430,6 +451,9 @@ namespace PIYA_API.Data
                 .WithMany()
                 .HasForeignKey(mt => mt.PerformedByDoctorId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<MedicalTest>()
+                .HasIndex(mt => mt.PatientId);
 
             modelBuilder.Entity<MedicalTest>()
                 .HasIndex(mt => mt.ReferralId);

@@ -60,5 +60,11 @@ public interface IReferralService
     /// </summary>
     Task<List<User>> GetAvailableDoctorsAsync(Guid referralId);
 
+    /// <summary>
+    /// Forward an existing referral to another specialist, creating a child referral in the chain.
+    /// The original referral is marked Completed; the new child referral is Pending.
+    /// </summary>
+    Task<Referral> ForwardAsync(Guid referralId, Guid forwardingDoctorId, Guid? targetDoctorId, MedicalSpecialization specialty, string reason);
+
     Task DeleteAsync(Guid id);
 }

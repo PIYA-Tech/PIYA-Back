@@ -81,6 +81,40 @@ public class MedicalTestService(
         return test;
     }
 
+    public async Task<List<MedicalTest>> GetByPatientAsync(Guid patientId) =>
+        await _context.MedicalTests
+            .Include(t => t.Referral)
+            .Include(t => t.OrderedByDoctor)
+            .Include(t => t.PerformedByDoctor)
+            .Include(t => t.Documents)
+            .Where(t => t.PatientId == patientId)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+
+    public async Task<MedicalTest> CreateStandaloneAsync(MedicalTest test)
+    {
+        if (test.PatientId == Guid.Empty)
+            throw new ArgumentException("PatientId is required for a standalone test.");
+        if (test.OrderedByDoctorId == Guid.Empty)
+            throw new ArgumentException("OrderedByDoctorId is required for a standalone test.");
+        if (test.ReferralId is not null)
+            throw new ArgumentException("Use CreateAsync for tests that belong to a referral.");
+
+        test.Id = Guid.NewGuid();
+        test.IsEmergency = true;
+        test.CreatedAt = DateTime.UtcNow;
+        test.UpdatedAt = DateTime.UtcNow;
+
+        _context.MedicalTests.Add(test);
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Standalone/emergency MedicalTest {TestId} created for patient {PatientId} by doctor {DoctorId}",
+            test.Id, test.PatientId, test.OrderedByDoctorId);
+
+        return test;
+    }
+
     private async Task<MedicalTest> RequireAsync(Guid id) =>
         await _context.MedicalTests.FindAsync(id)
         ?? throw new KeyNotFoundException($"MedicalTest {id} not found.");

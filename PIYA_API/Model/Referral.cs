@@ -1,6 +1,16 @@
 namespace PIYA_API.Model;
 
 /// <summary>
+/// How this referral was initiated
+/// </summary>
+public enum ReferralOrigin
+{
+    Appointment = 1,  // Created from a scheduled appointment
+    Emergency   = 2,  // Walk-in / ambulance — no prior appointment
+    Internal    = 3,  // Internally forwarded from another referral (chain)
+}
+
+/// <summary>
 /// Status of a referral
 /// </summary>
 public enum ReferralStatus
@@ -9,7 +19,7 @@ public enum ReferralStatus
     Scheduled  = 2,   // Appointment auto-created
     Accepted   = 3,   // Referred doctor accepted
     Completed  = 4,   // Referred doctor filled in result notes
-    Declined   = 5,   // Referred doctor declined
+    Declined   = 5,   // Referred doctor declined — patient may reassign
     Cancelled  = 6    // Referring doctor or patient cancelled
 }
 
@@ -39,10 +49,28 @@ public class Referral
     public User ReferringDoctor { get; set; } = null!;
 
     /// <summary>
-    /// The appointment from which this referral was created
+    /// How the referral was initiated.
     /// </summary>
-    public Guid SourceAppointmentId { get; set; }
-    public Appointment SourceAppointment { get; set; } = null!;
+    public ReferralOrigin Origin { get; set; } = ReferralOrigin.Appointment;
+
+    /// <summary>
+    /// The appointment from which this referral was created.
+    /// Null for Emergency/walk-in referrals (no prior appointment exists).
+    /// </summary>
+    public Guid? SourceAppointmentId { get; set; }
+    public Appointment? SourceAppointment { get; set; }
+
+    /// <summary>
+    /// Parent referral when this is a forward/chain referral (specialist refers on to another specialist).
+    /// Null for first-level referrals.
+    /// </summary>
+    public Guid? ParentReferralId { get; set; }
+    public Referral? ParentReferral { get; set; }
+
+    /// <summary>
+    /// Child referrals forwarded from this one (the referral chain).
+    /// </summary>
+    public ICollection<Referral> ChildReferrals { get; set; } = [];
 
     // ── Patient ──────────────────────────────────────────────────────────────
 
