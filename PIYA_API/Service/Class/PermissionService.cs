@@ -246,6 +246,38 @@ public class PermissionService(
                 Permissions.PrescriptionFulfill,
                 Permissions.PrescriptionViewAll
             ],
+
+            UserRole.HospitalDirector =>
+            [
+                Permissions.HospitalViewOwn,
+                Permissions.HospitalManageOwn,
+                Permissions.HospitalViewDoctors,
+                Permissions.HospitalManageDoctors,
+                Permissions.HospitalViewAppointments,
+                Permissions.HospitalViewAnalytics,
+                Permissions.DashboardAccess,
+                Permissions.DashboardViewAnalytics,
+                Permissions.DoctorViewAll,
+                Permissions.AuditLogView
+            ],
+
+            UserRole.PharmacyNetworkOwner =>
+            [
+                Permissions.NetworkViewAll,
+                Permissions.NetworkManageAll,
+                Permissions.NetworkViewAnalytics,
+                Permissions.NetworkManageStaff,
+                Permissions.NetworkViewInventory,
+                Permissions.PharmacyCreate,
+                Permissions.PharmacyUpdate,
+                Permissions.PharmacyManage,
+                Permissions.PharmacyViewAll,
+                Permissions.StaffViewAll,
+                Permissions.StaffManage,
+                Permissions.InventoryViewAll,
+                Permissions.DashboardAccess,
+                Permissions.DashboardViewAnalytics
+            ],
             
             UserRole.Admin =>
             [

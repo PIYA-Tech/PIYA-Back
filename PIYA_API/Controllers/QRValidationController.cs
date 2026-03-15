@@ -111,26 +111,29 @@ public class QRValidationController(
                 return NotFound(new { error = "Prescription not found" });
             }
 
-            // Resolve the pharmacist's pharmacy and fulfill the prescription
+            // Resolve the pharmacist's dispensing pharmacy — required to fulfill and deduct stock.
+            // A pharmacist with no active assignment MUST NOT receive prescription data; the QR
+            // token would have been consumed (marked Used) but the prescription would never be
+            // fulfilled, leaking patient data without any inventory/audit trail.
             var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(pharmacistId, activeOnly: true);
             var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
-            if (pharmacyId.HasValue)
+            if (!pharmacyId.HasValue)
             {
-                try
-                {
-                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
-                        prescriptionId, ex.Message);
-                    // Non-fatal: return the prescription details even if fulfillment failed (e.g. already fulfilled)
-                }
-            }
-            else
-            {
-                _logger.LogWarning("Pharmacist {PharmacistId} has no active pharmacy assignment; prescription {PrescriptionId} not marked fulfilled",
+                _logger.LogWarning(
+                    "Pharmacist {PharmacistId} has no active pharmacy assignment; QR scan for prescription {PrescriptionId} rejected",
                     pharmacistId, prescriptionId);
+                return Forbid(); // 403 — do not expose prescription data without a known dispensing pharmacy
+            }
+
+            try
+            {
+                prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
+                    prescriptionId, ex.Message);
+                // Non-fatal: return the prescription details if it was already fulfilled (e.g. scanned twice)
             }
 
             return Ok(new PrescriptionScanResponse

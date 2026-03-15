@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using System.Security.Claims;
 
 namespace PIYA_API.Controllers;
 
@@ -13,6 +14,8 @@ public class PharmacyCompaniesController(
 {
     private readonly IPharmacyCompanyService _companyService = companyService;
     private readonly ILogger<PharmacyCompaniesController> _logger = logger;
+
+    private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     /// <summary>
     /// Get all pharmacy companies
@@ -213,6 +216,78 @@ public class PharmacyCompaniesController(
             return StatusCode(500, new { error = "Failed to retrieve pharmacies" });
         }
     }
+
+    // ── Pharmacy Network Owner endpoints ─────────────────────────────────────
+
+    /// <summary>
+    /// Get the company the calling PharmacyNetworkOwner manages.
+    /// </summary>
+    [HttpGet("my-network")]
+    [Authorize(Roles = "PharmacyNetworkOwner")]
+    public async Task<ActionResult<PharmacyCompanyDetailDto>> GetMyNetwork()
+    {
+        try
+        {
+            var company = await _companyService.GetByOwnerAsync(GetUserId());
+            if (company == null)
+                return NotFound(new { error = "No pharmacy company is assigned to your account yet. Contact an administrator." });
+
+            var pharmacies = await _companyService.GetCompanyPharmaciesAsync(company.Id);
+            return Ok(new PharmacyCompanyDetailDto
+            {
+                Id           = company.Id,
+                Name         = company.Name,
+                PharmacyCount = pharmacies.Count,
+                Pharmacies   = pharmacies.Select(p => new PharmacyBasicDto
+                {
+                    Id      = p.Id,
+                    Name    = p.Name,
+                    Address = p.Address,
+                    City    = null,
+                    Country = p.Country
+                }).ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving network for owner {OwnerId}", GetUserId());
+            return StatusCode(500, new { error = "Failed to retrieve network" });
+        }
+    }
+
+    /// <summary>
+    /// Assign or unassign a PharmacyNetworkOwner to a company (Admin/SuperAdmin only).
+    /// PUT /api/pharmacy-companies/{id}/owner  Body: { "ownerId": "guid" }
+    /// </summary>
+    [HttpPut("{id}/owner")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<ActionResult<PharmacyCompanyDto>> AssignOwner(Guid id, [FromBody] AssignCompanyOwnerRequest request)
+    {
+        try
+        {
+            var updated = await _companyService.AssignOwnerAsync(id, request.OwnerId);
+            var pharmacyCount = await _companyService.GetPharmacyCountAsync(id);
+            return Ok(new PharmacyCompanyDto
+            {
+                Id           = updated.Id,
+                Name         = updated.Name,
+                PharmacyCount = pharmacyCount
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error assigning owner to pharmacy company {CompanyId}", id);
+            return StatusCode(500, new { error = "Failed to assign owner" });
+        }
+    }
 }
 
 #region DTOs
@@ -249,6 +324,12 @@ public class CreatePharmacyCompanyRequest
 public class UpdatePharmacyCompanyRequest
 {
     public required string Name { get; set; }
+}
+
+/// <summary>Body for PUT /api/pharmacy-companies/{id}/owner — pass null to unassign.</summary>
+public class AssignCompanyOwnerRequest
+{
+    public Guid? OwnerId { get; set; }
 }
 
 #endregion

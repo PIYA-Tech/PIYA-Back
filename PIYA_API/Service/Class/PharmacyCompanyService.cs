@@ -100,4 +100,37 @@ public class PharmacyCompanyService(PharmacyApiDbContext context, IAuditService 
             .Include(p => p.Company)
             .CountAsync(p => p.Company.Id == companyId);
     }
+
+    public async Task<PharmacyCompany?> GetByOwnerAsync(Guid ownerId)
+        => await _context.PharmacyCompanies
+            .FirstOrDefaultAsync(c => c.OwnerId == ownerId);
+
+    public async Task<PharmacyCompany> AssignOwnerAsync(Guid companyId, Guid? ownerId)
+    {
+        var company = await _context.PharmacyCompanies.FindAsync(companyId)
+            ?? throw new KeyNotFoundException($"Pharmacy company {companyId} not found");
+
+        if (ownerId.HasValue)
+        {
+            var user = await _context.Users.FindAsync(ownerId.Value)
+                ?? throw new InvalidOperationException("User not found");
+            if (user.Role != UserRole.PharmacyNetworkOwner)
+                throw new InvalidOperationException(
+                    "User must have the PharmacyNetworkOwner role to be assigned as network owner");
+        }
+
+        company.OwnerId = ownerId;
+        await _context.SaveChangesAsync();
+        return company;
+    }
+
+    public async Task<bool> IsPharmacyInOwnerNetworkAsync(Guid pharmacyId, Guid ownerId)
+    {
+        var company = await _context.PharmacyCompanies
+            .FirstOrDefaultAsync(c => c.OwnerId == ownerId);
+        if (company == null) return false;
+
+        return await _context.Pharmacies
+            .AnyAsync(p => p.Id == pharmacyId && p.Company.Id == company.Id);
+    }
 }

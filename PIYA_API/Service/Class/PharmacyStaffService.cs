@@ -24,9 +24,10 @@ public class PharmacyStaffService(
         // Verify user exists and has appropriate role
         var user = await _context.Users.FindAsync(userId) ?? throw new InvalidOperationException($"User with ID {userId} not found");
         
-        if (user.Role != UserRole.Pharmacist && user.Role != UserRole.PharmacyManager && user.Role != UserRole.Admin)
+        if (user.Role != UserRole.Pharmacist && user.Role != UserRole.PharmacyManager &&
+            user.Role != UserRole.PharmacyNetworkOwner && user.Role != UserRole.Admin)
         {
-            throw new InvalidOperationException($"User must have Pharmacist, PharmacyManager, or Admin role to be assigned as pharmacy staff");
+            throw new InvalidOperationException($"User must have Pharmacist, PharmacyManager, PharmacyNetworkOwner, or Admin role to be assigned as pharmacy staff");
         }
 
         // Check if already assigned

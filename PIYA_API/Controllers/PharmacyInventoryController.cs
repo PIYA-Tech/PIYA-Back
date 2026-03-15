@@ -14,21 +14,31 @@ namespace PIYA_API.Controllers;
 public class PharmacyInventoryController(
     IInventoryService inventoryService,
     IPharmacyStaffService pharmacyStaffService,
+    IPharmacyCompanyService pharmacyCompanyService,
     IHubContext<InventoryHub> inventoryHub,
     ILogger<PharmacyInventoryController> logger) : ControllerBase
 {
     private readonly IInventoryService _inventoryService = inventoryService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
+    private readonly IPharmacyCompanyService _pharmacyCompanyService = pharmacyCompanyService;
     private readonly IHubContext<InventoryHub> _inventoryHub = inventoryHub;
     private readonly ILogger<PharmacyInventoryController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     /// <summary>
-    /// Returns true when the caller is an Admin OR is active staff at the given pharmacy.
+    /// Returns true when the caller is an Admin, is active staff at the given pharmacy,
+    /// or is a PharmacyNetworkOwner whose company owns the pharmacy.
     /// </summary>
-    private async Task<bool> CanAccessPharmacy(Guid pharmacyId) =>
-        User.IsInRole("Admin") || await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, GetUserId());
+    private async Task<bool> CanAccessPharmacy(Guid pharmacyId)
+    {
+        if (User.IsInRole("Admin") || User.IsInRole("SuperAdmin"))
+            return true;
+        if (User.IsInRole("PharmacyNetworkOwner") &&
+            await _pharmacyCompanyService.IsPharmacyInOwnerNetworkAsync(pharmacyId, GetUserId()))
+            return true;
+        return await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, GetUserId());
+    }
 
     #region Inventory Management
 
@@ -122,10 +132,14 @@ public class PharmacyInventoryController(
     {
         try
         {
-            // Fetch before delete so we have pharmacyId for the broadcast
+            // Fetch before delete so we can verify pharmacy ownership and broadcast the deletion.
             var item = await _inventoryService.GetByIdAsync(id);
             if (item == null)
                 return NotFound(new { error = "Inventory item not found" });
+
+            // Only staff of the owning pharmacy (or Admin) may delete inventory.
+            if (!await CanAccessPharmacy(item.PharmacyId))
+                return Forbid();
 
             var deleted = await _inventoryService.DeleteAsync(id);
             if (!deleted)
@@ -159,6 +173,14 @@ public class PharmacyInventoryController(
     {
         try
         {
+            // Load the item first so we can verify the caller belongs to the owning pharmacy.
+            var item = await _inventoryService.GetByIdAsync(id);
+            if (item == null)
+                return NotFound(new { error = "Inventory item not found" });
+
+            if (!await CanAccessPharmacy(item.PharmacyId))
+                return Forbid();
+
             var userId = GetUserId();
             var result = await _inventoryService.UpdateStockAsync(id, request.Quantity, userId, request.Notes);
             await _inventoryHub.Clients

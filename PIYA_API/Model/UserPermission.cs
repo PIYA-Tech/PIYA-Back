@@ -105,4 +105,19 @@ public static class Permissions
     // System Administration
     public const string SystemAdmin = "System.Admin";
     public const string SystemConfigUpdate = "System.Config.Update";
+
+    // Hospital Director
+    public const string HospitalViewOwn         = "Hospital.ViewOwn";
+    public const string HospitalManageOwn        = "Hospital.ManageOwn";
+    public const string HospitalViewDoctors      = "Hospital.ViewDoctors";
+    public const string HospitalViewAppointments = "Hospital.ViewAppointments";
+    public const string HospitalViewAnalytics    = "Hospital.ViewAnalytics";
+    public const string HospitalManageDoctors    = "Hospital.ManageDoctors";
+
+    // Pharmacy Network Owner
+    public const string NetworkViewAll       = "Network.ViewAll";
+    public const string NetworkManageAll     = "Network.ManageAll";
+    public const string NetworkViewAnalytics = "Network.ViewAnalytics";
+    public const string NetworkManageStaff   = "Network.ManageStaff";
+    public const string NetworkViewInventory = "Network.ViewInventory";
 }

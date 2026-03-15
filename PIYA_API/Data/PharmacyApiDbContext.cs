@@ -460,6 +460,33 @@ namespace PIYA_API.Data
 
             modelBuilder.Entity<MedicalTest>()
                 .HasIndex(mt => mt.Status);
+
+            // ── Hospital Director ─────────────────────────────────────────────────────
+
+            // Hospital.DirectorId — optional FK to the User with HospitalDirector role.
+            // Restrict prevents accidental deletion of a user who is still a director.
+            modelBuilder.Entity<Hospital>()
+                .HasOne(h => h.Director)
+                .WithMany()
+                .HasForeignKey(h => h.DirectorId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<Hospital>()
+                .HasIndex(h => h.DirectorId);
+
+            // ── Pharmacy Network Owner ────────────────────────────────────────────────
+
+            // PharmacyCompany.OwnerId — optional FK to the User with PharmacyNetworkOwner role.
+            modelBuilder.Entity<PharmacyCompany>()
+                .HasOne(pc => pc.Owner)
+                .WithMany()
+                .HasForeignKey(pc => pc.OwnerId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PharmacyCompany>()
+                .HasIndex(pc => pc.OwnerId);
         }
     }
 }

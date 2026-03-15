@@ -41,7 +41,14 @@ public class Hospital
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-    
+
+    /// <summary>
+    /// The HospitalDirector (dean / medical director) assigned to this hospital.
+    /// Null when no director has been assigned yet.
+    /// </summary>
+    public Guid? DirectorId { get; set; }
+    public User? Director { get; set; }
+
     // Navigation properties
     public ICollection<Appointment> Appointments { get; set; } = [];
 }

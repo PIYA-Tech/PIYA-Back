@@ -30,13 +30,17 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             if (request.HospitalId == Guid.Empty)
                 return BadRequest(new { error = "HospitalId is required to book an appointment." });
 
-            // Patients can only book for themselves; Admins may override the PatientId;
+            // Patients can only book for themselves; Admins/SuperAdmins may override the PatientId;
             // Doctors must explicitly supply a PatientId (they cannot book themselves as patient)
             Guid patientId;
             if (userRole == "Patient")
                 patientId = userId;
-            else if (userRole == "Admin" && request.PatientId.HasValue)
+            else if (userRole == "Admin" || userRole == "SuperAdmin")
+            {
+                if (!request.PatientId.HasValue)
+                    return BadRequest(new { error = "PatientId is required when an Admin or SuperAdmin books an appointment." });
                 patientId = request.PatientId.Value;
+            }
             else if (userRole == "Doctor")
             {
                 if (!request.PatientId.HasValue)
@@ -44,7 +48,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
                 patientId = request.PatientId.Value;
             }
             else
-                patientId = request.PatientId ?? userId;
+                return Forbid();
 
             var appointment = new Appointment
             {
@@ -58,6 +62,10 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
 
             var created = await _appointmentService.BookAppointmentAsync(appointment);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)
         {
@@ -249,6 +257,10 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
 
             var rescheduled = await _appointmentService.RescheduleAppointmentAsync(id, request.NewScheduledAt);
             return Ok(rescheduled);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

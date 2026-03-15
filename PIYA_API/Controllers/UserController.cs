@@ -79,8 +79,13 @@ public class UserController(IUserService userService, ILogger<UserController> lo
             if (!Enum.TryParse<UserRole>(request.Role, true, out var roleEnum))
                 return BadRequest(new { message = $"Invalid role '{request.Role}'. Valid values: {string.Join(", ", Enum.GetNames<UserRole>())}" });
 
-            // SuperAdmin creation is restricted to SuperAdmin only
+            // SuperAdmin creation is restricted to SuperAdmin only.
+            // HospitalDirector and PharmacyNetworkOwner creation is restricted to Admin and above.
             if (roleEnum == UserRole.SuperAdmin && !User.IsInRole("SuperAdmin"))
+                return Forbid();
+
+            if ((roleEnum == UserRole.HospitalDirector || roleEnum == UserRole.PharmacyNetworkOwner)
+                && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
                 return Forbid();
 
             DateTime? parsedDob = null;

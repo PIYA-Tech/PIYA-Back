@@ -58,4 +58,16 @@ public interface IHospitalService
     /// Get doctors working at a specific hospital
     /// </summary>
     Task<List<DoctorProfile>> GetDoctorsByHospitalAsync(Guid hospitalId);
+
+    /// <summary>
+    /// Get the hospital assigned to a given director (HospitalDirector role).
+    /// Returns null if no hospital is assigned.
+    /// </summary>
+    Task<Hospital?> GetByDirectorAsync(Guid directorId);
+
+    /// <summary>
+    /// Assign or unassign a director to a hospital.
+    /// Pass null directorId to unassign.
+    /// </summary>
+    Task<Hospital> AssignDirectorAsync(Guid hospitalId, Guid? directorId);
 }

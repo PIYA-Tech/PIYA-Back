@@ -246,4 +246,47 @@ public class HospitalService(PharmacyApiDbContext context, ILogger<HospitalServi
             throw;
         }
     }
+
+    public async Task<Hospital?> GetByDirectorAsync(Guid directorId)
+    {
+        try
+        {
+            return await _context.Hospitals
+                .FirstOrDefaultAsync(h => h.DirectorId == directorId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting hospital for director {DirectorId}", directorId);
+            throw;
+        }
+    }
+
+    public async Task<Hospital> AssignDirectorAsync(Guid hospitalId, Guid? directorId)
+    {
+        try
+        {
+            var hospital = await _context.Hospitals.FindAsync(hospitalId)
+                ?? throw new KeyNotFoundException($"Hospital {hospitalId} not found");
+
+            if (directorId.HasValue)
+            {
+                var user = await _context.Users.FindAsync(directorId.Value)
+                    ?? throw new InvalidOperationException("User not found");
+                if (user.Role != UserRole.HospitalDirector)
+                    throw new InvalidOperationException(
+                        "User must have the HospitalDirector role to be assigned as director");
+            }
+
+            hospital.DirectorId = directorId;
+            hospital.UpdatedAt  = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            return hospital;
+        }
+        catch (Exception ex) when (ex is not KeyNotFoundException && ex is not InvalidOperationException)
+        {
+            _logger.LogError(ex, "Error assigning director {DirectorId} to hospital {HospitalId}",
+                directorId, hospitalId);
+            throw;
+        }
+    }
 }

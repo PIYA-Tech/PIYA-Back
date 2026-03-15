@@ -24,6 +24,11 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> BookAppointmentAsync(Appointment appointment)
     {
+        // Reject appointments scheduled in the past.
+        // A small tolerance of 1 minute is allowed to absorb clock-skew between client and server.
+        if (appointment.ScheduledAt < DateTime.UtcNow.AddMinutes(-1))
+            throw new ArgumentException("Appointment cannot be scheduled in the past.");
+
         // Validate that the referenced hospital and doctor exist BEFORE running the
         // conflict check, so we never query availability for a non-existent entity.
         if (appointment.HospitalId != Guid.Empty)
@@ -224,6 +229,9 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<Appointment> RescheduleAppointmentAsync(Guid id, DateTime newScheduledAt)
     {
+        if (newScheduledAt < DateTime.UtcNow.AddMinutes(-1))
+            throw new ArgumentException("Cannot reschedule an appointment to a time in the past.");
+
         var appointment = await GetTrackedByIdAsync(id);
 
         // Cannot reschedule appointments that are already finished or cancelled

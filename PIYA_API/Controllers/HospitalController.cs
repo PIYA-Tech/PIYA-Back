@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using System.Security.Claims;
 namespace PIYA_API.Controllers;
 
 [ApiController]
@@ -11,11 +12,15 @@ namespace PIYA_API.Controllers;
 public class HospitalController(
     IHospitalService hospitalService,
     IDoctorProfileService doctorProfileService,
+    IAppointmentService appointmentService,
     ILogger<HospitalController> logger) : ControllerBase
 {
     private readonly IHospitalService _hospitalService = hospitalService;
     private readonly IDoctorProfileService _doctorProfileService = doctorProfileService;
+    private readonly IAppointmentService _appointmentService = appointmentService;
     private readonly ILogger<HospitalController> _logger = logger;
+
+    private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     /// <summary>
     /// Get all hospitals
@@ -346,4 +351,145 @@ public class HospitalController(
             return StatusCode(500, new { error = "Failed to remove doctor from hospital" });
         }
     }
+
+    // ── Hospital Director endpoints ───────────────────────────────────────────
+
+    /// <summary>
+    /// Get the hospital the calling HospitalDirector is assigned to.
+    /// </summary>
+    [HttpGet("my-hospital")]
+    [Authorize(Roles = "HospitalDirector")]
+    public async Task<ActionResult<HospitalPublicDto>> GetMyHospital()
+    {
+        try
+        {
+            var hospital = await _hospitalService.GetByDirectorAsync(GetUserId());
+            if (hospital == null)
+                return NotFound(new { error = "No hospital is assigned to your account yet. Contact an administrator." });
+            return Ok(ToPublicDto(hospital));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving hospital for director {DirectorId}", GetUserId());
+            return StatusCode(500, new { error = "Failed to retrieve hospital" });
+        }
+    }
+
+    /// <summary>
+    /// Update operational info (hours, contact, departments) for the director's hospital.
+    /// Coordinates and activation status cannot be changed by the director.
+    /// </summary>
+    [HttpPut("my-hospital")]
+    [Authorize(Roles = "HospitalDirector")]
+    public async Task<ActionResult<HospitalPublicDto>> UpdateMyHospital([FromBody] HospitalUpsertDto dto)
+    {
+        try
+        {
+            var hospital = await _hospitalService.GetByDirectorAsync(GetUserId());
+            if (hospital == null)
+                return NotFound(new { error = "No hospital assigned to your account." });
+
+            var patch = DtoToHospital(dto);
+            patch.Id          = hospital.Id;
+            patch.Coordinates = hospital.Coordinates; // directors cannot relocate the hospital
+            patch.IsActive    = hospital.IsActive;     // directors cannot activate/deactivate
+
+            var result = await _hospitalService.UpdateAsync(patch);
+            return Ok(ToPublicDto(result));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = "Hospital not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating hospital for director");
+            return StatusCode(500, new { error = "Failed to update hospital" });
+        }
+    }
+
+    /// <summary>
+    /// Get all doctors in the director's hospital.
+    /// </summary>
+    [HttpGet("my-hospital/doctors")]
+    [Authorize(Roles = "HospitalDirector")]
+    public async Task<ActionResult<List<DoctorProfile>>> GetMyHospitalDoctors()
+    {
+        try
+        {
+            var hospital = await _hospitalService.GetByDirectorAsync(GetUserId());
+            if (hospital == null)
+                return NotFound(new { error = "No hospital assigned to your account." });
+
+            var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(hospital.Id);
+            return Ok(doctors);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctors for director's hospital");
+            return StatusCode(500, new { error = "Failed to retrieve doctors" });
+        }
+    }
+
+    /// <summary>
+    /// Get all appointments in the director's hospital (optionally filtered by date).
+    /// </summary>
+    [HttpGet("my-hospital/appointments")]
+    [Authorize(Roles = "HospitalDirector")]
+    public async Task<ActionResult<List<Appointment>>> GetMyHospitalAppointments([FromQuery] DateTime? date = null)
+    {
+        try
+        {
+            var hospital = await _hospitalService.GetByDirectorAsync(GetUserId());
+            if (hospital == null)
+                return NotFound(new { error = "No hospital assigned to your account." });
+
+            var appointments = await _appointmentService.GetHospitalAppointmentsAsync(hospital.Id, date);
+            return Ok(appointments);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving appointments for director's hospital");
+            return StatusCode(500, new { error = "Failed to retrieve appointments" });
+        }
+    }
+
+    /// <summary>
+    /// Assign a HospitalDirector user to a hospital (Admin/SuperAdmin only).
+    /// PUT /api/hospital/{id}/director  Body: { "directorId": "guid" }
+    /// </summary>
+    [HttpPut("{id}/director")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<ActionResult<HospitalPublicDto>> AssignDirector(Guid id, [FromBody] AssignDirectorRequest request)
+    {
+        try
+        {
+            var updated = await _hospitalService.AssignDirectorAsync(id, request.DirectorId);
+            return Ok(ToPublicDto(updated));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error assigning director to hospital {HospitalId}", id);
+            return StatusCode(500, new { error = "Failed to assign director" });
+        }
+    }
+
+}
+
+// ── Helper DTOs ───────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Body for PUT /api/hospital/{id}/director — pass null DirectorId to unassign.
+/// </summary>
+public class AssignDirectorRequest
+{
+    public Guid? DirectorId { get; set; }
 }
