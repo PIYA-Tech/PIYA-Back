@@ -56,6 +56,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
                 DoctorId = request.DoctorId,
                 HospitalId = request.HospitalId,
                 ScheduledAt = request.ScheduledAt,
+                DurationMinutes = request.DurationMinutes > 0 ? request.DurationMinutes : 30,
                 Reason = request.Reason,
                 Status = AppointmentStatus.Scheduled
             };
@@ -97,7 +98,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             // Verify user has access to this appointment
-            if (userRole != "Admin" && appointment.PatientId != userId && appointment.DoctorId != userId)
+            if (userRole != "Admin" && userRole != "SuperAdmin" && appointment.PatientId != userId && appointment.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -136,6 +137,11 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             else if (userRole == "Doctor")
             {
                 appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, status: appointmentStatus, ct: ct);
+            }
+            else if (userRole == "Admin" || userRole == "SuperAdmin")
+            {
+                // Admins can see all appointments via GET /api/appointment/hospital/{id}
+                appointments = [];
             }
             else
             {
@@ -214,7 +220,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             }
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (userRole != "Admin" && appointment.PatientId != userId && appointment.DoctorId != userId)
+            if (userRole != "Admin" && userRole != "SuperAdmin" && appointment.PatientId != userId && appointment.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -250,7 +256,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             }
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (userRole != "Admin" && appointment.PatientId != userId && appointment.DoctorId != userId)
+            if (userRole != "Admin" && userRole != "SuperAdmin" && appointment.PatientId != userId && appointment.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -291,7 +297,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
             }
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (userRole != "Admin" && appointment.DoctorId != userId)
+            if (userRole != "Admin" && userRole != "SuperAdmin" && appointment.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -336,7 +342,8 @@ public record AppointmentRequest(
     Guid DoctorId,
     Guid HospitalId,
     DateTime ScheduledAt,
-    string Reason
+    string Reason,
+    int DurationMinutes = 30
 );
 
 public record RescheduleAppointmentRequest(DateTime NewScheduledAt);

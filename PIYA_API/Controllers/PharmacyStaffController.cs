@@ -35,7 +35,7 @@ public class PharmacyStaffController(
             
             // Check if user has permission to assign staff to this pharmacy
             var canAssign = await _permissionService.HasPermissionAsync(userId, Permissions.StaffAssign, request.PharmacyId.ToString());
-            if (!canAssign && !User.IsInRole("Admin"))
+            if (!canAssign && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
             {
                 return Forbid();
             }
@@ -71,7 +71,7 @@ public class PharmacyStaffController(
             var currentUserId = GetUserId();
             
             var canRemove = await _permissionService.HasPermissionAsync(currentUserId, Permissions.StaffRemove, pharmacyId.ToString());
-            if (!canRemove && !User.IsInRole("Admin"))
+            if (!canRemove && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
             {
                 return Forbid();
             }

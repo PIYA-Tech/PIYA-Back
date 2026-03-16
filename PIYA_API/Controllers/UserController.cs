@@ -376,6 +376,12 @@ public class UserController(IUserService userService, ILogger<UserController> lo
                 return BadRequest(new { message = "Invalid role specified" });
             }
 
+            // Only SuperAdmin can assign the SuperAdmin role
+            if (role == UserRole.SuperAdmin && !User.IsInRole("SuperAdmin"))
+            {
+                return Forbid();
+            }
+
             user.Role = role;
             await _userService.UpdateAsync(user);
 

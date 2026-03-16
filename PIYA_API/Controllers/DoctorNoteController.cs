@@ -111,9 +111,9 @@ public class DoctorNoteController(
             var role = GetUserRole();
 
             // Authorization check
-            bool isAuthorized = role == "Doctor" && note.DoctorId == userId ||
-                               role == "Patient" && note.PatientId == userId ||
-                               role == "Admin";
+            bool isAuthorized = (role == "Doctor" && note.DoctorId == userId) ||
+                               (role == "Patient" && note.PatientId == userId) ||
+                               role == "Admin" || role == "SuperAdmin";
 
             if (!isAuthorized)
             {

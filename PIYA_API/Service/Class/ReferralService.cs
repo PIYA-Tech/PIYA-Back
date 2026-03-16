@@ -388,6 +388,7 @@ public class ReferralService(
             DoctorId = referral.ReferredToDoctorId!.Value,
             HospitalId = hospitalId,
             ScheduledAt = placeholder,
+            DurationMinutes = 30,
             Status = AppointmentStatus.Scheduled,
             Reason = $"Referral: {referral.Reason}",
             CreatedAt = DateTime.UtcNow,

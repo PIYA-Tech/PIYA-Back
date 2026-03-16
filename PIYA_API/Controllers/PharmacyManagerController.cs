@@ -272,14 +272,17 @@ public class PharmacyManagerController(
         int updated = 0, created = 0, skipped = 0;
         var errors = new List<string>();
 
+        // Load the full inventory once — avoids an O(n) DB round-trip per item
+        var existingInventory = (await _inventoryService.GetPharmacyInventoryAsync(pharmacyId))
+            .ToDictionary(i => i.MedicationId);
+
         foreach (var item in items)
         {
             if (item.QuantityInStock < 0) { skipped++; continue; }
 
             try
             {
-                var existing = (await _inventoryService.GetPharmacyInventoryAsync(pharmacyId))
-                    .FirstOrDefault(i => i.MedicationId == item.MedicationId);
+                existingInventory.TryGetValue(item.MedicationId, out var existing);
 
                 if (existing is null)
                 {

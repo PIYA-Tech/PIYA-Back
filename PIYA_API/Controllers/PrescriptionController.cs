@@ -102,8 +102,20 @@ public class PrescriptionController(
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
             // Verify user has access
-            if (userRole != "Admin" && userRole != "Pharmacist" && 
-                prescription.PatientId != userId && prescription.DoctorId != userId)
+            if (userRole == "Admin" || userRole == "SuperAdmin")
+            {
+                // admins can see all
+            }
+            else if (userRole == "Pharmacist")
+            {
+                // Pharmacist may only read prescriptions assigned to their pharmacy
+                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(callerId, activeOnly: true);
+                var pharmacyIds = pharmacyAssignments.Select(a => a.PharmacyId).ToHashSet();
+                if (prescription.FulfilledByPharmacyId == null || !pharmacyIds.Contains(prescription.FulfilledByPharmacyId.Value))
+                    return Forbid();
+            }
+            else if (prescription.PatientId != userId && prescription.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -323,6 +335,18 @@ public class PrescriptionController(
     {
         try
         {
+            // Pharmacists must be staff at the dispensing pharmacy
+            if (!User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
+            {
+                var item = await _prescriptionService.GetPrescriptionItemAsync(itemId);
+                if (item?.Prescription?.FulfilledByPharmacyId is Guid pharmacyId)
+                {
+                    var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                    if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, callerId))
+                        return Forbid();
+                }
+            }
+
             var fulfilledItem = await _prescriptionService.FulfillPrescriptionItemAsync(itemId);
             return Ok(fulfilledItem);
         }
@@ -355,7 +379,7 @@ public class PrescriptionController(
             }
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (userRole != "Admin" && prescription.DoctorId != userId)
+            if (userRole != "Admin" && userRole != "SuperAdmin" && prescription.DoctorId != userId)
             {
                 return Forbid();
             }
@@ -391,8 +415,19 @@ public class PrescriptionController(
             }
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (userRole != "Admin" && userRole != "Pharmacist" && 
-                prescription.PatientId != userId && prescription.DoctorId != userId)
+            if (userRole == "Admin" || userRole == "SuperAdmin")
+            {
+                // admins can check any prescription
+            }
+            else if (userRole == "Pharmacist")
+            {
+                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(callerId, activeOnly: true);
+                var pharmacyIds = pharmacyAssignments.Select(a => a.PharmacyId).ToHashSet();
+                if (prescription.FulfilledByPharmacyId == null || !pharmacyIds.Contains(prescription.FulfilledByPharmacyId.Value))
+                    return Forbid();
+            }
+            else if (prescription.PatientId != userId && prescription.DoctorId != userId)
             {
                 return Forbid();
             }

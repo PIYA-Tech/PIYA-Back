@@ -46,6 +46,11 @@ public interface IPrescriptionService
     /// Mark prescription item as fulfilled
     /// </summary>
     Task<PrescriptionItem> FulfillPrescriptionItemAsync(Guid itemId);
+
+    /// <summary>
+    /// Get a single prescription item with its parent prescription (for authorization checks)
+    /// </summary>
+    Task<PrescriptionItem?> GetPrescriptionItemAsync(Guid itemId);
     
     /// <summary>
     /// Cancel prescription

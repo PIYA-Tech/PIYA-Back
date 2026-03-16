@@ -212,6 +212,11 @@ public class PrescriptionService(
         return prescription;
     }
 
+    public async Task<PrescriptionItem?> GetPrescriptionItemAsync(Guid itemId)
+        => await _context.PrescriptionItems
+            .Include(i => i.Prescription)
+            .FirstOrDefaultAsync(i => i.Id == itemId);
+
     public async Task<PrescriptionItem> FulfillPrescriptionItemAsync(Guid itemId)
     {
         var item = await _context.PrescriptionItems
