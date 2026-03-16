@@ -27,6 +27,10 @@ namespace PIYA_API.Migrations
                 oldClrType: typeof(DateTime),
                 oldType: "timestamp with time zone");
 
+            // Delete orphaned token rows with no user (NULL UserId) before making the column NOT NULL.
+            // Without this, EF's UPDATE would set all NULLs to Guid.Empty and violate the unique index.
+            migrationBuilder.Sql(@"DELETE FROM ""Tokens"" WHERE ""UserId"" IS NULL;");
+
             migrationBuilder.AlterColumn<Guid>(
                 name: "UserId",
                 table: "Tokens",
