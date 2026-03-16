@@ -42,9 +42,9 @@ public class CalendarService(
             startTime: appointment.ScheduledAt,
             endTime: endTime,
             location: appointment.Hospital?.Name ?? "Hospital Location",
-            organizerEmail: appointment.Doctor?.Email ?? "doctor@piya.health",
+            organizerEmail: appointment.Doctor?.Email ?? "doctor@piya.life",
             organizerName: doctorName,
-            attendeeEmail: appointment.Patient?.Email ?? "patient@piya.health",
+            attendeeEmail: appointment.Patient?.Email ?? "patient@piya.life",
             attendeeName: patientName
         );
     }

@@ -170,9 +170,13 @@ builder.Services.AddDbContextPool<PharmacyApiDbContext>(options =>
 }, poolSize: 128);
 
 // Configure CORS
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+// Supports both "Cors:AllowedOrigins" (new canonical) and "Security:AllowedOrigins" (legacy fallback)
+// so existing appsettings.Production.json files don't need an immediate change.
+var allowedOrigins =
+    builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? builder.Configuration.GetSection("Security:AllowedOrigins").Get<string[]>()
     ?? throw new InvalidOperationException(
-        "Cors:AllowedOrigins configuration is required. " +
+        "Cors:AllowedOrigins (or legacy Security:AllowedOrigins) configuration is required. " +
         "Set it via appsettings.json or the CORS__ALLOWEDORIGINS environment variable as a JSON array of allowed origins.");
 
 builder.Services.AddCors(options =>

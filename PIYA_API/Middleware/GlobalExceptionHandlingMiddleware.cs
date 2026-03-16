@@ -36,50 +36,51 @@ public class GlobalExceptionHandlingMiddleware(
             Instance = context.Request.Path
         };
 
+        // In development expose full detail; in production return only safe generic messages.
+        var isDevelopment = context.RequestServices
+            .GetService<IWebHostEnvironment>()?.IsDevelopment() == true;
+
         switch (exception)
         {
             case UnauthorizedAccessException:
                 problemDetails.Status = (int)HttpStatusCode.Unauthorized;
-                problemDetails.Title = "Unauthorized";
-                problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Unauthorized";
+                problemDetails.Detail = isDevelopment ? exception.Message : "Access denied.";
                 break;
 
             case ArgumentNullException:
             case ArgumentException:
                 problemDetails.Status = (int)HttpStatusCode.BadRequest;
-                problemDetails.Title = "Bad Request";
-                problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Bad Request";
+                problemDetails.Detail = isDevelopment ? exception.Message : "The request is invalid.";
                 break;
 
             case KeyNotFoundException:
                 problemDetails.Status = (int)HttpStatusCode.NotFound;
-                problemDetails.Title = "Not Found";
-                problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Not Found";
+                problemDetails.Detail = isDevelopment ? exception.Message : "The requested resource was not found.";
                 break;
 
             case InvalidOperationException:
                 problemDetails.Status = (int)HttpStatusCode.BadRequest;
-                problemDetails.Title = "Invalid Operation";
-                problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Invalid Operation";
+                problemDetails.Detail = isDevelopment ? exception.Message : "The operation could not be completed.";
                 break;
 
             case FileNotFoundException:
                 problemDetails.Status = (int)HttpStatusCode.NotFound;
-                problemDetails.Title = "File Not Found";
-                problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Not Found";
+                problemDetails.Detail = isDevelopment ? exception.Message : "The requested resource was not found.";
                 break;
 
             default:
                 problemDetails.Status = (int)HttpStatusCode.InternalServerError;
-                problemDetails.Title = "Internal Server Error";
-                problemDetails.Detail = "An unexpected error occurred. Please try again later.";
-                
-                // In development, include exception details
-                if (context.RequestServices.GetService<IWebHostEnvironment>()?.IsDevelopment() == true)
-                {
-                    problemDetails.Detail = exception.Message;
+                problemDetails.Title  = "Internal Server Error";
+                problemDetails.Detail = isDevelopment
+                    ? exception.Message
+                    : "An unexpected error occurred. Please try again later.";
+                if (isDevelopment)
                     problemDetails.Extensions["stackTrace"] = exception.StackTrace;
-                }
                 break;
         }
 

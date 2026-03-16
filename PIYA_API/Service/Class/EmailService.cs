@@ -31,7 +31,7 @@ public class EmailService : IEmailService
         _isEnabled    = configuration.GetValue<bool>("ExternalApis:EmailService:Enabled");
         _smtpHost     = _configuration["ExternalApis:EmailService:SmtpHost"]     ?? "smtp.gmail.com";
         _smtpPort     = int.Parse(_configuration["ExternalApis:EmailService:SmtpPort"] ?? "587");
-        _fromEmail    = _configuration["ExternalApis:EmailService:FromEmail"]     ?? "noreply@piya.health";
+        _fromEmail    = _configuration["ExternalApis:EmailService:FromEmail"]     ?? "noreply@piya.life";
         _fromName     = _configuration["ExternalApis:EmailService:FromName"]      ?? "PIYA Health";
         _replyToEmail = _configuration["ExternalApis:EmailService:ReplyToEmail"];
         _smtpUsername = _configuration["ExternalApis:EmailService:SmtpUsername"]  ?? "";

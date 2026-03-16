@@ -7,6 +7,8 @@
 .editorconfig
 appsettings.Development.json
 appsettings.json
+appsettings.Production.json
+appsettings.LoadTest.json
 
 # User-specific files
 *.rsuser

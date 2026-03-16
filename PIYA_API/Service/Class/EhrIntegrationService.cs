@@ -55,7 +55,7 @@ public class EhrIntegrationService : IEhrIntegrationService
                 [
                     new FhirIdentifier
                     {
-                        System = "https://piya.healthcare/patient-id",
+                        System = "https://piya.lifecare/patient-id",
                         Value = user.Id.ToString(),
                         Type = "MR" // Medical Record Number
                     }
@@ -252,7 +252,7 @@ public class EhrIntegrationService : IEhrIntegrationService
                     [
                         new FhirCoding
                         {
-                            System = "https://piya.healthcare/medication",
+                            System = "https://piya.lifecare/medication",
                             Code = firstItem.MedicationId.ToString(),
                             Display = firstItem.Medication.GenericName
                         }
