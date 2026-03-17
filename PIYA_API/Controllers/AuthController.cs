@@ -247,6 +247,14 @@ public class AuthController(
             // in memory (not localStorage) to eliminate XSS token-theft risk.
             SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
+            // Detect mobile clients (React Native / Expo / Swift) — they cannot access
+            // HttpOnly cookies, so the refresh token must also be in the response body
+            // for them to persist it in secure platform storage (Keychain / SecureStore).
+            var isMobileClient = userAgent.Contains("Expo") ||
+                                 userAgent.Contains("okhttp") ||
+                                 userAgent.Contains("CFNetwork") ||
+                                 userAgent.Contains("Darwin");
+
             return Ok(new AuthResponse
             {
                 UserId = user.Id,
@@ -256,11 +264,8 @@ public class AuthController(
                 LastName = user.LastName,
                 Role = user.Role.ToString(),
                 AccessToken = tokenResponse.AccessToken,
-                // RefreshToken is intentionally NOT included in the body — it is set as
-                // an HttpOnly cookie above. Mobile clients that cannot use cookies must
-                // call POST /api/auth/refresh using the cookie or store the token securely
-                // via their platform keychain, never in plain memory/storage.
-                RefreshToken = null,
+                // Return refresh token in body for mobile clients; browser clients use the HttpOnly cookie.
+                RefreshToken = isMobileClient ? tokenResponse.RefreshToken : null,
                 ExpiresAt = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified
             });
