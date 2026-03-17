@@ -16,6 +16,7 @@ public class AuthController(
     IAuditService auditService,
     ITwoFactorAuthService twoFactorService,
     ISecurityHardeningService securityHardeningService,
+    IFcmService fcmService,
     IOptions<SecurityOptions> securityOptions,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -25,6 +26,7 @@ public class AuthController(
     private readonly IAuditService _auditService = auditService;
     private readonly ITwoFactorAuthService _twoFactorService = twoFactorService;
     private readonly ISecurityHardeningService _securityHardeningService = securityHardeningService;
+    private readonly IFcmService _fcmService = fcmService;
     private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<AuthController> _logger = logger;
 
@@ -212,31 +214,72 @@ public class AuthController(
             // Successful login — clear any prior failed attempts
             await _securityHardeningService.ResetFailedLoginAttemptsAsync(identifier);
 
+            // Detect mobile clients up-front (used for both 2FA and token response)
+            var isMobileClient = userAgent.Contains("Expo") ||
+                                 userAgent.Contains("okhttp") ||
+                                 userAgent.Contains("CFNetwork") ||
+                                 userAgent.Contains("Darwin");
+
             // Check if 2FA is enabled
             var requires2FA = await _twoFactorService.IsTwoFactorEnabledAsync(user.Id);
             if (requires2FA)
             {
-                // Issue a server-side challenge token — the client must present it when calling /2fa/verify.
-                // This prevents any anonymous caller from verifying codes for arbitrary user IDs.
+                // Issue a server-side challenge token — the client must present it when calling /login/complete-2fa.
                 var challengeToken = await _twoFactorService.IssueChallenge(user.Id);
+
+                // If the user has a trusted mobile 2FA device, send the OTP via push notification.
+                // Otherwise fall back to TOTP / SMS / Email depending on their configured method.
+                var hasTrustedDevice = await _twoFactorService.HasTrusted2FADeviceAsync(user.Id);
+                string twoFADelivery = "totp";
+                if (hasTrustedDevice)
+                {
+                    await _twoFactorService.SendPush2FACodeAsync(user.Id);
+                    twoFADelivery = "push";
+                }
 
                 await _auditService.LogSecurityEventAsync(
                     "LoginPending2FA", user.Id, ipAddress, userAgent, true,
-                    "Login successful, awaiting 2FA verification");
+                    $"Login successful, awaiting 2FA verification (delivery: {twoFADelivery})");
 
                 return Ok(new
                 {
                     requires2FA = true,
                     userId = user.Id,
                     challengeToken,
-                    message = "Please provide 2FA code"
+                    twoFADelivery, // "push" | "totp" — lets the client show the right UI
+                    message = hasTrustedDevice
+                        ? "A verification code has been sent to your trusted device."
+                        : "Please provide your authenticator code."
                 });
             }
 
             var tokenResponse = await _jwtService.GenerateSecurityToken(
-                user.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
+                user.Username, isMobileClient ? "Mobile" : "Web");
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
+
+            // If this is a mobile login and the request included an FCM token, update LastLoginAt.
+            // Also auto-register the device as the trusted 2FA device on first mobile login.
+            if (!string.IsNullOrEmpty(request.FcmToken))
+            {
+                // Ensure device is registered (upsert)
+                await _fcmService.RegisterDeviceTokenAsync(
+                    user.Id, request.FcmToken, "iOS",
+                    deviceModel: request.DeviceName,
+                    deviceName: request.DeviceName);
+
+                await _fcmService.UpdateDeviceLastLoginAsync(user.Id, request.FcmToken);
+
+                // If the user has no trusted 2FA device yet, promote this one automatically
+                var hasTrusted = await _twoFactorService.HasTrusted2FADeviceAsync(user.Id);
+                if (!hasTrusted)
+                {
+                    var devices = await _fcmService.GetUserDevicesAsync(user.Id);
+                    var thisDevice = devices.FirstOrDefault(d => d.Token == request.FcmToken);
+                    if (thisDevice != null)
+                        await _fcmService.TrustDeviceFor2FAAsync(user.Id, thisDevice.Id);
+                }
+            }
 
             await _auditService.LogSecurityEventAsync(
                 "LoginSuccess", user.Id, ipAddress, userAgent, true,
@@ -246,14 +289,6 @@ public class AuthController(
             // The access token is returned in the body only — the client must store it
             // in memory (not localStorage) to eliminate XSS token-theft risk.
             SetRefreshTokenCookie(tokenResponse.RefreshToken);
-
-            // Detect mobile clients (React Native / Expo / Swift) — they cannot access
-            // HttpOnly cookies, so the refresh token must also be in the response body
-            // for them to persist it in secure platform storage (Keychain / SecureStore).
-            var isMobileClient = userAgent.Contains("Expo") ||
-                                 userAgent.Contains("okhttp") ||
-                                 userAgent.Contains("CFNetwork") ||
-                                 userAgent.Contains("Darwin");
 
             return Ok(new AuthResponse
             {
@@ -575,6 +610,15 @@ public class LoginRequest
     public string? Username { get; set; }
     public string? Email { get; set; }
     public required string Password { get; set; }
+    /// <summary>
+    /// Optional FCM device token — when present, LastLoginAt is updated on the device
+    /// and the device becomes eligible to be promoted to a trusted 2FA device.
+    /// </summary>
+    public string? FcmToken { get; set; }
+    /// <summary>
+    /// Human-readable device name (e.g. "iPhone 15 Pro") shown in the Active Devices list.
+    /// </summary>
+    public string? DeviceName { get; set; }
 }
 
 public class Complete2FARequest

@@ -63,4 +63,17 @@ public interface ITwoFactorAuthService
     /// and has not yet expired, then immediately removes it (single-use).
     /// </summary>
     Task<bool> ConsumeChallenge(Guid userId, string challengeToken);
+
+    /// <summary>
+    /// Generate a 6-digit OTP and send it as a push notification to all trusted
+    /// 2FA devices for <paramref name="userId"/>.
+    /// Returns true when at least one device was reached.
+    /// </summary>
+    Task<bool> SendPush2FACodeAsync(Guid userId);
+
+    /// <summary>
+    /// Returns true when the user has at least one active trusted-2FA device
+    /// registered (i.e., push-notification 2FA is available for them).
+    /// </summary>
+    Task<bool> HasTrusted2FADeviceAsync(Guid userId);
 }

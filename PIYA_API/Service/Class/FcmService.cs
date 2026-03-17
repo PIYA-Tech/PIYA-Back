@@ -149,7 +149,7 @@ public class FcmService : IFcmService
         return await SendToMultipleAsync(deviceTokens, title, body, data);
     }
 
-    public async Task<bool> RegisterDeviceTokenAsync(Guid userId, string token, string platform, string? deviceModel = null, string? appVersion = null)
+    public async Task<bool> RegisterDeviceTokenAsync(Guid userId, string token, string platform, string? deviceModel = null, string? appVersion = null, string? deviceName = null)
     {
         // Check if token already exists
         var existingToken = await _context.DeviceTokens
@@ -161,13 +161,13 @@ public class FcmService : IFcmService
             existingToken.UserId = userId;
             existingToken.Platform = platform;
             existingToken.DeviceModel = deviceModel;
+            existingToken.DeviceName = deviceName ?? existingToken.DeviceName;
             existingToken.AppVersion = appVersion;
             existingToken.IsActive = true;
             existingToken.LastUsedAt = DateTime.UtcNow;
         }
         else
         {
-            // Create new token
             var deviceToken = new DeviceToken
             {
                 Id = Guid.NewGuid(),
@@ -175,6 +175,7 @@ public class FcmService : IFcmService
                 Token = token,
                 Platform = platform,
                 DeviceModel = deviceModel,
+                DeviceName = deviceName,
                 AppVersion = appVersion,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
@@ -233,6 +234,56 @@ public class FcmService : IFcmService
             deviceToken.IsActive = false;
             await _context.SaveChangesAsync();
             Console.WriteLine($"Deactivated invalid device token: {token}");
+        }
+    }
+
+    public async Task<List<DeviceToken>> GetUserDevicesAsync(Guid userId)
+    {
+        return await _context.DeviceTokens
+            .Where(dt => dt.UserId == userId && dt.IsActive)
+            .OrderByDescending(dt => dt.LastLoginAt ?? dt.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<bool> RemoveDeviceAsync(Guid userId, Guid deviceId)
+    {
+        var device = await _context.DeviceTokens
+            .FirstOrDefaultAsync(dt => dt.Id == deviceId && dt.UserId == userId);
+
+        if (device == null) return false;
+
+        device.IsActive = false;
+        device.IsTrusted2FADevice = false;
+        await _context.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> TrustDeviceFor2FAAsync(Guid userId, Guid deviceId)
+    {
+        // Untrust all other devices for this user first (one trusted 2FA device at a time)
+        var allDevices = await _context.DeviceTokens
+            .Where(dt => dt.UserId == userId && dt.IsActive)
+            .ToListAsync();
+
+        foreach (var d in allDevices)
+            d.IsTrusted2FADevice = (d.Id == deviceId);
+
+        await _context.SaveChangesAsync();
+
+        var trusted = allDevices.FirstOrDefault(d => d.Id == deviceId);
+        return trusted != null;
+    }
+
+    public async Task UpdateDeviceLastLoginAsync(Guid userId, string fcmToken)
+    {
+        var device = await _context.DeviceTokens
+            .FirstOrDefaultAsync(dt => dt.UserId == userId && dt.Token == fcmToken && dt.IsActive);
+
+        if (device != null)
+        {
+            device.LastLoginAt = DateTime.UtcNow;
+            device.LastUsedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
         }
     }
 }

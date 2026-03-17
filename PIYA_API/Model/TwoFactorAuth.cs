@@ -70,7 +70,8 @@ public class TwoFactorAuth
 
 public enum TwoFactorMethod
 {
-    TOTP = 1,    // Time-based One-Time Password (Google Authenticator, Authy)
-    SMS = 2,     // SMS code
-    Email = 3    // Email code
+    TOTP = 1,              // Time-based One-Time Password (Google Authenticator, Authy)
+    SMS = 2,               // SMS code
+    Email = 3,             // Email code
+    PushNotification = 4   // Push notification to a trusted mobile device
 }

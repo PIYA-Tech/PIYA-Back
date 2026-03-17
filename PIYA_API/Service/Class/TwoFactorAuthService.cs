@@ -11,11 +11,13 @@ public class TwoFactorAuthService(
     PharmacyApiDbContext context,
     IPasswordHasher passwordHasher,
     IDistributedCacheWrapper cache,
+    IFcmService fcmService,
     ILogger<TwoFactorAuthService> logger) : ITwoFactorAuthService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IPasswordHasher _passwordHasher = passwordHasher;
     private readonly IDistributedCacheWrapper _cache = cache;
+    private readonly IFcmService _fcmService = fcmService;
     private readonly ILogger<TwoFactorAuthService> _logger = logger;
 
     // Cache key helpers — one-time OTP codes and login challenge tokens.
@@ -361,5 +363,50 @@ public class TwoFactorAuthService(
         // Single-use: remove immediately after successful validation
         await _cache.RemoveAsync(ChallengeKey(userId));
         return true;
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> HasTrusted2FADeviceAsync(Guid userId)
+    {
+        return await _context.DeviceTokens
+            .AnyAsync(d => d.UserId == userId && d.IsActive && d.IsTrusted2FADevice);
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> SendPush2FACodeAsync(Guid userId)
+    {
+        // Generate a 6-digit OTP and store it in cache (5-minute TTL, same as other methods)
+        var code = GenerateNumericCode();
+        await _cache.SetStringAsync(OtpKey(userId), code, TimeSpan.FromMinutes(5));
+
+        // Fetch trusted 2FA device tokens for this user
+        var deviceTokens = await _context.DeviceTokens
+            .Where(d => d.UserId == userId && d.IsActive && d.IsTrusted2FADevice)
+            .Select(d => d.Token)
+            .ToListAsync();
+
+        if (deviceTokens.Count == 0)
+        {
+            _logger.LogWarning("No trusted 2FA devices found for user {UserId}", userId);
+            return false;
+        }
+
+        var data = new Dictionary<string, string>
+        {
+            ["type"] = "2fa_code",
+            ["code"] = code,
+            ["expiresInSeconds"] = "300"
+        };
+
+        var sent = await _fcmService.SendToMultipleAsync(
+            deviceTokens,
+            "PIYA Login Verification",
+            $"Your login code is: {code}\nExpires in 5 minutes. Never share this code.",
+            data);
+
+        _logger.LogInformation("Push 2FA code sent to {Count}/{Total} devices for user {UserId}",
+            sent, deviceTokens.Count, userId);
+
+        return sent > 0;
     }
 }
