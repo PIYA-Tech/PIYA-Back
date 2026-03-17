@@ -1,6 +1,3 @@
-using FirebaseAdmin;
-using FirebaseAdmin.Messaging;
-using Google.Apis.Auth.OAuth2;
 using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
 using PIYA_API.Model;
@@ -8,181 +5,73 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
+/// <summary>
+/// Device-token management service. Push notifications via Firebase are not used;
+/// this service handles device registration, 2FA trust and last-login tracking only.
+/// </summary>
 public class FcmService : IFcmService
 {
     private readonly PharmacyApiDbContext _context;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<FcmService> _logger;
-    private readonly FirebaseMessaging? _messaging;
-    private readonly bool _isEnabled;
 
-    public FcmService(PharmacyApiDbContext context, IConfiguration configuration, ILogger<FcmService> logger)
+    public FcmService(PharmacyApiDbContext context, ILogger<FcmService> logger)
     {
         _context = context;
-        _configuration = configuration;
         _logger = logger;
-
-        // Initialize Firebase Admin SDK
-        try
-        {
-            var credentialsPath = _configuration["Firebase:CredentialsPath"];
-            
-            if (!string.IsNullOrEmpty(credentialsPath) && File.Exists(credentialsPath))
-            {
-                if (FirebaseApp.DefaultInstance == null)
-                {
-                    FirebaseApp.Create(new AppOptions()
-                    {
-                        Credential = GoogleCredential.FromFile(credentialsPath)
-                    });
-                }
-                
-                _messaging = FirebaseMessaging.DefaultInstance;
-                _isEnabled = true;
-                _logger.LogInformation("Firebase Cloud Messaging initialized successfully");
-            }
-            else
-            {
-                _logger.LogWarning("Firebase credentials not found at '{Path}'. FCM is disabled", credentialsPath);
-                _isEnabled = false;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to initialize Firebase. FCM is disabled");
-            _isEnabled = false;
-        }
     }
 
-    public async Task<bool> SendNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null)
+    // Push notification methods - no-op (Firebase not configured)
+
+    public Task<bool> SendNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null)
     {
-        if (!_isEnabled || _messaging == null)
-        {
-            _logger.LogDebug("FCM is not enabled. Notification not sent");
-            return false;
-        }
-
-        try
-        {
-            var message = new Message
-            {
-                Token = deviceToken,
-                Notification = new Notification
-                {
-                    Title = title,
-                    Body = body
-                },
-                Data = data
-            };
-
-            var response = await _messaging.SendAsync(message);
-            _logger.LogInformation("FCM message sent: {Response}", response);
-            
-            // Update last used timestamp
-            await UpdateTokenLastUsedAsync(deviceToken);
-            
-            return true;
-        }
-        catch (FirebaseMessagingException ex)
-        {
-            _logger.LogWarning(ex, "Failed to send FCM message to token");
-            
-            // If token is invalid, deactivate it
-            if (ex.MessagingErrorCode == MessagingErrorCode.Unregistered || 
-                ex.MessagingErrorCode == MessagingErrorCode.InvalidArgument)
-            {
-                await DeactivateTokenAsync(deviceToken);
-            }
-            
-            return false;
-        }
+        _logger.LogDebug("Push notifications are disabled. Notification '{Title}' not sent", title);
+        return Task.FromResult(false);
     }
 
-    public async Task<int> SendToMultipleAsync(List<string> deviceTokens, string title, string body, Dictionary<string, string>? data = null)
+    public Task<int> SendToMultipleAsync(List<string> deviceTokens, string title, string body, Dictionary<string, string>? data = null)
     {
-        if (!_isEnabled || _messaging == null || deviceTokens.Count == 0)
-        {
-            return 0;
-        }
-
-        try
-        {
-            var message = new MulticastMessage
-            {
-                Tokens = deviceTokens,
-                Notification = new Notification
-                {
-                    Title = title,
-                    Body = body
-                },
-                Data = data
-            };
-
-            var response = await _messaging.SendEachForMulticastAsync(message);
-            _logger.LogInformation("FCM multicast: {Success}/{Total} messages sent", response.SuccessCount, deviceTokens.Count);
-            
-            // Update last used timestamp for successful tokens
-            foreach (var token in deviceTokens)
-            {
-                await UpdateTokenLastUsedAsync(token);
-            }
-            
-            return response.SuccessCount;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send multicast FCM message");
-            return 0;
-        }
+        _logger.LogDebug("Push notifications are disabled. Multicast '{Title}' not sent", title);
+        return Task.FromResult(0);
     }
 
     public async Task<int> SendToUserAsync(Guid userId, string title, string body, Dictionary<string, string>? data = null)
     {
-        var deviceTokens = await GetUserDeviceTokensAsync(userId);
-        
-        if (deviceTokens.Count == 0)
-        {
-            Console.WriteLine($"No active device tokens found for user {userId}");
-            return 0;
-        }
-
-        return await SendToMultipleAsync(deviceTokens, title, body, data);
+        var tokens = await GetUserDeviceTokensAsync(userId);
+        _logger.LogDebug("Push notifications are disabled. Skipped {Count} device(s) for user {UserId}", tokens.Count, userId);
+        return 0;
     }
+
+    // Device token DB operations
 
     public async Task<bool> RegisterDeviceTokenAsync(Guid userId, string token, string platform, string? deviceModel = null, string? appVersion = null, string? deviceName = null)
     {
-        // Check if token already exists
-        var existingToken = await _context.DeviceTokens
-            .FirstOrDefaultAsync(dt => dt.Token == token);
+        var existing = await _context.DeviceTokens.FirstOrDefaultAsync(dt => dt.Token == token);
 
-        if (existingToken != null)
+        if (existing != null)
         {
-            // Update existing token
-            existingToken.UserId = userId;
-            existingToken.Platform = platform;
-            existingToken.DeviceModel = deviceModel;
-            existingToken.DeviceName = deviceName ?? existingToken.DeviceName;
-            existingToken.AppVersion = appVersion;
-            existingToken.IsActive = true;
-            existingToken.LastUsedAt = DateTime.UtcNow;
+            existing.UserId      = userId;
+            existing.Platform    = platform;
+            existing.DeviceModel = deviceModel;
+            existing.DeviceName  = deviceName ?? existing.DeviceName;
+            existing.AppVersion  = appVersion;
+            existing.IsActive    = true;
+            existing.LastUsedAt  = DateTime.UtcNow;
         }
         else
         {
-            var deviceToken = new DeviceToken
+            _context.DeviceTokens.Add(new DeviceToken
             {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                Token = token,
-                Platform = platform,
+                Id          = Guid.NewGuid(),
+                UserId      = userId,
+                Token       = token,
+                Platform    = platform,
                 DeviceModel = deviceModel,
-                DeviceName = deviceName,
-                AppVersion = appVersion,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow,
-                LastUsedAt = DateTime.UtcNow
-            };
-
-            _context.DeviceTokens.Add(deviceToken);
+                DeviceName  = deviceName,
+                AppVersion  = appVersion,
+                IsActive    = true,
+                CreatedAt   = DateTime.UtcNow,
+                LastUsedAt  = DateTime.UtcNow,
+            });
         }
 
         await _context.SaveChangesAsync();
@@ -191,59 +80,25 @@ public class FcmService : IFcmService
 
     public async Task<bool> UnregisterDeviceTokenAsync(string token)
     {
-        var deviceToken = await _context.DeviceTokens
-            .FirstOrDefaultAsync(dt => dt.Token == token);
-
-        if (deviceToken == null)
-        {
-            return false;
-        }
+        var deviceToken = await _context.DeviceTokens.FirstOrDefaultAsync(dt => dt.Token == token);
+        if (deviceToken == null) return false;
 
         deviceToken.IsActive = false;
         await _context.SaveChangesAsync();
         return true;
     }
 
-    public async Task<List<string>> GetUserDeviceTokensAsync(Guid userId)
-    {
-        return await _context.DeviceTokens
+    public Task<List<string>> GetUserDeviceTokensAsync(Guid userId) =>
+        _context.DeviceTokens
             .Where(dt => dt.UserId == userId && dt.IsActive)
             .Select(dt => dt.Token)
             .ToListAsync();
-    }
 
-    private async Task UpdateTokenLastUsedAsync(string token)
-    {
-        var deviceToken = await _context.DeviceTokens
-            .FirstOrDefaultAsync(dt => dt.Token == token);
-
-        if (deviceToken != null)
-        {
-            deviceToken.LastUsedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-        }
-    }
-
-    private async Task DeactivateTokenAsync(string token)
-    {
-        var deviceToken = await _context.DeviceTokens
-            .FirstOrDefaultAsync(dt => dt.Token == token);
-
-        if (deviceToken != null)
-        {
-            deviceToken.IsActive = false;
-            await _context.SaveChangesAsync();
-            Console.WriteLine($"Deactivated invalid device token: {token}");
-        }
-    }
-
-    public async Task<List<DeviceToken>> GetUserDevicesAsync(Guid userId)
-    {
-        return await _context.DeviceTokens
+    public Task<List<DeviceToken>> GetUserDevicesAsync(Guid userId) =>
+        _context.DeviceTokens
             .Where(dt => dt.UserId == userId && dt.IsActive)
             .OrderByDescending(dt => dt.LastLoginAt ?? dt.CreatedAt)
             .ToListAsync();
-    }
 
     public async Task<bool> RemoveDeviceAsync(Guid userId, Guid deviceId)
     {
@@ -252,7 +107,7 @@ public class FcmService : IFcmService
 
         if (device == null) return false;
 
-        device.IsActive = false;
+        device.IsActive           = false;
         device.IsTrusted2FADevice = false;
         await _context.SaveChangesAsync();
         return true;
@@ -260,7 +115,6 @@ public class FcmService : IFcmService
 
     public async Task<bool> TrustDeviceFor2FAAsync(Guid userId, Guid deviceId)
     {
-        // Untrust all other devices for this user first (one trusted 2FA device at a time)
         var allDevices = await _context.DeviceTokens
             .Where(dt => dt.UserId == userId && dt.IsActive)
             .ToListAsync();
@@ -269,9 +123,7 @@ public class FcmService : IFcmService
             d.IsTrusted2FADevice = (d.Id == deviceId);
 
         await _context.SaveChangesAsync();
-
-        var trusted = allDevices.FirstOrDefault(d => d.Id == deviceId);
-        return trusted != null;
+        return allDevices.Any(d => d.Id == deviceId);
     }
 
     public async Task UpdateDeviceLastLoginAsync(Guid userId, string fcmToken)
@@ -282,7 +134,7 @@ public class FcmService : IFcmService
         if (device != null)
         {
             device.LastLoginAt = DateTime.UtcNow;
-            device.LastUsedAt = DateTime.UtcNow;
+            device.LastUsedAt  = DateTime.UtcNow;
             await _context.SaveChangesAsync();
         }
     }
