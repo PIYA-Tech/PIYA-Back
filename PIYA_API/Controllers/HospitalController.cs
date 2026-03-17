@@ -182,6 +182,7 @@ public class HospitalController(
         Departments  = h.Departments,
         IsActive     = h.IsActive,
         OperatingHours = h.OperatingHours,
+        DirectorId   = h.DirectorId,
         Coordinates  = h.Coordinates is { } c
             ? new CoordinatesDto { Lat = c.Latitude, Lng = c.Longitude }
             : null,

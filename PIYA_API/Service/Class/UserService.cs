@@ -173,6 +173,13 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
             .ToListAsync();
     }
 
+    public async Task<List<User>> GetAllUsersAsync()
+    {
+        return await _dbContext.Users
+            .OrderBy(u => u.CreatedAt)
+            .ToListAsync();
+    }
+
     public async Task SetActiveAsync(Guid id, bool isActive)
     {
         var user = await _dbContext.Users.FindAsync(id)

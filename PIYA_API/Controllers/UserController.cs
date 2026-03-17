@@ -30,15 +30,8 @@ public class UserController(IUserService userService, ILogger<UserController> lo
     {
         try
         {
-            // Fetch all known roles and union the results
-            var roles = Enum.GetValues<UserRole>();
-            var all = new List<User>();
-            foreach (var role in roles)
-                all.AddRange(await _userService.GetUsersByRoleAsync(role));
-
-            var distinct = all.DistinctBy(u => u.Id).OrderBy(u => u.CreatedAt);
-
-            return Ok(distinct.Select(u => new UserResponse
+            var users = await _userService.GetAllUsersAsync();
+            return Ok(users.Select(u => new UserResponse
             {
                 Id          = u.Id,
                 Username    = u.Username,

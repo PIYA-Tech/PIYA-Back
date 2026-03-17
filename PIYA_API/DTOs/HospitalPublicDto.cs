@@ -18,4 +18,8 @@ public class HospitalPublicDto
     public bool IsActive { get; set; }
     public CoordinatesDto? Coordinates { get; set; }
     public string? OperatingHours { get; set; }
+    /// <summary>
+    /// The assigned HospitalDirector user ID. Null when no director has been assigned.
+    /// </summary>
+    public Guid? DirectorId { get; set; }
 }
