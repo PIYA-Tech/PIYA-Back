@@ -21,20 +21,33 @@ public class SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityH
         var ipAddress = GetClientIpAddress(context);
         var userAgent = context.Request.Headers.UserAgent.ToString();
 
-        // Check if IP is blocked
-        if (await securityService.IsIpBlockedAsync(ipAddress))
+        // Auth endpoints must never be blocked by IP — they are the recovery path.
+        // POST /api/auth/login, /register, /refresh, /login/complete-2fa etc. are exempt.
+        var path = context.Request.Path.Value ?? "";
+        var isAuthEndpoint = path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
+                          || path.StartsWith("/api/passwordreset/", StringComparison.OrdinalIgnoreCase)
+                          || path.StartsWith("/api/emailverification/", StringComparison.OrdinalIgnoreCase);
+
+        if (!isAuthEndpoint)
         {
-            _logger.LogWarning("Blocked request from IP: {IpAddress}", ipAddress);
-            context.Response.StatusCode = 403;
-            await context.Response.WriteAsJsonAsync(new { error = "Access forbidden" });
-            return;
+            // Check if IP is blocked
+            if (await securityService.IsIpBlockedAsync(ipAddress))
+            {
+                _logger.LogWarning("Blocked request from IP: {IpAddress}", ipAddress);
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { error = "Access forbidden" });
+                return;
+            }
         }
 
         // Add security headers
         AddSecurityHeaders(context);
 
-        // Check for common attack patterns in query strings and form data
-        if (await DetectAttackPatterns(context, securityService, ipAddress))
+        // Check for common attack patterns in query strings and form data.
+        // Auth endpoints are excluded — passwords with special characters would
+        // trigger false-positive SQL / XSS detections, and the auth layer already
+        // validates and hashes credentials independently.
+        if (!isAuthEndpoint && await DetectAttackPatterns(context, securityService, ipAddress))
         {
             return; // Request blocked
         }
