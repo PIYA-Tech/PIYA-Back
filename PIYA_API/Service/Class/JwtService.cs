@@ -25,7 +25,6 @@ public class JwtService(
     private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<JwtService> _logger = logger;
 
-    private const string DefaultSecretKey = "PIYA_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION_MIN_32_CHARS";
     private const string DefaultIssuer = "PIYA_API";
     private const string DefaultAudience = "PIYA_Clients";
     private const int DefaultExpirationMinutes = 15;
@@ -44,7 +43,14 @@ public class JwtService(
 
     private (string secret, string issuer, string audience, int expiryMinutes) GetJwtConfig()
     {
-        var secret = _configuration["Jwt:SecretKey"] ?? DefaultSecretKey;
+        var secret = _configuration["Jwt:SecretKey"];
+        // Fail fast rather than silently using an insecure default.
+        // Startup validation in Program.cs (AddOptions + ValidateOnStart) should catch
+        // this before any request reaches here; this guard is a defence-in-depth backstop.
+        if (string.IsNullOrWhiteSpace(secret) || secret.Contains("CHANGE", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Jwt:SecretKey is not configured or still contains the placeholder value. " +
+                "Set a strong random key (minimum 32 chars) via environment variable or secrets.");
         var issuer = _configuration["Jwt:Issuer"] ?? DefaultIssuer;
         var audience = _configuration["Jwt:Audience"] ?? DefaultAudience;
         var expiry = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var m) ? m : DefaultExpirationMinutes;
@@ -126,7 +132,10 @@ public class JwtService(
             {
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
-                AccessToken = jwtToken,
+                // Do NOT store the raw JWT — it is a bearer secret and should never be
+                // persisted to the database. Revocation is handled via the jti blocklist
+                // in the distributed cache (RevokeAccessTokenAsync / IsTokenRevokedAsync).
+                AccessToken = string.Empty,
                 // Store SHA-256 hash — raw token never persisted to DB
                 RefreshToken = refreshTokenHash,
                 Family = Guid.NewGuid(),        // each new login starts a fresh family
@@ -222,7 +231,7 @@ public class JwtService(
         // Keeping CreationTime fixed enforces an absolute 7-day expiry window
         // regardless of how frequently the token is refreshed.
         tokenEntity.UserId = user.Id;
-        tokenEntity.AccessToken = newAccessToken;
+        tokenEntity.AccessToken = string.Empty; // never store the raw JWT in DB
         tokenEntity.RefreshToken = newRefreshHash;
         tokenEntity.ExpiresAt = newExpiry;
         // CreationTime intentionally NOT updated — prevents perpetual sliding window

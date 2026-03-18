@@ -108,11 +108,21 @@ public class PrescriptionController(
             }
             else if (userRole == "Pharmacist")
             {
-                // Pharmacist may only read prescriptions assigned to their pharmacy
+                // Pharmacists need to read Active/PartiallyFulfilled prescriptions in order
+                // to fulfil them — blocking reads on unfulfilled Rx (FulfilledByPharmacyId == null)
+                // created a Catch-22 that made the dispensing flow impossible.
+                // Allow read if: (a) the prescription is Active or PartiallyFulfilled, OR
+                // (b) it was already fulfilled by a pharmacy this pharmacist is assigned to.
                 var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
                 var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(callerId, activeOnly: true);
                 var pharmacyIds = pharmacyAssignments.Select(a => a.PharmacyId).ToHashSet();
-                if (prescription.FulfilledByPharmacyId == null || !pharmacyIds.Contains(prescription.FulfilledByPharmacyId.Value))
+
+                var isActive = prescription.Status == PrescriptionStatus.Active ||
+                               prescription.Status == PrescriptionStatus.PartiallyFulfilled;
+                var isFulfilledByMyPharmacy = prescription.FulfilledByPharmacyId.HasValue &&
+                                              pharmacyIds.Contains(prescription.FulfilledByPharmacyId.Value);
+
+                if (!isActive && !isFulfilledByMyPharmacy)
                     return Forbid();
             }
             else if (prescription.PatientId != userId && prescription.DoctorId != userId)

@@ -368,8 +368,9 @@ builder.Services.AddScoped<IPrescriptionRefillReminderService, PrescriptionRefil
 builder.Services.AddScoped<IGdprComplianceService, GdprComplianceService>();
 // Performance monitoring depends on scoped services like ICacheService; register scoped
 builder.Services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringService>();
-// SecurityHardeningService tracks per-IP failed-login counts in in-memory dictionaries;
-// must be Singleton so state persists across requests.
+// SecurityHardeningService uses IDistributedCache (Redis) for brute-force state
+// so it is consistent across pods. Singleton lifetime is fine since IDistributedCacheWrapper
+// is itself thread-safe and does not hold scoped dependencies directly.
 builder.Services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
 
 // Configure Swagger — dev only; never exposed in Production/Staging

@@ -365,17 +365,25 @@ public class AuthController(
             // For browser clients, also set the cookie
             SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
+            // Mobile/native clients cannot read HttpOnly cookies, so they receive the
+            // refresh token in the body. Browser clients get it via the cookie above and
+            // must NOT receive it in the JSON body (prevents JS access / XSS exfiltration).
+            var isMobileClient = userAgent.Contains("Expo") ||
+                                 userAgent.Contains("okhttp") ||
+                                 userAgent.Contains("CFNetwork") ||
+                                 userAgent.Contains("Darwin");
+
             return Ok(new AuthResponse
             {
-                UserId        = user.Id,
-                Username      = user.Username,
-                Email         = user.Email,
-                FirstName     = user.FirstName,
-                LastName      = user.LastName,
-                Role          = user.Role.ToString(),
-                AccessToken   = tokenResponse.AccessToken,
-                RefreshToken  = tokenResponse.RefreshToken, // included for mobile clients
-                ExpiresAt     = tokenResponse.ExpiresAt,
+                UserId          = user.Id,
+                Username        = user.Username,
+                Email           = user.Email,
+                FirstName       = user.FirstName,
+                LastName        = user.LastName,
+                Role            = user.Role.ToString(),
+                AccessToken     = tokenResponse.AccessToken,
+                RefreshToken    = isMobileClient ? tokenResponse.RefreshToken : null,
+                ExpiresAt       = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified,
             });
         }

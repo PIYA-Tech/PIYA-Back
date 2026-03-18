@@ -1,26 +1,31 @@
 using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
 using PIYA_API.Service.Interface;
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace PIYA_API.Service.Class;
 
 /// <summary>
 /// Security hardening service implementation.
-/// Registered as Singleton so brute-force / blocked-IP dictionaries survive across requests.
+/// Brute-force state and IP blocks are stored in IDistributedCache (Redis in production,
+/// in-memory fallback in development) so the data is consistent across all pods/instances.
 /// IAuditService is Scoped, so it is resolved per-call via IServiceScopeFactory.
 /// </summary>
 public class SecurityHardeningService(
     ILogger<SecurityHardeningService> logger,
-    IServiceScopeFactory scopeFactory) : ISecurityHardeningService
+    IServiceScopeFactory scopeFactory,
+    IDistributedCacheWrapper cache) : ISecurityHardeningService
 {
     private readonly ILogger<SecurityHardeningService> _logger = logger;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
-    private readonly ConcurrentDictionary<string, BlockedIp> _blockedIps = new();
-    private readonly ConcurrentDictionary<string, List<FailedLoginAttempt>> _failedLogins = new();
+    private readonly IDistributedCacheWrapper _cache = cache;
+
+    // Cache key helpers
+    private static string BlockedIpKey(string ip)     => $"security:blocked_ip:{ip}";
+    private static string FailedLoginsKey(string email) => $"security:failed_logins:{email}";
 
     /// <summary>
     /// Resolves a short-lived scope to audit-log without holding a scoped IAuditService instance.
@@ -120,30 +125,17 @@ public class SecurityHardeningService(
 
     public async Task<bool> IsIpBlockedAsync(string ipAddress)
     {
-        if (_blockedIps.TryGetValue(ipAddress, out var blockedIp))
-        {
-            if (blockedIp.ExpiresAt.HasValue && blockedIp.ExpiresAt.Value < DateTime.UtcNow)
-            {
-                // Block expired, remove it
-                _blockedIps.TryRemove(ipAddress, out _);
-                return false;
-            }
-            return true;
-        }
-        return await Task.FromResult(false);
+        var value = await _cache.GetStringAsync(BlockedIpKey(ipAddress));
+        // Any non-null value means the key exists (and hasn't expired via TTL)
+        return value != null;
     }
 
     public async Task BlockIpAddressAsync(string ipAddress, string reason, TimeSpan? duration = null)
     {
-        var blockedIp = new BlockedIp
-        {
-            IpAddress = ipAddress,
-            Reason = reason,
-            BlockedAt = DateTime.UtcNow,
-            ExpiresAt = duration.HasValue ? DateTime.UtcNow.Add(duration.Value) : null
-        };
-
-        _blockedIps.AddOrUpdate(ipAddress, blockedIp, (_, _) => blockedIp);
+        // Store the reason as the cache value; TTL drives expiry automatically.
+        // Permanent blocks use a 365-day TTL as a practical upper bound.
+        var ttl = duration ?? TimeSpan.FromDays(365);
+        await _cache.SetStringAsync(BlockedIpKey(ipAddress), reason, ttl);
 
         await AuditAsync(new Model.AuditLog
         {
@@ -159,8 +151,8 @@ public class SecurityHardeningService(
 
     public async Task UnblockIpAddressAsync(string ipAddress)
     {
-        _blockedIps.TryRemove(ipAddress, out _);
-        
+        await _cache.RemoveAsync(BlockedIpKey(ipAddress));
+
         await AuditAsync(new Model.AuditLog
         {
             Action = "IP_UNBLOCKED",
@@ -312,23 +304,33 @@ public class SecurityHardeningService(
 
     public async Task<List<FailedLoginAttempt>> GetFailedLoginAttemptsAsync(string email, TimeSpan? within = null)
     {
-        if (_failedLogins.TryGetValue(email, out var attempts))
+        var json = await _cache.GetStringAsync(FailedLoginsKey(email));
+        if (json == null) return [];
+
+        var attempts = JsonSerializer.Deserialize<List<FailedLoginAttempt>>(json) ?? [];
+
+        if (within.HasValue)
         {
-            if (within.HasValue)
-            {
-                var cutoff = DateTime.UtcNow - within.Value;
-                return await Task.FromResult(attempts.Where(a => a.AttemptedAt >= cutoff).ToList());
-            }
-            return await Task.FromResult(attempts);
+            var cutoff = DateTime.UtcNow - within.Value;
+            return attempts.Where(a => a.AttemptedAt >= cutoff).ToList();
         }
 
-        return [];
+        return attempts;
     }
 
     public async Task RecordFailedLoginAttemptAsync(string email, string? ipAddress)
     {
-        var list = _failedLogins.GetOrAdd(email, _ => []);
-        list.Add(new FailedLoginAttempt
+        var key = FailedLoginsKey(email);
+        var json = await _cache.GetStringAsync(key);
+        var attempts = json != null
+            ? JsonSerializer.Deserialize<List<FailedLoginAttempt>>(json) ?? []
+            : new List<FailedLoginAttempt>();
+
+        var cutoff = DateTime.UtcNow.AddMinutes(-120);
+        // Prune stale entries to prevent unbounded growth
+        attempts.RemoveAll(a => a.AttemptedAt < cutoff);
+
+        attempts.Add(new FailedLoginAttempt
         {
             Email = email,
             IpAddress = ipAddress ?? "unknown",
@@ -336,27 +338,12 @@ public class SecurityHardeningService(
             FailureReason = "InvalidCredentials"
         });
 
-        // Prune stale entries to prevent unbounded memory growth.
-        // Keep only entries within twice the lockout window; anything older
-        // will never trigger a lockout anyway.
-        var cutoff = DateTime.UtcNow.AddMinutes(-120); // generous 2-hour sweep
-        _failedLogins.Keys.ToList().ForEach(key =>
-        {
-            if (_failedLogins.TryGetValue(key, out var attempts))
-            {
-                attempts.RemoveAll(a => a.AttemptedAt < cutoff);
-                if (attempts.Count == 0)
-                    _failedLogins.TryRemove(key, out _);
-            }
-        });
-
-        await Task.CompletedTask;
+        await _cache.SetStringAsync(key, JsonSerializer.Serialize(attempts), TimeSpan.FromHours(2));
     }
 
     public async Task ResetFailedLoginAttemptsAsync(string email)
     {
-        _failedLogins.TryRemove(email, out _);
-        await Task.CompletedTask;
+        await _cache.RemoveAsync(FailedLoginsKey(email));
     }
 
     public async Task<SecurityAuditReport> GetSecurityAuditReportAsync(DateTime startDate, DateTime endDate)
@@ -366,26 +353,16 @@ public class SecurityHardeningService(
             ReportDate = DateTime.UtcNow,
             PeriodStart = startDate,
             PeriodEnd = endDate,
-            TotalFailedLogins = _failedLogins.Values.Sum(list => list.Count),
-            BlockedIpAddresses = _blockedIps.Count,
-            SuspiciousActivities = 0, // Would track separately
-            SqlInjectionAttempts = 0, // Would track separately
-            XssAttempts = 0, // Would track separately
-            PasswordResetRequests = 0, // Would query from audit logs
-            MfaChallenges = 0, // Would query from audit logs
-            TopAttackSources = _failedLogins
-                .SelectMany(kvp => kvp.Value)
-                .GroupBy(f => f.IpAddress)
-                .OrderByDescending(g => g.Count())
-                .Take(10)
-                .Select(g => new TopAttackSource
-                {
-                    IpAddress = g.Key,
-                    AttackCount = g.Count(),
-                    Country = "Unknown", // Would use GeoIP lookup
-                    AttackTypes = ["Failed Login"]
-                })
-                .ToList()
+            // With Redis-backed state we no longer have a full in-memory enumerable;
+            // counts should be derived from audit logs in a production implementation.
+            TotalFailedLogins = 0,
+            BlockedIpAddresses = 0,
+            SuspiciousActivities = 0,
+            SqlInjectionAttempts = 0,
+            XssAttempts = 0,
+            PasswordResetRequests = 0,
+            MfaChallenges = 0,
+            TopAttackSources = []
         };
 
         return await Task.FromResult(report);
@@ -424,13 +401,5 @@ public class SecurityHardeningService(
         };
 
         return commonPasswords.Contains(password);
-    }
-
-    private class BlockedIp
-    {
-        public required string IpAddress { get; set; }
-        public required string Reason { get; set; }
-        public DateTime BlockedAt { get; set; }
-        public DateTime? ExpiresAt { get; set; }
     }
 }

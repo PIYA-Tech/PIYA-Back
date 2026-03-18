@@ -12,12 +12,16 @@ public class TwoFactorAuthService(
     IPasswordHasher passwordHasher,
     IDistributedCacheWrapper cache,
     IFcmService fcmService,
+    ISmsService smsService,
+    IEmailService emailService,
     ILogger<TwoFactorAuthService> logger) : ITwoFactorAuthService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IPasswordHasher _passwordHasher = passwordHasher;
     private readonly IDistributedCacheWrapper _cache = cache;
     private readonly IFcmService _fcmService = fcmService;
+    private readonly ISmsService _smsService = smsService;
+    private readonly IEmailService _emailService = emailService;
     private readonly ILogger<TwoFactorAuthService> _logger = logger;
 
     // Cache key helpers — one-time OTP codes and login challenge tokens.
@@ -97,6 +101,8 @@ public class TwoFactorAuthService(
                 break;
             case TwoFactorMethod.SMS:
             case TwoFactorMethod.Email:
+            case TwoFactorMethod.PushNotification:
+                // SMS, Email and Push all store a cache-backed OTP — verify via cache lookup.
                 isValid = await VerifyTempCodeAsync(userId, code);
                 break;
         }
@@ -163,8 +169,17 @@ public class TwoFactorAuthService(
         var code = GenerateNumericCode();
         await _cache.SetStringAsync(OtpKey(userId), code, TimeSpan.FromMinutes(5));
 
-        _logger.LogInformation("SMS 2FA code generated for user {UserId}", userId);
-        return true;
+        if (string.IsNullOrWhiteSpace(user.PhoneNumber))
+        {
+            _logger.LogWarning("Cannot send SMS 2FA code: user {UserId} has no phone number", userId);
+            return false;
+        }
+
+        var sent = await _smsService.SendVerificationCodeAsync(user.PhoneNumber, code);
+        if (!sent)
+            _logger.LogWarning("SMS 2FA code delivery failed for user {UserId}", userId);
+
+        return sent;
     }
 
     public async Task<bool> SendEmailCodeAsync(Guid userId)
@@ -176,8 +191,8 @@ public class TwoFactorAuthService(
         var code = GenerateNumericCode();
         await _cache.SetStringAsync(OtpKey(userId), code, TimeSpan.FromMinutes(5));
 
-        // TODO: Integrate with email service (SendGrid, etc.)
-        _logger.LogInformation("Email 2FA code generated for user {UserId}", userId);
+        await _emailService.Send2FACodeAsync(user.Email, code);
+        _logger.LogInformation("Email 2FA code sent for user {UserId}", userId);
         return true;
     }
 

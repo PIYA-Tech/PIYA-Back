@@ -178,9 +178,14 @@ public class RateLimitingMiddleware
                 if (permit.HasValue) requestLimit = permit.Value;
                 if (windowSeconds.HasValue) timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
                 // Always key by IP for anonymous callers — ignore any user id claim
-                var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                if (context.Request.Headers.ContainsKey("X-Forwarded-For"))
-                    ip = context.Request.Headers["X-Forwarded-For"].ToString().Split(',')[0].Trim();
+                var remoteAddr = context.Connection.RemoteIpAddress;
+                var ip = remoteAddr?.ToString() ?? "unknown";
+                if (remoteAddr != null && IsPrivateOrLoopback(remoteAddr) &&
+                    context.Request.Headers.TryGetValue("X-Forwarded-For", out var xffPublic))
+                {
+                    var candidate = xffPublic.ToString().Split(',')[0].Trim();
+                    if (!string.IsNullOrEmpty(candidate)) ip = candidate;
+                }
                 rateLimitKey = $"publicsearch:ip:{ip}";
             }
         }
@@ -315,15 +320,47 @@ public class RateLimitingMiddleware
         }
 
         // Fall back to IP address
-        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        
-        // Check for forwarded IP (when behind proxy)
-        if (context.Request.Headers.ContainsKey("X-Forwarded-For"))
+        var remoteIp = context.Connection.RemoteIpAddress;
+        var ip = remoteIp?.ToString() ?? "unknown";
+
+        // Only honour X-Forwarded-For when the direct connection comes from a trusted
+        // proxy (loopback or RFC-1918 private range). Accepting it unconditionally
+        // allows any client to spoof their IP and bypass per-IP rate limiting.
+        if (remoteIp != null && IsPrivateOrLoopback(remoteIp) &&
+            context.Request.Headers.TryGetValue("X-Forwarded-For", out var xff))
         {
-            ip = context.Request.Headers["X-Forwarded-For"].ToString().Split(',')[0].Trim();
+            var candidate = xff.ToString().Split(',')[0].Trim();
+            if (!string.IsNullOrEmpty(candidate))
+                ip = candidate;
         }
 
         return $"ip:{ip}";
+    }
+
+    /// <summary>Returns true for loopback and RFC-1918 private addresses (IPv4 and IPv6).</summary>
+    private static bool IsPrivateOrLoopback(System.Net.IPAddress address)
+    {
+        if (System.Net.IPAddress.IsLoopback(address)) return true;
+
+        // Map IPv4-in-IPv6 to plain IPv4 for range checks
+        var addr = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = addr.GetAddressBytes();
+            return bytes[0] == 10 ||
+                   (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                   (bytes[0] == 192 && bytes[1] == 168);
+        }
+
+        // IPv6 unique-local (fc00::/7)
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            var bytes = addr.GetAddressBytes();
+            return (bytes[0] & 0xFE) == 0xFC;
+        }
+
+        return false;
     }
 
     internal static void CleanupExpiredEntries()

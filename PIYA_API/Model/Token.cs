@@ -27,6 +27,8 @@ public class Token
     public Token()
     {
         CreationTime = DateTime.UtcNow;
-        ExpiresAt = CreationTime.AddMinutes(30);
+        // Default matches the JWT access-token lifetime (Jwt:ExpirationMinutes, default 15).
+        // JwtService always overwrites this explicitly; the default here is a safety net only.
+        ExpiresAt = CreationTime.AddMinutes(15);
     }
 }

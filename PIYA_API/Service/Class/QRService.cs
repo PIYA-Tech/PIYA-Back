@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PIYA_API.Configuration;
@@ -87,35 +86,15 @@ public class QRService : IQRService
         try
         {
             var tokenId = Guid.NewGuid();
-            var expiryMinutes = validityMinutes ?? _tokenExpiryMinutes; // Use configured default
+            var expiryMinutes = validityMinutes ?? _tokenExpiryMinutes;
             var expiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes);
-            var nonce = Guid.NewGuid().ToString(); // Prevent duplicate tokens
 
-            // Create signed payload
-            var payload = new
-            {
-                TokenId = tokenId,
-                EntityId = entityId,
-                EntityType = entityType,
-                ExpiresAt = expiresAt,
-                GeneratedAt = DateTime.UtcNow,
-                Nonce = nonce
-            };
-
-            var jsonPayload = JsonSerializer.Serialize(payload);
-            var signature = GenerateHmacSignature(jsonPayload);
-
-            var signedPayload = new
-            {
-                Payload = jsonPayload,
-                Signature = signature
-            };
-
-            var signedJson = JsonSerializer.Serialize(signedPayload);
-            var tokenString = Convert.ToBase64String(Encoding.UTF8.GetBytes(signedJson));
-
-            // Store token in database with hash
+            // The QR token string is the opaque tokenId only — no plaintext payload is
+            // embedded. All data (entityId, entityType, expiry) is resolved from the DB
+            // row at scan time, so the QR code itself reveals nothing sensitive.
+            var tokenString = tokenId.ToString();
             var tokenHash = ComputeSha256Hash(tokenString);
+
             var qrToken = new QRToken
             {
                 Id = tokenId,
@@ -132,7 +111,6 @@ public class QRService : IQRService
             _context.QRTokens.Add(qrToken);
             await _context.SaveChangesAsync();
 
-            // Audit log
             await _auditService.LogEntityActionAsync("QR_TOKEN_GENERATED", entityType, entityId.ToString(), userId,
                 $"Generated QR token for {entityType} {entityId}");
 
@@ -220,76 +198,27 @@ public class QRService : IQRService
     {
         try
         {
-            // Parse and verify signature
-            var bytes = Convert.FromBase64String(token);
-            var json = Encoding.UTF8.GetString(bytes);
-            var signedPayload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-
-            if (signedPayload == null || !signedPayload.ContainsKey("Payload") || !signedPayload.ContainsKey("Signature"))
-            {
+            // Token is an opaque UUID string — parse it directly.
+            if (!Guid.TryParse(token, out var tokenId))
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Invalid token format");
-            }
 
-            var payloadJson = signedPayload["Payload"].GetString()!;
-            var signature = signedPayload["Signature"].GetString()!;
-
-            // Verify HMAC signature
-            var expectedSignature = GenerateHmacSignature(payloadJson);
-            if (signature != expectedSignature)
-            {
-                _logger.LogWarning("QR token signature verification failed");
-                return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Invalid signature - token may be tampered");
-            }
-
-            // Parse payload
-            var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(payloadJson);
-            if (payload == null)
-            {
-                return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Invalid payload");
-            }
-
-            var tokenId = Guid.Parse(payload["TokenId"].GetString()!);
-            var entityId = Guid.Parse(payload["EntityId"].GetString()!);
-            var entityType = payload["EntityType"].GetString()!;
-            var expiresAt = payload["ExpiresAt"].GetDateTime();
-
-            // Check database for token status
             var tokenHash = ComputeSha256Hash(token);
             var dbToken = await _context.QRTokens
                 .FirstOrDefaultAsync(t => t.TokenHash == tokenHash);
 
             if (dbToken == null)
-            {
-                return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Token not found in database");
-            }
+                return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Token not found");
 
-            // Check if revoked before touching the counter
             if (dbToken.IsRevoked)
-            {
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token has been revoked: {dbToken.RevocationReason}");
-            }
 
-            // Check if already used (anti-replay)
             if (dbToken.IsUsed)
-            {
                 return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token has already been used at {dbToken.UsedAt:yyyy-MM-dd HH:mm:ss} UTC");
-            }
 
-            // Check expiration
-            if (DateTime.UtcNow > expiresAt)
-            {
-                return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token expired at {expiresAt:yyyy-MM-dd HH:mm:ss} UTC");
-            }
+            if (DateTime.UtcNow > dbToken.ExpiresAt)
+                return (false, Guid.Empty, string.Empty, DateTime.MinValue, $"Token expired at {dbToken.ExpiresAt:yyyy-MM-dd HH:mm:ss} UTC");
 
-            // ValidateQrTokenAsync is a read-only check. The ValidationAttempts counter
-            // is incremented inside MarkTokenAsUsedAsync so that preview/status endpoints
-            // do not artificially inflate the count and trigger false-positive alerts.
-
-            return (true, entityId, entityType, expiresAt, string.Empty);
-        }
-        catch (FormatException)
-        {
-            return (false, Guid.Empty, string.Empty, DateTime.MinValue, "Invalid token format");
+            return (true, dbToken.EntityId, dbToken.EntityType, dbToken.ExpiresAt, string.Empty);
         }
         catch (Exception ex)
         {

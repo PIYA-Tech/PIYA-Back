@@ -46,35 +46,49 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
                 throw new KeyNotFoundException($"Doctor {appointment.DoctorId} not found.");
         }
 
-        // Check for scheduling conflicts
-        var isAvailable = await IsDoctorAvailableAsync(
-            appointment.DoctorId,
-            appointment.ScheduledAt,
-            appointment.DurationMinutes
-        );
-
-        if (!isAvailable)
+        // Wrap the availability check and INSERT in a serializable transaction so that
+        // two concurrent booking requests for the same slot cannot both pass the check
+        // before either has committed — eliminating the TOCTOU double-booking race.
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            throw new InvalidOperationException("Doctor is not available at the specified time");
-        }
+            await using var tx = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+            try
+            {
+                var isAvailable = await IsDoctorAvailableAsync(
+                    appointment.DoctorId,
+                    appointment.ScheduledAt,
+                    appointment.DurationMinutes);
 
-        appointment.Id = Guid.NewGuid();
-        appointment.Status = AppointmentStatus.Scheduled;
-        appointment.CreatedAt = DateTime.UtcNow;
-        appointment.UpdatedAt = DateTime.UtcNow;
+                if (!isAvailable)
+                    throw new InvalidOperationException("Doctor is not available at the specified time");
 
-        _context.Appointments.Add(appointment);
-        await _context.SaveChangesAsync();
+                appointment.Id = Guid.NewGuid();
+                appointment.Status = AppointmentStatus.Scheduled;
+                appointment.CreatedAt = DateTime.UtcNow;
+                appointment.UpdatedAt = DateTime.UtcNow;
 
-        await _auditService.LogEntityActionAsync(
-            "BookAppointment",
-            "Appointment",
-            appointment.Id.ToString(),
-            appointment.PatientId,
-            $"Appointment booked with Dr. {appointment.DoctorId} for {appointment.ScheduledAt}"
-        );
+                _context.Appointments.Add(appointment);
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
 
-        return appointment;
+            await _auditService.LogEntityActionAsync(
+                "BookAppointment",
+                "Appointment",
+                appointment.Id.ToString(),
+                appointment.PatientId,
+                $"Appointment booked with Dr. {appointment.DoctorId} for {appointment.ScheduledAt}"
+            );
+
+            return appointment;
+        });
     }
 
     public async Task<Appointment?> GetByIdAsync(Guid id, CancellationToken ct = default)
