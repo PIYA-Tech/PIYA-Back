@@ -6,24 +6,15 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class FileUploadService : IFileUploadService
+public class FileUploadService(
+    PharmacyApiDbContext context,
+    IConfiguration configuration,
+    IFileStorageService fileStorage) : IFileUploadService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly IFileStorageService _fileStorage;
-    private readonly long _maxFileSizeBytes;
-    private readonly HashSet<string> _allowedMimeTypes;
-
-    public FileUploadService(
-        PharmacyApiDbContext context,
-        IConfiguration configuration,
-        IFileStorageService fileStorage)
-    {
-        _context = context;
-        _fileStorage = fileStorage;
-
-        _maxFileSizeBytes = long.Parse(configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
-
-        _allowedMimeTypes =
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly IFileStorageService _fileStorage = fileStorage;
+    private readonly long _maxFileSizeBytes = long.Parse(configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
+    private readonly HashSet<string> _allowedMimeTypes =
         [
             "image/jpeg",
             "image/jpg",
@@ -33,7 +24,6 @@ public class FileUploadService : IFileUploadService
             "image/tiff",
             "image/bmp"
         ];
-    }
 
     public async Task<MedicalDocument> UploadDocumentAsync(
         Stream fileStream,

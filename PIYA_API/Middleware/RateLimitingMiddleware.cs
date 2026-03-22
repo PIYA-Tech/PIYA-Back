@@ -15,35 +15,23 @@ namespace PIYA_API.Middleware;
 /// <summary>
 /// Rate limiting middleware to prevent API abuse
 /// </summary>
-public class RateLimitingMiddleware
+public class RateLimitingMiddleware(
+    RequestDelegate next,
+    ILogger<RateLimitingMiddleware> logger,
+    IConfiguration configuration)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<RateLimitingMiddleware> _logger;
+    private readonly RequestDelegate _next = next;
+    private readonly ILogger<RateLimitingMiddleware> _logger = logger;
     private static readonly ConcurrentDictionary<string, ClientRateLimitInfo> _clients = new();
-    private readonly int _globalRequestLimit;
-    private readonly TimeSpan _globalTimeWindow;
-    private readonly List<string> _whitelistedPaths;
-    private readonly IConfiguration _configuration;
-    private readonly string? _bypassSecret;
-
-    public RateLimitingMiddleware(
-        RequestDelegate next,
-        ILogger<RateLimitingMiddleware> logger,
-        IConfiguration configuration)
-    {
-        _next = next;
-        _logger = logger;
-        _configuration = configuration;
-        _globalRequestLimit = int.Parse(configuration["RateLimiting:PermitLimit"] ?? "100");
-        _globalTimeWindow = TimeSpan.FromSeconds(int.Parse(configuration["RateLimiting:WindowSeconds"] ?? "60"));
-        _whitelistedPaths = configuration.GetSection("RateLimiting:WhitelistedPaths").Get<List<string>>() ??
+    private readonly int _globalRequestLimit = int.Parse(configuration["RateLimiting:PermitLimit"] ?? "100");
+    private readonly TimeSpan _globalTimeWindow = TimeSpan.FromSeconds(int.Parse(configuration["RateLimiting:WindowSeconds"] ?? "60"));
+    private readonly List<string> _whitelistedPaths = configuration.GetSection("RateLimiting:WhitelistedPaths").Get<List<string>>() ??
         [
             "/api/Health",
             "/swagger"
         ];
-        // Secret token required for bypass headers — must be set via env/config to be usable
-        _bypassSecret = configuration["RateLimiting:BypassSecret"];
-    }
+    private readonly IConfiguration _configuration = configuration;
+    private readonly string? _bypassSecret = configuration["RateLimiting:BypassSecret"];
 
     public async Task InvokeAsync(HttpContext context)
     {

@@ -44,12 +44,7 @@ public class TokenResponse
 }
 
 /// <summary>Thrown when a refresh token that was already rotated is reused.</summary>
-public sealed class RefreshTokenReuseException : Exception
+public sealed class RefreshTokenReuseException(Guid userId) : Exception("Refresh token reuse detected — entire session family revoked.")
 {
-    public Guid UserId { get; }
-    public RefreshTokenReuseException(Guid userId)
-        : base("Refresh token reuse detected — entire session family revoked.")
-    {
-        UserId = userId;
-    }
+    public Guid UserId { get; } = userId;
 }

@@ -9,16 +9,10 @@ namespace PIYA_API.Service.Class;
 /// Device-token management service. Push notifications via Firebase are not used;
 /// this service handles device registration, 2FA trust and last-login tracking only.
 /// </summary>
-public class FcmService : IFcmService
+public class FcmService(PharmacyApiDbContext context, ILogger<FcmService> logger) : IFcmService
 {
-    private readonly PharmacyApiDbContext _context;
-    private readonly ILogger<FcmService> _logger;
-
-    public FcmService(PharmacyApiDbContext context, ILogger<FcmService> logger)
-    {
-        _context = context;
-        _logger = logger;
-    }
+    private readonly PharmacyApiDbContext _context = context;
+    private readonly ILogger<FcmService> _logger = logger;
 
     // Push notification methods - no-op (Firebase not configured)
 
