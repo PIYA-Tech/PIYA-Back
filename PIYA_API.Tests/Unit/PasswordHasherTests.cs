@@ -1,6 +1,8 @@
 using Xunit;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using PIYA_API.Service.Class;
+using PIYA_API.Configuration;
 
 namespace PIYA_API.Tests.Unit;
 
@@ -13,7 +15,8 @@ public class PasswordHasherTests
 
     public PasswordHasherTests()
     {
-        _passwordHasher = new PasswordHasher();
+        var options = Options.Create(new SecurityOptions { PasswordHashWorkFactor = 10 });
+        _passwordHasher = new PasswordHasher(options);
     }
 
     [Fact]

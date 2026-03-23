@@ -2,10 +2,12 @@ using Xunit;
 using Moq;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PIYA_API.Service.Class;
 using PIYA_API.Service.Interface;
 using PIYA_API.Data;
 using PIYA_API.Model;
+using PIYA_API.Configuration;
 using Microsoft.EntityFrameworkCore;
 
 namespace PIYA_API.Tests.Unit;
@@ -29,7 +31,8 @@ public class UserServiceTests : IDisposable
         _context = new PharmacyApiDbContext(options);
         _loggerMock = new Mock<ILogger<UserService>>();
         // UserService now requires a DbContext and an IPasswordHasher
-        _userService = new UserService(_context, new PIYA_API.Service.Class.PasswordHasher());
+        var securityOptions = Options.Create(new SecurityOptions { PasswordHashWorkFactor = 10 });
+        _userService = new UserService(_context, new PIYA_API.Service.Class.PasswordHasher(securityOptions));
     }
 
     [Fact]

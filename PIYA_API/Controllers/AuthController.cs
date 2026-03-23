@@ -394,6 +394,77 @@ public class AuthController(
         }
     }
 
+    /// <summary>
+    /// Complete the 2FA login flow using a backup code.
+    /// Validates the challenge token, verifies the backup code (consuming it),
+    /// then issues access + refresh tokens exactly like /login/complete-2fa.
+    /// </summary>
+    [HttpPost("login/complete-2fa-backup")]
+    [AllowAnonymous]
+    public async Task<IActionResult> CompleteLogin2FAWithBackup([FromBody] Complete2FABackupRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        try
+        {
+            // Validate and consume the one-time challenge token
+            if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
+                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+            {
+                return Unauthorized(new { message = "Invalid or expired challenge token. Please log in again." });
+            }
+
+            // Verify the backup code (consuming it so it can't be reused)
+            var isValid = await _twoFactorService.VerifyBackupCodeAsync(request.UserId, request.BackupCode);
+            if (!isValid)
+            {
+                await _auditService.LogSecurityEventAsync(
+                    "Login2FABackupFailed", request.UserId, ipAddress, userAgent, false, "Invalid backup code");
+                return Unauthorized(new { message = "Invalid backup code" });
+            }
+
+            // Fetch user and issue tokens
+            var user = await _userService.GetByIdAsync(request.UserId);
+            if (user == null)
+                return NotFound(new { message = "User not found" });
+
+            var tokenResponse = await _jwtService.GenerateSecurityToken(
+                user.Username, userAgent.Contains("Expo") ? "Mobile" : "Web");
+            if (tokenResponse == null)
+                return StatusCode(500, new { message = "Failed to generate token" });
+
+            await _auditService.LogSecurityEventAsync(
+                "LoginSuccess2FABackup", user.Id, ipAddress, userAgent, true,
+                $"User completed 2FA login via backup code: {user.Username}");
+
+            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+
+            var isMobileClient = userAgent.Contains("Expo") ||
+                                 userAgent.Contains("okhttp") ||
+                                 userAgent.Contains("CFNetwork") ||
+                                 userAgent.Contains("Darwin");
+
+            return Ok(new AuthResponse
+            {
+                UserId          = user.Id,
+                Username        = user.Username,
+                Email           = user.Email,
+                FirstName       = user.FirstName,
+                LastName        = user.LastName,
+                Role            = user.Role.ToString(),
+                AccessToken     = tokenResponse.AccessToken,
+                RefreshToken    = isMobileClient ? tokenResponse.RefreshToken : null,
+                ExpiresAt       = tokenResponse.ExpiresAt,
+                IsEmailVerified = user.IsEmailVerified,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error completing backup-code 2FA login for user {UserId}", request.UserId);
+            return StatusCode(500, new { message = "An error occurred during 2FA verification" });
+        }
+    }
+
     [HttpPost("validate-token")]
     public IActionResult ValidateToken([FromBody] ValidateTokenRequest request)
     {
@@ -633,6 +704,13 @@ public class Complete2FARequest
 {
     public Guid   UserId         { get; set; }
     public required string Code           { get; set; }
+    public required string ChallengeToken { get; set; }
+}
+
+public class Complete2FABackupRequest
+{
+    public Guid   UserId         { get; set; }
+    public required string BackupCode     { get; set; }
     public required string ChallengeToken { get; set; }
 }
 
