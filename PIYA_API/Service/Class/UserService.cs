@@ -190,6 +190,35 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         await _dbContext.SaveChangesAsync();
     }
 
+    public async Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword)
+    {
+        var user = await _dbContext.Users.FindAsync(userId)
+            ?? throw new KeyNotFoundException($"User with ID {userId} not found");
+
+        // Verify the current password before allowing a change
+        if (!_passwordHasher.VerifyPassword(currentPassword, user.PasswordHash))
+            throw new ArgumentException("Current password is incorrect.");
+
+        // Enforce the same complexity rules as Create / Update
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+            throw new ArgumentException("New password must be at least 8 characters long.");
+
+        if (!newPassword.Any(char.IsDigit))
+            throw new ArgumentException("New password must contain at least one digit.");
+
+        if (newPassword.All(char.IsLetterOrDigit))
+            throw new ArgumentException("New password must contain at least one special character.");
+
+        // Prevent reuse of the current password
+        if (_passwordHasher.VerifyPassword(newPassword, user.PasswordHash))
+            throw new ArgumentException("New password must be different from the current password.");
+
+        user.PasswordHash = _passwordHasher.HashPassword(newPassword);
+        user.UpdatedAt = DateTime.UtcNow;
+        _dbContext.Users.Update(user);
+        await _dbContext.SaveChangesAsync();
+    }
+
     public async Task HardDeleteAsync(Guid id)
     {
         var user = await _dbContext.Users.FindAsync(id)

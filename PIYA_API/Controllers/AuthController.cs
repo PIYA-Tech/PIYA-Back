@@ -657,6 +657,44 @@ public class AuthController(
             return StatusCode(500, new { message = "An error occurred during logout" });
         }
     }
+
+    /// <summary>
+    /// Change the authenticated user's own password after verifying the current password.
+    /// </summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        try
+        {
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrWhiteSpace(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                return Unauthorized(new { message = "Invalid token" });
+
+            await _userService.ChangePasswordAsync(userId, request.OldPassword, request.NewPassword);
+
+            await _auditService.LogSecurityEventAsync(
+                "PasswordChanged", userId, ipAddress, userAgent, true,
+                "User changed their own password");
+
+            return NoContent();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (KeyNotFoundException)
+        {
+            return Unauthorized(new { message = "User not found" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error changing password");
+            return StatusCode(500, new { message = "An error occurred while changing the password" });
+        }
+    }
 }
 
 public class LogoutRequest

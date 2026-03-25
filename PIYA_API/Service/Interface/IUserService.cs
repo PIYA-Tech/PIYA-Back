@@ -14,4 +14,10 @@ public interface IUserService
     public Task<List<User>> GetAllUsersAsync();
     public Task SetActiveAsync(Guid id, bool isActive);
     public Task HardDeleteAsync(Guid id);
+    /// <summary>
+    /// Changes a user's password after verifying the current password.
+    /// Throws <see cref="ArgumentException"/> when the current password is incorrect
+    /// or the new password fails complexity rules.
+    /// </summary>
+    public Task ChangePasswordAsync(Guid userId, string currentPassword, string newPassword);
 }
