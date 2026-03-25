@@ -20,12 +20,12 @@ public interface IPrescriptionService
     /// <summary>
     /// Get all prescriptions for a patient
     /// </summary>
-    Task<List<Prescription>> GetPatientPrescriptionsAsync(Guid patientId, PrescriptionStatus? status = null);
+    Task<List<Prescription>> GetPatientPrescriptionsAsync(Guid patientId, PrescriptionStatus? status = null, CancellationToken ct = default);
     
     /// <summary>
     /// Get all prescriptions created by a doctor
     /// </summary>
-    Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null);
+    Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null, CancellationToken ct = default);
     
     /// <summary>
     /// Generate QR code for prescription (5-minute validity)

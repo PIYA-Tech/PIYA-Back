@@ -60,7 +60,7 @@ public class PrescriptionService(
             .FirstOrDefaultAsync(p => p.Id == id);
     }
 
-    public async Task<List<Prescription>> GetPatientPrescriptionsAsync(Guid patientId, PrescriptionStatus? status = null)
+    public async Task<List<Prescription>> GetPatientPrescriptionsAsync(Guid patientId, PrescriptionStatus? status = null, CancellationToken ct = default)
     {
         var query = _context.Prescriptions
             .Include(p => p.Doctor)
@@ -75,10 +75,10 @@ public class PrescriptionService(
 
         return await query
             .OrderByDescending(p => p.IssuedAt)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
-    public async Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null)
+    public async Task<List<Prescription>> GetDoctorPrescriptionsAsync(Guid doctorId, PrescriptionStatus? status = null, CancellationToken ct = default)
     {
         var query = _context.Prescriptions
             .Include(p => p.Patient)
@@ -91,7 +91,7 @@ public class PrescriptionService(
 
         return await query
             .OrderByDescending(p => p.IssuedAt)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
     public async Task<string> GenerateQrCodeAsync(Guid prescriptionId)
