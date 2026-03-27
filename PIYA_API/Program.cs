@@ -194,7 +194,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("Development", policy =>
     {
         policy.WithOrigins(
-                "https://test.piya.life",
+                "https://piya.life",
                 "http://localhost:4200",
                 "http://localhost:5173",
                 "http://localhost:8080",

@@ -31,7 +31,7 @@ public class PasswordResetService : IPasswordResetService
         _auditService = auditService;
         _configuration = configuration;
         _logger = logger;
-        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "http://https://test.piya.life";
+        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "http://https://piya.life";
     }
 
     public async Task<PasswordResetToken> GenerateResetTokenAsync(string email, string ipAddress, string userAgent)

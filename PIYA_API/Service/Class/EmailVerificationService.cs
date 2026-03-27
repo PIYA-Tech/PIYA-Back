@@ -25,7 +25,7 @@ public class EmailVerificationService : IEmailVerificationService
         _emailService = emailService;
         _configuration = configuration;
         _logger = logger;
-        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "https://test.piya.life";
+        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "https://piya.life";
     }
 
     public async Task<EmailVerificationToken> GenerateVerificationTokenAsync(Guid userId, string ipAddress, string userAgent)

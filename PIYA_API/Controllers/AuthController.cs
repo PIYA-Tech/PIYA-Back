@@ -585,7 +585,7 @@ public class AuthController(
     }
 
     /// <summary>Sets the refresh token as an HttpOnly Secure SameSite=None cookie (7-day window).
-    /// SameSite=None is required because the browser frontend (test.piya.life / piya.life) and
+    /// SameSite=None is required because the browser frontend (piya.life / piya.life) and
     /// the API (api.piya.life) are on different subdomains — browsers block SameSite=Strict/Lax
     /// cookies on cross-origin requests. SameSite=None mandates Secure=true per browser spec.
     /// Domain=.piya.life makes the cookie visible to all *.piya.life subdomains.</summary>
@@ -603,7 +603,7 @@ public class AuthController(
             Secure   = true,          // required by spec when SameSite=None; fine in dev with HTTPS
             SameSite = isDev
                 ? SameSiteMode.Lax    // localhost dev: same-site, Lax is sufficient
-                : SameSiteMode.None,  // production: cross-subdomain (test.piya.life → api.piya.life)
+                : SameSiteMode.None,  // production: cross-subdomain (piya.life → api.piya.life)
             Domain   = isDev ? null : ".piya.life",  // share across all *.piya.life subdomains
             Expires  = DateTimeOffset.UtcNow.AddDays(7),
             Path     = "/api/auth", // only sent to auth endpoints — reduces cookie surface
