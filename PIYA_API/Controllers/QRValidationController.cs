@@ -89,13 +89,9 @@ public class QRValidationController(
             var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
             var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
 
-            var (isValid, prescriptionId, errorMessage) = 
-                await _qrService.ValidateAndUsePrescriptionQrTokenAsync(
-                    request.QrToken,
-                    pharmacistId,
-                    ipAddress,
-                    userAgent
-                );
+            // ── Step 1: Read-only token validation (does NOT consume the token) ──
+            var (isValid, prescriptionId, entityType, expiresAt, errorMessage) =
+                await _qrService.ValidateQrTokenAsync(request.QrToken);
 
             if (!isValid)
             {
@@ -104,17 +100,12 @@ public class QRValidationController(
                 return BadRequest(new { error = errorMessage });
             }
 
-            // Fetch full prescription details
-            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
-            if (prescription == null)
+            if (entityType != "Prescription")
             {
-                return NotFound(new { error = "Prescription not found" });
+                return BadRequest(new { error = "QR code is not for a prescription." });
             }
 
-            // Resolve the pharmacist's dispensing pharmacy — required to fulfill and deduct stock.
-            // A pharmacist with no active assignment MUST NOT receive prescription data; the QR
-            // token would have been consumed (marked Used) but the prescription would never be
-            // fulfilled, leaking patient data without any inventory/audit trail.
+            // ── Step 2: Resolve dispensing pharmacy — must exist before consuming the token ──
             var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(pharmacistId, activeOnly: true);
             var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
             if (!pharmacyId.HasValue)
@@ -123,6 +114,21 @@ public class QRValidationController(
                     "Pharmacist {PharmacistId} has no active pharmacy assignment; QR scan for prescription {PrescriptionId} rejected",
                     pharmacistId, prescriptionId);
                 return Forbid(); // 403 — do not expose prescription data without a known dispensing pharmacy
+            }
+
+            // ── Step 3: Consume the token — only after all pre-checks pass ──
+            var consumed = await _qrService.MarkTokenAsUsedAsync(request.QrToken, pharmacistId, ipAddress, userAgent);
+            if (!consumed)
+            {
+                // Token was valid a moment ago but could not be marked used — treat as already consumed
+                return BadRequest(new { error = "QR code could not be consumed. It may have just been used by another session. Please ask the patient to generate a new QR code." });
+            }
+
+            // ── Step 4: Fetch prescription and fulfill ──
+            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+            if (prescription == null)
+            {
+                return NotFound(new { error = "Prescription not found" });
             }
 
             try

@@ -85,6 +85,7 @@ builder.Services.Configure<RateLimitingOptions>(
     builder.Configuration.GetSection(RateLimitingOptions.SectionName));
 builder.Services.AddHostedService<PIYA_API.Middleware.RateLimitCleanupService>();
 builder.Services.AddHostedService<PIYA_API.Middleware.RevokedTokenCleanupService>();
+builder.Services.AddHostedService<PIYA_API.Middleware.PrescriptionExpiryService>();
 builder.Services.Configure<CachingOptions>(
     builder.Configuration.GetSection(CachingOptions.SectionName));
 
