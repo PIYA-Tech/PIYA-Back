@@ -549,6 +549,25 @@ public class DoctorDashboardController(
     #region Prescriptions
 
     /// <summary>
+    /// Get all prescriptions issued by the authenticated doctor
+    /// </summary>
+    [HttpGet("prescriptions")]
+    public async Task<ActionResult<List<Prescription>>> GetMyPrescriptions()
+    {
+        try
+        {
+            var userId = GetUserId();
+            var prescriptions = await _prescriptionService.GetDoctorPrescriptionsAsync(userId);
+            return Ok(prescriptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctor prescriptions");
+            return StatusCode(500, new { error = "Failed to retrieve prescriptions" });
+        }
+    }
+
+    /// <summary>
     /// Create prescription for patient — must be tied to a completed appointment
     /// </summary>
     [HttpPost("prescriptions")]
@@ -576,9 +595,11 @@ public class DoctorDashboardController(
             {
                 return BadRequest(new { error = "Appointment not found or does not belong to you." });
             }
-            if (appointment.Status != AppointmentStatus.Completed)
+            // Allow prescriptions for completed appointments OR for confirmed referral stub appointments.
+            bool isReferralStub = appointment.Status == AppointmentStatus.Confirmed && appointment.ReferralId.HasValue;
+            if (appointment.Status != AppointmentStatus.Completed && !isReferralStub)
             {
-                return BadRequest(new { error = "Prescriptions can only be created for completed appointments." });
+                return BadRequest(new { error = "Prescriptions can only be created for completed appointments or active referral appointments." });
             }
             if (appointment.PatientId != request.PatientId)
             {
@@ -871,7 +892,7 @@ public class CompleteAppointmentRequest
 
 public class CancelAppointmentRequest
 {
-    public required string Reason { get; set; }
+    public string? Reason { get; set; }
 }
 
 public class CreatePrescriptionRequest

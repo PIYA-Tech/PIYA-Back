@@ -38,7 +38,7 @@ public class PrescriptionController(
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            // Doctors must link prescriptions to a completed appointment
+            // Doctors must link prescriptions to a completed or active referral appointment
             if (userRole == "Doctor")
             {
                 if (!dto.AppointmentId.HasValue)
@@ -47,8 +47,9 @@ public class PrescriptionController(
                 var appointment = await _appointmentService.GetByIdAsync(dto.AppointmentId.Value);
                 if (appointment == null)
                     return NotFound(new { error = "Appointment not found." });
-                if (appointment.Status != AppointmentStatus.Completed)
-                    return BadRequest(new { error = "Prescriptions can only be created for completed appointments." });
+                bool isReferralStub = appointment.Status == AppointmentStatus.Confirmed && appointment.ReferralId.HasValue;
+                if (appointment.Status != AppointmentStatus.Completed && !isReferralStub)
+                    return BadRequest(new { error = "Prescriptions can only be created for completed appointments or active referral appointments." });
                 if (appointment.DoctorId != userId)
                     return Forbid();
                 if (appointment.PatientId != dto.PatientId)

@@ -239,7 +239,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     /// Cancel appointment
     /// </summary>
     [HttpPost("{id}/cancel")]
-    public async Task<ActionResult<Appointment>> Cancel(Guid id, [FromBody] CancelAppointmentRequest request)
+    public async Task<ActionResult<Appointment>> Cancel(Guid id, [FromBody] CancelAppointmentRequest? request = null)
     {
         try
         {
@@ -257,7 +257,7 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
                 return Forbid();
             }
 
-            var cancelled = await _appointmentService.CancelAppointmentAsync(id, userId, request.Reason);
+            var cancelled = await _appointmentService.CancelAppointmentAsync(id, userId, request?.Reason);
             return Ok(cancelled);
         }
         catch (InvalidOperationException ex)
