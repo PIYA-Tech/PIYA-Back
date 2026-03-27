@@ -357,6 +357,41 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .ToListAsync();
     }
 
+    public async Task<List<Appointment>> GetAllAppointmentsAsync(
+        Guid? hospitalId = null,
+        Guid? doctorId = null,
+        Guid? patientId = null,
+        AppointmentStatus? status = null,
+        DateTime? from = null,
+        DateTime? to = null,
+        CancellationToken ct = default)
+    {
+        var query = _context.Appointments
+            .AsNoTracking()
+            .Include(a => a.Patient)
+            .Include(a => a.Doctor)
+            .Include(a => a.Hospital)
+            .AsQueryable();
+
+        if (hospitalId.HasValue)
+            query = query.Where(a => a.HospitalId == hospitalId.Value);
+        if (doctorId.HasValue)
+            query = query.Where(a => a.DoctorId == doctorId.Value);
+        if (patientId.HasValue)
+            query = query.Where(a => a.PatientId == patientId.Value);
+        if (status.HasValue)
+            query = query.Where(a => a.Status == status.Value);
+        if (from.HasValue)
+            query = query.Where(a => a.ScheduledAt >= from.Value);
+        if (to.HasValue)
+            query = query.Where(a => a.ScheduledAt <= to.Value);
+
+        return await query
+            .OrderByDescending(a => a.ScheduledAt)
+            .Take(500) // safety cap — use pagination for larger exports
+            .ToListAsync(ct);
+    }
+
     public async Task<bool> HasDoctorPatientRelationshipAsync(Guid doctorId, Guid patientId)
     {
         return await _context.Appointments

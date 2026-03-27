@@ -176,6 +176,18 @@ public class ReferralService(
         var referral = await RequireAsync(referralId);
         referral.Status = ReferralStatus.Accepted;
         referral.UpdatedAt = DateTime.UtcNow;
+
+        // Confirm the shell appointment so the doctor's list reflects acceptance
+        if (referral.ResultAppointmentId.HasValue)
+        {
+            var shellAppt = await _context.Appointments.FindAsync(referral.ResultAppointmentId.Value);
+            if (shellAppt is not null && shellAppt.Status == AppointmentStatus.Scheduled)
+            {
+                shellAppt.Status = AppointmentStatus.Confirmed;
+                shellAppt.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
         await _context.SaveChangesAsync();
 
         await TrySendNotificationAsync(
@@ -267,7 +279,8 @@ public class ReferralService(
         return await _context.DoctorProfiles
             .Include(dp => dp.User)
             .Where(dp => dp.Specialization == referral.ReferredToSpecialty
-                      && dp.User.IsActive)
+                      && dp.User.IsActive
+                      && dp.AcceptingNewPatients)
             .Select(dp => dp.User)
             .ToListAsync();
     }

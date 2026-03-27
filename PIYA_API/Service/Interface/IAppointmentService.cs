@@ -58,6 +58,19 @@ public interface IAppointmentService
     Task<List<Appointment>> GetHospitalAppointmentsAsync(Guid hospitalId, DateTime? date = null);
 
     /// <summary>
+    /// Get all appointments across the system (Admin/SuperAdmin only).
+    /// All filters are optional.
+    /// </summary>
+    Task<List<Appointment>> GetAllAppointmentsAsync(
+        Guid? hospitalId = null,
+        Guid? doctorId = null,
+        Guid? patientId = null,
+        AppointmentStatus? status = null,
+        DateTime? from = null,
+        DateTime? to = null,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Returns true when the doctor has at least one non-cancelled appointment with the patient.
     /// Used to gate access to patient records without loading full appointment lists.
     /// </summary>

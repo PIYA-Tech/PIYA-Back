@@ -158,6 +158,38 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     }
 
     /// <summary>
+    /// Get ALL appointments across the system — Admin/SuperAdmin only.
+    /// All query params are optional filters.
+    /// </summary>
+    [HttpGet("all")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
+    public async Task<ActionResult<List<Appointment>>> GetAllAppointments(
+        [FromQuery] Guid? hospitalId = null,
+        [FromQuery] Guid? doctorId = null,
+        [FromQuery] Guid? patientId = null,
+        [FromQuery] string? status = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            AppointmentStatus? appointmentStatus = null;
+            if (!string.IsNullOrEmpty(status) && Enum.TryParse<AppointmentStatus>(status, true, out var parsed))
+                appointmentStatus = parsed;
+
+            var appointments = await _appointmentService.GetAllAppointmentsAsync(
+                hospitalId, doctorId, patientId, appointmentStatus, from, to, ct);
+            return Ok(appointments);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving all appointments (admin)");
+            return StatusCode(500, new { error = "Failed to retrieve appointments" });
+        }
+    }
+
+    /// <summary>
     /// Get doctor's schedule for a specific date (authenticated users only)
     /// </summary>
     [HttpGet("doctor/{doctorId}/schedule")]
