@@ -9,10 +9,12 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
 {
     public Task<List<Pharmacy>> GetAll()
     {
+        // Public endpoint — only load the fields mapped by ToPublicDto().
+        // Manager and Staff are not included in the public DTO so there is no
+        // reason to eager-load them here; omitting them avoids unnecessary JOINs.
         return dbContext.Pharmacies
             .Include(p => p.Coordinates)
             .Include(p => p.Company)
-            .Include(p => p.Manager)
             .ToListAsync();
     }
 

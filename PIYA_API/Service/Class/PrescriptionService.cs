@@ -144,72 +144,100 @@ public class PrescriptionService(
             throw new InvalidOperationException($"Cannot fulfill a prescription with status '{prescription.Status}'");
         }
 
-        // Verify adequate stock exists for UNFULFILLED items BEFORE making any state changes.
-        // This prevents a prescription being marked Fulfilled when stock is insufficient.
-        // Items that are already fulfilled (PartiallyFulfilled re-entry) are skipped to
-        // avoid double-deducting stock that was already decremented in a prior partial call.
-        var unfulfilledItems = prescription.Items.Where(i => !i.IsFulfilled).ToList();
-        var stockErrors = new List<string>();
-        foreach (var item in unfulfilledItems)
+        // Wrap the entire stock-check → state-mutation → QR-revoke → stock-deduction block
+        // in a single Serializable transaction. This eliminates the TOCTOU race where two
+        // concurrent pharmacists scanning the same QR could both pass the stock check before
+        // either committed, causing double-dispensing.
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var available = await _inventoryService.GetAvailableStockAsync(pharmacyId, item.MedicationId);
-            if (available < item.Quantity)
+            await using var tx = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+            try
             {
-                stockErrors.Add(
-                    $"Medication {item.MedicationId}: required {item.Quantity}, available {available}");
+                // Re-fetch inside the transaction so we see the latest committed state
+                // (handles retries transparently — the entity tracked by the outer call
+                // may be stale on retry attempts).
+                var rx = await GetByIdAsync(prescriptionId)
+                    ?? throw new InvalidOperationException("Prescription not found");
+
+                if (rx.Status != PrescriptionStatus.Active && rx.Status != PrescriptionStatus.PartiallyFulfilled)
+                    throw new InvalidOperationException($"Cannot fulfill a prescription with status '{rx.Status}'");
+
+                // Verify adequate stock for all UNFULFILLED items.
+                // Items already fulfilled (PartiallyFulfilled re-entry) are skipped to
+                // avoid double-deducting stock handled in a prior partial call.
+                var unfulfilledItems = rx.Items.Where(i => !i.IsFulfilled).ToList();
+                var stockErrors = new List<string>();
+                foreach (var item in unfulfilledItems)
+                {
+                    var available = await _inventoryService.GetAvailableStockAsync(pharmacyId, item.MedicationId);
+                    if (available < item.Quantity)
+                    {
+                        stockErrors.Add(
+                            $"Medication {item.MedicationId}: required {item.Quantity}, available {available}");
+                    }
+                }
+                if (stockErrors.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "Insufficient stock to fulfill prescription. " + string.Join("; ", stockErrors));
+                }
+
+                // Mutate prescription state
+                rx.Status = PrescriptionStatus.Fulfilled;
+                rx.FulfilledAt = DateTime.UtcNow;
+                rx.FulfilledByPharmacyId = pharmacyId;
+                rx.UpdatedAt = DateTime.UtcNow;
+
+                // Mark all items as fulfilled
+                foreach (var item in rx.Items)
+                {
+                    item.IsFulfilled = true;
+                    item.FulfilledAt = DateTime.UtcNow;
+                }
+
+                // Deduct stock BEFORE revoking the QR token so that if any deduction
+                // throws the QR remains valid and the patient is not locked out.
+                var referenceNumber = $"RX-{prescriptionId.ToString()[..8]}";
+                foreach (var item in unfulfilledItems)
+                {
+                    await _inventoryService.DecreaseStockAsync(
+                        pharmacyId,
+                        item.MedicationId,
+                        item.Quantity,
+                        rx.PatientId,
+                        prescriptionId,
+                        referenceNumber: referenceNumber
+                    );
+                }
+
+                // Revoke QR token only after all stock deductions have succeeded (one-time use).
+                if (!string.IsNullOrEmpty(rx.QrToken))
+                {
+                    await _qrService.RevokeTokenAsync(rx.QrToken, rx.PatientId, "Prescription fulfilled");
+                }
+
+                // Persist everything atomically
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                await _auditService.LogEntityActionAsync(
+                    "FulfillPrescription",
+                    "Prescription",
+                    prescriptionId.ToString(),
+                    null,
+                    $"Prescription fulfilled by pharmacy {pharmacyId}"
+                );
+
+                return rx;
             }
-        }
-        if (stockErrors.Count > 0)
-        {
-            throw new InvalidOperationException(
-                $"Insufficient stock to fulfill prescription. " + string.Join("; ", stockErrors));
-        }
-
-        prescription.Status = PrescriptionStatus.Fulfilled;
-        prescription.FulfilledAt = DateTime.UtcNow;
-        prescription.FulfilledByPharmacyId = pharmacyId;
-        prescription.UpdatedAt = DateTime.UtcNow;
-
-        // Mark all items as fulfilled
-        foreach (var item in prescription.Items)
-        {
-            item.IsFulfilled = true;
-            item.FulfilledAt = DateTime.UtcNow;
-        }
-
-        // Revoke QR token (one-time use)
-        if (!string.IsNullOrEmpty(prescription.QrToken))
-        {
-            await _qrService.RevokeTokenAsync(prescription.QrToken, prescription.PatientId, "Prescription fulfilled");
-        }
-
-        // Deduct stock only for the items that were NOT already fulfilled before this call.
-        // This prevents double-deducting stock for items already handled in a prior partial fulfillment.
-        var referenceNumber = $"RX-{prescriptionId.ToString()[..8]}";
-        foreach (var item in unfulfilledItems)
-        {
-            await _inventoryService.DecreaseStockAsync(
-                pharmacyId,
-                item.MedicationId,
-                item.Quantity,
-                prescription.PatientId,
-                prescriptionId,
-                referenceNumber: referenceNumber
-            );
-        }
-
-        // Persist the prescription status only after all stock has been successfully deducted.
-        await _context.SaveChangesAsync();
-
-        await _auditService.LogEntityActionAsync(
-            "FulfillPrescription",
-            "Prescription",
-            prescriptionId.ToString(),
-            null,
-            $"Prescription fulfilled by pharmacy {pharmacyId}"
-        );
-
-        return prescription;
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<PrescriptionItem?> GetPrescriptionItemAsync(Guid itemId)

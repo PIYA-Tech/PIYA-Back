@@ -71,6 +71,17 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
                 _context.Appointments.Add(appointment);
                 await _context.SaveChangesAsync();
+
+                // Audit log is inside the transaction so a logging failure rolls back
+                // the booking rather than leaving a booked-but-unaudited appointment.
+                await _auditService.LogEntityActionAsync(
+                    "BookAppointment",
+                    "Appointment",
+                    appointment.Id.ToString(),
+                    appointment.PatientId,
+                    $"Appointment booked with Dr. {appointment.DoctorId} for {appointment.ScheduledAt}"
+                );
+
                 await tx.CommitAsync();
             }
             catch
@@ -78,14 +89,6 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
                 await tx.RollbackAsync();
                 throw;
             }
-
-            await _auditService.LogEntityActionAsync(
-                "BookAppointment",
-                "Appointment",
-                appointment.Id.ToString(),
-                appointment.PatientId,
-                $"Appointment booked with Dr. {appointment.DoctorId} for {appointment.ScheduledAt}"
-            );
 
             return appointment;
         });

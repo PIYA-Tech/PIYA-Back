@@ -12,7 +12,8 @@ public class SearchService(
     IInventoryService inventoryService,
     IPrescriptionService prescriptionService,
     IMedicationService medicationService,
-    ILogger<SearchService> logger) : ISearchService
+    ILogger<SearchService> logger,
+    IConfiguration configuration) : ISearchService
 {
     private readonly IPharmacyService _pharmacyService = pharmacyService;
     private readonly ICoordinatesService _coordinatesService = coordinatesService;
@@ -21,6 +22,15 @@ public class SearchService(
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
     private readonly IMedicationService _medicationService = medicationService;
     private readonly ILogger<SearchService> _logger = logger;
+    private readonly IConfiguration _configuration = configuration;
+
+    // Configurable via appsettings.json Search:CityRadiusKm / Search:CountryRadiusKm.
+    // Defaults: 50 km for city (covers most metro areas including Baku at ~50 km across),
+    //           1 500 km for country (covers the widest countries in the region).
+    private double CityRadiusMeters =>
+        (_configuration.GetValue<double?>("Search:CityRadiusKm") ?? 50.0) * 1_000;
+    private double CountryRadiusMeters =>
+        (_configuration.GetValue<double?>("Search:CountryRadiusKm") ?? 1_500.0) * 1_000;
 
     // ── Pure Haversine — no DB, no async overhead ────────────────────────────
     private static double HaversineMeters(double lat1, double lon1, double lat2, double lon2)
@@ -48,7 +58,7 @@ public class SearchService(
         return all
             .Where(p => p.Coordinates != null
                 && HaversineMeters(coordinates.Latitude, coordinates.Longitude,
-                                   p.Coordinates.Latitude, p.Coordinates.Longitude) <= 10_000)
+                                   p.Coordinates.Latitude, p.Coordinates.Longitude) <= CityRadiusMeters)
             .ToList();
     }
 
@@ -58,7 +68,7 @@ public class SearchService(
         return all
             .Where(p => p.Coordinates != null
                 && HaversineMeters(coordinates.Latitude, coordinates.Longitude,
-                                   p.Coordinates.Latitude, p.Coordinates.Longitude) <= 1_000_000)
+                                   p.Coordinates.Latitude, p.Coordinates.Longitude) <= CountryRadiusMeters)
             .ToList();
     }
 

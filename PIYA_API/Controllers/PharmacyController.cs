@@ -98,33 +98,21 @@ public class PharmacyController(
     public async Task<IActionResult> SearchByCountry([FromQuery] Coordinates coordinates)
     {
         var pharmacies = await _searchService.SearchByCountry(coordinates);
-        if (pharmacies == null || pharmacies.Count == 0)
-        {
-            return NotFound("No pharmacies found in this country.");
-        }
-        return Ok(pharmacies);
+        return Ok(pharmacies ?? []);
     }
     [HttpGet("searchByCity")]
     [AllowAnonymous]
     public async Task<IActionResult> SearchByCity([FromQuery] Coordinates coordinates)
     {
         var pharmacies = await _searchService.SearchByCity(coordinates);
-        if (pharmacies == null || pharmacies.Count == 0)
-        {
-            return NotFound("No pharmacies found in this city.");
-        }
-        return Ok(pharmacies);
+        return Ok(pharmacies ?? []);
     }
     [HttpGet("searchByRadius")]
     [AllowAnonymous]
     public async Task<IActionResult> SearchByRadius([FromQuery] Coordinates coordinates, [FromQuery] int radius)
     {
         var pharmacies = await _searchService.SearchByRadius(coordinates, radius);
-        if (pharmacies == null || pharmacies.Count == 0)
-        {
-            return NotFound("No pharmacies found within this radius.");
-        }
-        return Ok(pharmacies);
+        return Ok(pharmacies ?? []);
     }
 
     /// <summary>
@@ -151,22 +139,17 @@ public class PharmacyController(
             }
 
             var results = await _searchService.SearchByMedicationAsync(medicationId, userLocation, radiusKm);
-            
-            if (results == null || results.Count == 0)
-            {
-                return NotFound(new { message = "No pharmacies found with this medication in stock." });
-            }
 
             return Ok(new
             {
-                totalResults = results.Count,
+                totalResults = results?.Count ?? 0,
                 searchCriteria = new
                 {
                     medicationId,
                     radiusKm,
                     hasLocation = userLocation != null
                 },
-                pharmacies = results
+                pharmacies = results ?? []
             });
         }
         catch (Exception ex)
@@ -204,26 +187,21 @@ public class PharmacyController(
                 request.MedicationIds, 
                 userLocation, 
                 request.RadiusKm);
-            
-            if (results == null || results.Count == 0)
-            {
-                return NotFound(new { message = "No pharmacies found with the requested medications." });
-            }
 
-            var pharmaciesWithFullStock = results.Count(r => r.CanFulfillCompletely);
+            var pharmaciesWithFullStock = results?.Count(r => r.CanFulfillCompletely) ?? 0;
 
             return Ok(new
             {
-                totalResults = results.Count,
+                totalResults = results?.Count ?? 0,
                 pharmaciesWithFullStock,
-                pharmaciesWithPartialStock = results.Count - pharmaciesWithFullStock,
+                pharmaciesWithPartialStock = (results?.Count ?? 0) - pharmaciesWithFullStock,
                 searchCriteria = new
                 {
                     medicationCount = request.MedicationIds.Count,
                     radiusKm = request.RadiusKm,
                     hasLocation = userLocation != null
                 },
-                pharmacies = results
+                pharmacies = results ?? []
             });
         }
         catch (Exception ex)
@@ -264,26 +242,17 @@ public class PharmacyController(
                 prescriptionId, 
                 userLocation, 
                 radiusKm);
-            
-            if (results == null || results.Count == 0)
-            {
-                return NotFound(new 
-                { 
-                    message = "No pharmacies found that can fulfill the complete prescription.",
-                    suggestion = "Try searching without radius restriction or contact individual pharmacies."
-                });
-            }
 
             return Ok(new
             {
-                totalResults = results.Count,
+                totalResults = results?.Count ?? 0,
                 prescriptionId,
                 searchCriteria = new
                 {
                     radiusKm,
                     hasLocation = userLocation != null
                 },
-                pharmacies = results
+                pharmacies = results ?? []
             });
         }
         catch (InvalidOperationException ex)
@@ -329,19 +298,10 @@ public class PharmacyController(
                 request.MedicationIds, 
                 userLocation, 
                 maxRadius);
-            
-            if (results == null || results.Count == 0)
-            {
-                return NotFound(new 
-                { 
-                    message = "No pharmacies found within the specified radius.",
-                    maxRadiusSearched = maxRadius
-                });
-            }
 
             return Ok(new
             {
-                totalResults = results.Count,
+                totalResults = results?.Count ?? 0,
                 algorithm = "Composite Score: 60% stock availability + 40% proximity",
                 searchCriteria = new
                 {
@@ -349,7 +309,7 @@ public class PharmacyController(
                     maxRadiusKm = maxRadius,
                     userLocation = new { request.Latitude, request.Longitude }
                 },
-                pharmacies = results.Select(r => new
+                pharmacies = (results ?? []).Select(r => new
                 {
                     r.Pharmacy,
                     r.DistanceKm,
