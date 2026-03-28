@@ -1,8 +1,29 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PIYA_API.Model;
 
 namespace PIYA_API.Data
 {
+    /// <summary>
+    /// Converts DateTime values to/from UTC so they are stored as <c>timestamptz</c>
+    /// and always read back with <c>DateTimeKind.Utc</c>.
+    /// </summary>
+    internal sealed class UtcDateTimeConverter : ValueConverter<DateTime, DateTime>
+    {
+        public UtcDateTimeConverter() : base(
+            v => v.Kind == DateTimeKind.Utc ? v : DateTime.SpecifyKind(v, DateTimeKind.Utc),
+            v => DateTime.SpecifyKind(v, DateTimeKind.Utc)) { }
+    }
+
+    internal sealed class UtcNullableDateTimeConverter : ValueConverter<DateTime?, DateTime?>
+    {
+        public UtcNullableDateTimeConverter() : base(
+            v => v.HasValue
+                ? (DateTime?)(v.Value.Kind == DateTimeKind.Utc ? v.Value : DateTime.SpecifyKind(v.Value, DateTimeKind.Utc))
+                : null,
+            v => v.HasValue ? (DateTime?)DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : null) { }
+    }
+
     public class PharmacyApiDbContext(DbContextOptions<PharmacyApiDbContext> options) : DbContext(options)
     {
         public DbSet<Pharmacy> Pharmacies { get; set; }
@@ -487,6 +508,24 @@ namespace PIYA_API.Data
 
             modelBuilder.Entity<PharmacyCompany>()
                 .HasIndex(pc => pc.OwnerId);
+
+            // ── UTC DateTime converters ───────────────────────────────────────────────
+            // Applied last so they don't interfere with property-level configuration above.
+            // All DateTime/DateTime? columns become `timestamptz` in PostgreSQL and are always
+            // read back with DateTimeKind.Utc — no more DateTimeKind.Unspecified surprises.
+            var utcConverter         = new UtcDateTimeConverter();
+            var utcNullableConverter = new UtcNullableDateTimeConverter();
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var property in entityType.GetProperties())
+                {
+                    if (property.ClrType == typeof(DateTime))
+                        property.SetValueConverter(utcConverter);
+                    else if (property.ClrType == typeof(DateTime?))
+                        property.SetValueConverter(utcNullableConverter);
+                }
+            }
         }
     }
 }

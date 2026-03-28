@@ -31,17 +31,6 @@ try
 {
     Log.Information("Starting PIYA Healthcare API");
 
-    // TODO(#13): Npgsql legacy timestamp behavior — keeps DateTimeKind.Unspecified working with PostgreSQL.
-    // Migration checklist to remove this switch:
-    //   1. Add `.HasConversion<UtcDateTimeConverter>()` (or use NodaTime) on all DateTime columns.
-    //   2. Update all DateTime properties in models to be stored/read as UTC only
-    //      (use DateTime.UtcNow instead of DateTime.Now everywhere; run
-    //       `grep -r "DateTime.Now" --include="*.cs"` to find remaining callsites).
-    //   3. Generate a new EF migration — the column types will change from `timestamp` to `timestamptz`.
-    //   4. Remove this AppContext.SetSwitch call and the Npgsql.EnableLegacyTimestampBehavior entry
-    //      from appsettings.json if it exists there.
-    AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-
     var builder = WebApplication.CreateBuilder(args);
 
     // Use Serilog for logging
@@ -349,7 +338,16 @@ builder.Services.AddScoped<ICacheService, CacheService>();
 
 // Real-time SignalR Notification Service
 builder.Services.AddScoped<ISignalRNotificationService, SignalRNotificationService>();
-builder.Services.AddSignalR();
+// SignalR — use Redis backplane when available for multi-instance support
+var signalRRedisConn = builder.Configuration.GetConnectionString("Redis");
+var signalRBuilder = builder.Services.AddSignalR();
+if (!string.IsNullOrWhiteSpace(signalRRedisConn))
+{
+    signalRBuilder.AddStackExchangeRedis(signalRRedisConn, options =>
+    {
+        options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("PIYA");
+    });
+}
 
 // Push Notification Service (FCM)
 // FCM depends on scoped services (e.g. DbContext or cache), so register as scoped

@@ -386,3 +386,9 @@ FodyWeavers.xsd
 # Secrets
 secrets.json
 **/secrets.json
+firebase-credentials.json
+**/firebase-credentials.json
+
+# Environment files with secrets
+*.env
+.env.*
