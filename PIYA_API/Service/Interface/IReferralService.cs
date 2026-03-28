@@ -1,3 +1,4 @@
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 
 namespace PIYA_API.Service.Interface;
@@ -56,9 +57,11 @@ public interface IReferralService
     Task<Referral> CancelAsync(Guid referralId);
 
     /// <summary>
-    /// List doctors whose specialty matches the referral's ReferredToSpecialty
+    /// List doctors whose specialty matches the referral's ReferredToSpecialty.
+    /// Returns a <see cref="PIYA_API.DTOs.ReferralAvailableDoctorsDto"/> so callers can
+    /// distinguish "no doctors registered for this specialty" from "all doctors full".
     /// </summary>
-    Task<List<User>> GetAvailableDoctorsAsync(Guid referralId);
+    Task<ReferralAvailableDoctorsDto> GetAvailableDoctorsAsync(Guid referralId);
 
     /// <summary>
     /// Forward an existing referral to another specialist, creating a child referral in the chain.

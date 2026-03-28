@@ -344,6 +344,29 @@ public class PrescriptionService(
         return prescription.ExpiresAt < DateTime.UtcNow;
     }
 
+    public async Task ExpireAsync(Guid prescriptionId)
+    {
+        var prescription = await _context.Prescriptions.FindAsync(prescriptionId)
+            ?? throw new KeyNotFoundException($"Prescription {prescriptionId} not found.");
+
+        // Only transition from non-terminal states — never overwrite Cancelled / Fulfilled
+        if (prescription.Status is PrescriptionStatus.Active or PrescriptionStatus.PartiallyFulfilled)
+        {
+            prescription.Status = PrescriptionStatus.Expired;
+            prescription.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            await _auditService.LogEntityActionAsync(
+                "ExpirePrescription",
+                "Prescription",
+                prescriptionId.ToString(),
+                prescription.DoctorId,
+                "Prescription expired on-demand (past ExpiresAt) during QR generation request."
+            );
+        }
+    }
+
     public async Task<List<Prescription>> GetExpiringSoonAsync(int daysThreshold = 7)
     {
         var thresholdDate = DateTime.UtcNow.AddDays(daysThreshold);

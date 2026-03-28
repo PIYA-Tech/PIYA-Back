@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -272,17 +273,37 @@ public class ReferralService(
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    public async Task<List<User>> GetAvailableDoctorsAsync(Guid referralId)
+    public async Task<ReferralAvailableDoctorsDto> GetAvailableDoctorsAsync(Guid referralId)
     {
         var referral = await RequireAsync(referralId);
 
-        return await _context.DoctorProfiles
+        // Count ALL doctors with the target specialty (regardless of capacity)
+        // so callers know whether the specialty itself is absent vs just full.
+        var allInSpecialty = await _context.DoctorProfiles
+            .Where(dp => dp.Specialization == referral.ReferredToSpecialty && dp.User.IsActive)
+            .CountAsync();
+
+        // Doctors that are actually available for new referrals
+        var available = await _context.DoctorProfiles
             .Include(dp => dp.User)
             .Where(dp => dp.Specialization == referral.ReferredToSpecialty
                       && dp.User.IsActive
                       && dp.AcceptingNewPatients)
-            .Select(dp => dp.User)
+            .Select(dp => new AvailableDoctorDto
+            {
+                Id             = dp.UserId,
+                FirstName      = dp.User.FirstName,
+                LastName       = dp.User.LastName,
+                Specialization = dp.Specialization.ToString()
+            })
             .ToListAsync();
+
+        return new ReferralAvailableDoctorsDto
+        {
+            Doctors          = available,
+            TotalInSpecialty = allInSpecialty,
+            Specialty        = referral.ReferredToSpecialty.ToString()
+        };
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -304,6 +325,34 @@ public class ReferralService(
 
         if (parent.Status is ReferralStatus.Completed or ReferralStatus.Cancelled)
             throw new InvalidOperationException($"Cannot forward a referral in status {parent.Status}.");
+
+        // ── Circular referral guard ────────────────────────────────────────
+        // Walk the ParentReferralId chain upward, collecting every doctor who
+        // has already appeared in the chain (both referring and referred-to).
+        // Reject if the proposed targetDoctorId is already in that set — this
+        // prevents infinite referral loops (A→B→C→A) and self-referrals.
+        if (targetDoctorId.HasValue)
+        {
+            var doctorsInChain = new HashSet<Guid>();
+            var cursor = parent;
+
+            while (cursor != null)
+            {
+                if (cursor.ReferringDoctorId != Guid.Empty)
+                    doctorsInChain.Add(cursor.ReferringDoctorId);
+                if (cursor.ReferredToDoctorId.HasValue)
+                    doctorsInChain.Add(cursor.ReferredToDoctorId.Value);
+
+                cursor = cursor.ParentReferralId.HasValue
+                    ? await _context.Referrals.FindAsync(cursor.ParentReferralId.Value)
+                    : null;
+            }
+
+            if (doctorsInChain.Contains(targetDoctorId.Value))
+                throw new InvalidOperationException(
+                    "Cannot forward to a doctor who is already part of this referral chain. " +
+                    "This would create a circular referral loop.");
+        }
 
         // Mark the parent as completed (the forwarding doctor has seen the patient)
         parent.Status = ReferralStatus.Completed;

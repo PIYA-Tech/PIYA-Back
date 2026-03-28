@@ -275,8 +275,30 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         }
 
         var oldTime = appointment.ScheduledAt;
-        appointment.ScheduledAt = newScheduledAt;
+
+        // Create a new appointment row for the rescheduled slot.
+        // The original row is kept as an immutable audit record with Status = Rescheduled
+        // and RescheduledToId pointing at the replacement so clients can follow the chain.
+        var newAppointment = new Appointment
+        {
+            Id            = Guid.NewGuid(),
+            PatientId     = appointment.PatientId,
+            DoctorId      = appointment.DoctorId,
+            HospitalId    = appointment.HospitalId,
+            ScheduledAt   = newScheduledAt,
+            DurationMinutes = appointment.DurationMinutes,
+            Status        = AppointmentStatus.Scheduled,
+            Reason        = appointment.Reason,
+            ReferralId    = appointment.ReferralId,
+            CreatedAt     = DateTime.UtcNow,
+            UpdatedAt     = DateTime.UtcNow
+        };
+
+        _context.Appointments.Add(newAppointment);
+
+        // Seal the old appointment: terminal status + forward link
         appointment.Status = AppointmentStatus.Rescheduled;
+        appointment.RescheduledToId = newAppointment.Id;
         appointment.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
@@ -286,7 +308,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             "Appointment",
             id.ToString(),
             appointment.PatientId,
-            $"Rescheduled from {oldTime} to {newScheduledAt}"
+            $"Rescheduled from {oldTime} to {newScheduledAt}; new appointment id={newAppointment.Id}"
         );
 
         // Notify the patient by email
@@ -313,7 +335,8 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             _logger.LogWarning(ex, "Failed to send reschedule email for appointment {AppointmentId}", id);
         }
 
-        return appointment;
+        // Return the new (active) appointment so the caller/client gets the usable booking
+        return newAppointment;
     }
 
     public async Task<Appointment> CompleteAppointmentAsync(Guid id, string? doctorNotes)

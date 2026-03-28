@@ -101,4 +101,12 @@ public class Appointment
     /// </summary>
     public Guid? ReferralId { get; set; }
     public Referral? Referral { get; set; }
+
+    /// <summary>
+    /// When this appointment is rescheduled, points to the newly created replacement appointment.
+    /// Allows clients to follow the full reschedule chain (Status == Rescheduled → navigate here).
+    /// Null unless Status == Rescheduled.
+    /// </summary>
+    public Guid? RescheduledToId { get; set; }
+    public Appointment? RescheduledTo { get; set; }
 }

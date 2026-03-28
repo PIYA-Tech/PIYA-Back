@@ -149,15 +149,17 @@ public class ReferralController(
     }
 
     /// <summary>
-    /// List doctors available for a referral's specialty (for patient to choose from)
+    /// List doctors available for a referral's specialty (for patient to choose from).
+    /// Response distinguishes between "specialty not registered on platform" and
+    /// "all doctors at capacity" so the UI can show a helpful message.
     /// </summary>
     [HttpGet("{id:guid}/available-doctors")]
     public async Task<IActionResult> GetAvailableDoctors(Guid id)
     {
         try
         {
-            var doctors = await _referralService.GetAvailableDoctorsAsync(id);
-            return Ok(doctors);
+            var result = await _referralService.GetAvailableDoctorsAsync(id);
+            return Ok(result);
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)

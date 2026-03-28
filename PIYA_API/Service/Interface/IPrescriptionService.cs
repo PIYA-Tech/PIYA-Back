@@ -61,6 +61,14 @@ public interface IPrescriptionService
     /// Check if prescription is expired
     /// </summary>
     Task<bool> IsExpiredAsync(Guid id);
+
+    /// <summary>
+    /// Immediately mark a single prescription as Expired on-demand.
+    /// Called when a QR-generation request detects the prescription has passed its
+    /// ExpiresAt date before the hourly PrescriptionExpiryService background job runs.
+    /// No-ops if the prescription is already in a terminal state (Cancelled, Fulfilled, Expired).
+    /// </summary>
+    Task ExpireAsync(Guid prescriptionId);
     
     /// <summary>
     /// Get prescriptions expiring soon
