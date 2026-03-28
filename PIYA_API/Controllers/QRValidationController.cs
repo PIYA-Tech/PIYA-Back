@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using PIYA_API.Configuration;
+using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
 
@@ -39,6 +40,29 @@ public class QRValidationController(
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
             var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
             var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
+
+            // On-demand expiry check: the hourly background service may not have run yet.
+            // Expire the prescription immediately if it is past its ExpiresAt date so a
+            // patient cannot generate a QR against a prescription the doctor intended to
+            // have expired — closes the up-to-1-hour clinical safety window.
+            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+            if (prescription == null)
+                return NotFound(new { error = "Prescription not found." });
+            if (prescription.PatientId != userId && !User.IsInRole("SuperAdmin"))
+                return Forbid();
+            if (prescription.Status == PrescriptionStatus.Active && prescription.ExpiresAt < DateTime.UtcNow)
+            {
+                // Inline expire — matches the logic in PrescriptionExpiryService
+                prescription.Status = PrescriptionStatus.Expired;
+                // We can't update via the controller DbContext directly; delegate to the service.
+                await _prescriptionService.ExpireAsync(prescriptionId);
+                return BadRequest(new { error = "This prescription has expired and can no longer be used." });
+            }
+            if (prescription.Status != PrescriptionStatus.Active &&
+                prescription.Status != PrescriptionStatus.PartiallyFulfilled)
+            {
+                return BadRequest(new { error = $"Cannot generate QR for a prescription with status '{prescription.Status}'." });
+            }
 
             var (token, tokenId) = await _qrService.GeneratePrescriptionQrTokenAsync(
                 prescriptionId,
@@ -131,15 +155,30 @@ public class QRValidationController(
                 return NotFound(new { error = "Prescription not found" });
             }
 
-            try
+            // Guard: if prescription is already Fulfilled (e.g. a previous scan whose HTTP
+            // response was lost in transit), treat this as an idempotent success rather than
+            // an error — the token is consumed and cannot be replayed, so returning the
+            // fulfilled prescription details is safe and avoids a confusing "failed" state
+            // on the pharmacist's device.
+            if (prescription.Status == PrescriptionStatus.Fulfilled ||
+                prescription.Status == PrescriptionStatus.PartiallyFulfilled)
             {
-                prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+                _logger.LogInformation(
+                    "Prescription {PrescriptionId} was already {Status}; returning idempotent success for QR scan by pharmacist {PharmacistId}",
+                    prescriptionId, prescription.Status, pharmacistId);
             }
-            catch (InvalidOperationException ex)
+            else
             {
-                _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
-                    prescriptionId, ex.Message);
-                // Non-fatal: return the prescription details if it was already fulfilled (e.g. scanned twice)
+                try
+                {
+                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
+                        prescriptionId, ex.Message);
+                    // Non-fatal: return the prescription details (already fulfilled or stock issue surfaced to caller)
+                }
             }
 
             return Ok(new PrescriptionScanResponse
