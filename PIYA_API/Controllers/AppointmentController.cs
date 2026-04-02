@@ -9,9 +9,10 @@ namespace PIYA_API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class AppointmentController(IAppointmentService appointmentService, ILogger<AppointmentController> logger) : ControllerBase
+public class AppointmentController(IAppointmentService appointmentService, IUserService userService, ILogger<AppointmentController> logger) : ControllerBase
 {
     private readonly IAppointmentService _appointmentService = appointmentService;
+    private readonly IUserService _userService = userService;
     private readonly ILogger<AppointmentController> _logger = logger;
 
     /// <summary>
@@ -32,27 +33,27 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
 
             // Patients can only book for themselves; Admins/SuperAdmins may override the PatientId;
             // Doctors must explicitly supply a PatientId (they cannot book themselves as patient)
-            Guid patientId;
+
+            if (userId == Guid.Empty)
+                return BadRequest(new { error = "Authenticated user ID is invalid." });
+            
+            // Doctors cannot book appointments for themselves as patients
+            if (userId == request.DoctorId)
+                return BadRequest(new { error = "Doctors cannot book appointments for themselves as patients. Please specify a valid PatientId." });
+
+            // Role-based validation
             if (userRole == "Patient")
-                patientId = userId;
-            else if (userRole == "Admin" || userRole == "SuperAdmin")
             {
-                if (!request.PatientId.HasValue)
-                    return BadRequest(new { error = "PatientId is required when an Admin or SuperAdmin books an appointment." });
-                patientId = request.PatientId.Value;
+                // If PatientId is provided, it must match the authenticated user's ID
+                if (request.PatientId != null && request.PatientId != userId)
+                {
+                    return BadRequest(new { error = "Patients can only book appointments for themselves." });
+                }
             }
-            else if (userRole == "Doctor")
-            {
-                if (!request.PatientId.HasValue)
-                    return BadRequest(new { error = "PatientId is required when a Doctor books an appointment." });
-                patientId = request.PatientId.Value;
-            }
-            else
-                return Forbid();
 
             var appointment = new Appointment
             {
-                PatientId = patientId,
+                PatientId = userId,
                 DoctorId = request.DoctorId,
                 HospitalId = request.HospitalId,
                 ScheduledAt = request.ScheduledAt,
@@ -113,9 +114,15 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     }
 
     /// <summary>
-    /// Get my appointments (patient or doctor)
+    /// Get my appointments — works for every role.
+    /// Every authenticated user is also a patient who can book appointments,
+    /// so ALL roles get their patient-side appointments.
+    /// Additionally, Doctors get their doctor-side appointments merged in
+    /// (deduplicated by ID), since a Doctor can simultaneously be a patient
+    /// who has booked their own appointments.
     /// </summary>
     [HttpGet("my-appointments")]
+    [Authorize]
     public async Task<ActionResult<List<Appointment>>> GetMyAppointments([FromQuery] string? status = null, CancellationToken ct = default)
     {
         try
@@ -129,30 +136,59 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
                 appointmentStatus = parsedStatus;
             }
 
-            List<Appointment> appointments;
-            if (userRole == "Patient")
+            // Every role has a patient-side view
+            var patientAppointments = await _appointmentService.GetPatientAppointmentsAsync(userId, appointmentStatus, ct);
+
+            // Doctors additionally see appointments where they are the treating doctor
+            if (userRole == "Doctor")
             {
-                appointments = await _appointmentService.GetPatientAppointmentsAsync(userId, appointmentStatus, ct);
+                var doctorAppointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, null, appointmentStatus, ct);
+
+                // Merge and deduplicate by Id — a single appointment could theoretically
+                // appear on both sides if somehow the same user is both patient and doctor
+                var merged = patientAppointments
+                    .UnionBy(doctorAppointments, a => a.Id)
+                    .OrderBy(a => a.ScheduledAt)
+                    .ToList();
+
+                return Ok(merged);
             }
-            else if (userRole == "Doctor")
+
+            return Ok(patientAppointments);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving user appointments");
+            return StatusCode(500, new { error = "Failed to retrieve appointments" });
+        }
+    }
+
+    /// <summary>
+    /// Get the calling doctor's patient appointments (appointments where they are
+    /// the treating doctor). Kept for backwards compatibility — new clients should
+    /// use GET /my-appointments which merges both sides for every role.
+    /// </summary>
+    [HttpGet("doctors-patient-appointments")]
+    [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
+    public async Task<ActionResult> GetDoctorPatientAppointments([FromQuery] string? status = null)
+    {
+        try
+        {
+            var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value!);
+
+            AppointmentStatus? appointmentStatus = null;
+            if (!string.IsNullOrEmpty(status) && Enum.TryParse<AppointmentStatus>(status, true, out var parsedStatus))
             {
-                appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, status: appointmentStatus, ct: ct);
+                appointmentStatus = parsedStatus;
             }
-            else if (userRole == "Admin" || userRole == "SuperAdmin")
-            {
-                // Admins can see all appointments via GET /api/appointment/hospital/{id}
-                appointments = [];
-            }
-            else
-            {
-                return BadRequest(new { error = "Only patients and doctors can view their appointments" });
-            }
+
+            var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, null, appointmentStatus);
 
             return Ok(appointments);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving user appointments");
+            _logger.LogError(ex, "Error retrieving doctor appointments");
             return StatusCode(500, new { error = "Failed to retrieve appointments" });
         }
     }
@@ -225,8 +261,21 @@ public class AppointmentController(IAppointmentService appointmentService, ILogg
     {
         try
         {
-            var isAvailable = await _appointmentService.IsDoctorAvailableAsync(doctorId, scheduledAt, durationMinutes);
-            return Ok(new { doctorId, scheduledAt, durationMinutes, isAvailable });
+            if (scheduledAt < DateTime.UtcNow)
+                return BadRequest(new { error = "Cannot check availability for a time in the past." });
+
+            var available = await _appointmentService.IsDoctorAvailableAsync(doctorId, scheduledAt, durationMinutes);
+
+            return Ok(new
+            {
+                doctorId,
+                scheduledAt,
+                durationMinutes,
+                available,
+                message = available
+                    ? "Doctor is available at the requested time."
+                    : "Doctor already has a conflicting appointment at the requested time."
+            });
         }
         catch (Exception ex)
         {
