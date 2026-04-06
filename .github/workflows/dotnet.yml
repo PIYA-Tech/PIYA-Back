@@ -66,8 +66,7 @@ jobs:
         run: |
           dotnet tool run dotnet-ef database update \
             --project PIYA_API/PIYA_API.csproj \
-            --startup-project PIYA_API/PIYA_API.csproj \
-            -- --environment LoadTest
+            --startup-project PIYA_API/PIYA_API.csproj
 
       - name: Run tests (unit + integration + security; exclude LoadTest)
         env:
