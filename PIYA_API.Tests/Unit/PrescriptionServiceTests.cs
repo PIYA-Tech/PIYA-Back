@@ -31,7 +31,11 @@ public class PrescriptionServiceTests : IDisposable
         _inventoryMock = new Mock<IInventoryService>();
 
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["SomeKey"] = "value" })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Security:PrescriptionSigningKey"] = "UNIT_TEST_PRESCRIPTION_SIGNING_KEY_32_CHARS__1234",
+                ["Security:QrSigningKey"] = "UNIT_TEST_QR_SIGNING_KEY_32_CHARS__1234",
+            })
             .Build();
 
         _service = new PrescriptionService(

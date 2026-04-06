@@ -63,6 +63,7 @@ jobs:
           Jwt__Issuer: PIYA_API_CI
           Jwt__Audience: PIYA_Clients_CI
           Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
+          Security__PrescriptionSigningKey: CI_PRESCRIPTION_SIGNING_KEY_32_CHARS_MINIMUM__1234
           Cors__AllowedOrigins__0: "http://localhost"
         run: |
           dotnet tool run dotnet-ef database update \
@@ -80,6 +81,7 @@ jobs:
           Jwt__Issuer: PIYA_API_CI
           Jwt__Audience: PIYA_Clients_CI
           Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
+          Security__PrescriptionSigningKey: CI_PRESCRIPTION_SIGNING_KEY_32_CHARS_MINIMUM__1234
           Cors__AllowedOrigins__0: "http://localhost"
           # Enable demo-user seeding so admin_piya exists for integration tests.
           # The seeder is idempotent — safe to run on every CI invocation.

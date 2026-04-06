@@ -1,0 +1,11 @@
+bin
+obj
+.git
+*.log
+.env
+.vs
+.vscode
+.DS_Store
+logs/
+uploads/
+PIYA_API.Tests/

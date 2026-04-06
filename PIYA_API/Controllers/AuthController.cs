@@ -593,18 +593,20 @@ public class AuthController(
     {
         if (string.IsNullOrWhiteSpace(refreshToken)) return;
 
-        var isDev = HttpContext.RequestServices
-                        .GetRequiredService<IWebHostEnvironment>()
-                        .IsDevelopment();
+        var env = HttpContext.RequestServices
+                        .GetRequiredService<IWebHostEnvironment>();
+        var isNonProd = env.IsDevelopment()
+                     || env.IsEnvironment("Test")
+                     || env.IsEnvironment("LoadTest");
 
         Response.Cookies.Append("piya_refresh_token", refreshToken, new CookieOptions
         {
             HttpOnly = true,
-            Secure   = true,          // required by spec when SameSite=None; fine in dev with HTTPS
-            SameSite = isDev
-                ? SameSiteMode.Lax    // localhost dev: same-site, Lax is sufficient
+            Secure   = !isNonProd,    // don't force Secure on http://localhost in tests
+            SameSite = isNonProd
+                ? SameSiteMode.Lax    // localhost/test: same-site, Lax is sufficient
                 : SameSiteMode.None,  // production: cross-subdomain (piya.life → api.piya.life)
-            Domain   = isDev ? null : ".piya.life",  // share across all *.piya.life subdomains
+            Domain   = isNonProd ? null : ".piya.life",  // share across all *.piya.life subdomains
             Expires  = DateTimeOffset.UtcNow.AddDays(7),
             Path     = "/api/auth", // only sent to auth endpoints — reduces cookie surface
         });
