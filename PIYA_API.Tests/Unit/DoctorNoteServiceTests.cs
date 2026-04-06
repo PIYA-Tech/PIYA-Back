@@ -121,7 +121,7 @@ public class DoctorNoteServiceTests : IDisposable
     {
         var (note, _) = await _service.CreateNoteAsync(MakeNote());
 
-        var result = await _service.RevokeNoteAsync(note.Id, _doctorId, "Testing revocation");
+        var result = await _service.RevokeNoteAsync(note.Id, "Testing revocation");
 
         result.Should().NotBeNull();
         result!.Status.Should().Be(DoctorNoteStatus.Revoked);

@@ -31,17 +31,19 @@ public class PharmacyInventoryServiceTests : IDisposable
             Name = "Test Pharmacy",
             Address = "123 Main St",
             City = "Baku",
-            Phone = "0000000000",
-            IsActive = true
+            Country = "Azerbaijan",
+            PhoneNumber = "0000000000",
+            IsActive = true,
+            Coordinates = new Coordinates { Latitude = 40.4093, Longitude = 49.8671 },
+            Company = new PharmacyCompany { Name = "Test Company" }
         });
         _context.Medications.Add(new Medication
         {
             Id = _medicationId,
-            Name = "Paracetamol",
-            ActiveIngredient = "Paracetamol",
-            DosageForm = "Tablet",
+            BrandName = "Paracetamol",
+            GenericName = "Paracetamol",
+            Form = "Tablet",
             Strength = "500mg",
-            IsActive = true
         });
         _context.SaveChanges();
 
