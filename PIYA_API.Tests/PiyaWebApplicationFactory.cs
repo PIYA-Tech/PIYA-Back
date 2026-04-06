@@ -32,6 +32,7 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Jwt__Issuer", "PIYA_API_Test");
         Environment.SetEnvironmentVariable("Jwt__Audience", "PIYA_Clients_Test");
         Environment.SetEnvironmentVariable("Security__QrSigningKey", "PIYA_LOCAL_TEST_QR_SIGNING_KEY_AT_LEAST_32_CHARS_LONG");
+        Environment.SetEnvironmentVariable("Cors__AllowedOrigins__0", "http://localhost");
 
         // ----------------------------------------------------------------
         // Add a high-priority in-memory config layer.
