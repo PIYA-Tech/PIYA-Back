@@ -457,6 +457,13 @@ app.MapControllers();
     app.MapHub<PIYA_API.Hubs.PharmacyHub>("/hubs/pharmacy");
     app.MapHub<PIYA_API.Hubs.InventoryHub>("/hubs/inventory");
 
+    // Apply pending EF Core migrations on startup (creates tables if needed).
+    using (var migrationScope = app.Services.CreateScope())
+    {
+        var db = migrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+        await db.Database.MigrateAsync();
+    }
+
     // Credentials are read from SuperAdmin:* config / PIYA__SuperAdmin__* env vars.
     await ProductionSeeder.SeedAsync(app.Services);
 
