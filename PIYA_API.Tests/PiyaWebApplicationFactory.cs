@@ -34,6 +34,7 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Security__QrSigningKey", "PIYA_LOCAL_TEST_QR_SIGNING_KEY_AT_LEAST_32_CHARS_LONG");
         Environment.SetEnvironmentVariable("Security__PrescriptionSigningKey", "PIYA_LOCAL_TEST_PRESCRIPTION_SIGNING_KEY_32_CHARS_LONG");
         Environment.SetEnvironmentVariable("Cors__AllowedOrigins__0", "http://localhost");
+        Environment.SetEnvironmentVariable("ENABLE_DEMO_SEEDING", "true");
 
         // ----------------------------------------------------------------
         // Add a high-priority in-memory config layer.
@@ -62,6 +63,9 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
                 ["Features:EnableQrCodeSystem"]       = "true",
                 ["Features:EnableAppointmentSystem"]  = "true",
                 ["Features:EnablePrescriptionSystem"] = "true",
+
+                // Disable rate limiting globally so integration tests don't get throttled.
+                ["RateLimiting:EnableGlobal"] = "false",
 
                 // Use in-memory distributed cache (no Redis required).
                 ["Caching:Provider"] = "InMemory",
