@@ -56,7 +56,7 @@ public class PrescriptionIntegrationTests : IClassFixture<PiyaWebApplicationFact
     [Fact]
     public async Task GetMyPrescriptions_Unauthenticated_Returns401()
     {
-        var response = await _client.GetAsync("/api/prescription/my");
+        var response = await _client.GetAsync("/api/prescription/my-prescriptions");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -72,7 +72,7 @@ public class PrescriptionIntegrationTests : IClassFixture<PiyaWebApplicationFact
         }
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync("/api/prescription/my");
+        var response = await _client.GetAsync("/api/prescription/my-prescriptions");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }

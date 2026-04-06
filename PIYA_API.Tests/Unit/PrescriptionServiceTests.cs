@@ -19,12 +19,23 @@ public class PrescriptionServiceTests : IDisposable
     private readonly Mock<IQRService> _qrMock;
     private readonly Mock<IInventoryService> _inventoryMock;
 
+    // Fixed GUIDs so we can seed matching User entities for navigation properties
+    private static readonly Guid DefaultPatientId = Guid.NewGuid();
+    private static readonly Guid DefaultDoctorId = Guid.NewGuid();
+
     public PrescriptionServiceTests()
     {
         var options = new DbContextOptionsBuilder<PharmacyApiDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
             .Options;
         _context = new PharmacyApiDbContext(options);
+
+        // Seed User entities so Include(p => p.Patient/Doctor) resolves correctly
+        _context.Users.AddRange(
+            MakeUser(DefaultPatientId, "patient"),
+            MakeUser(DefaultDoctorId, "doctor")
+        );
+        _context.SaveChanges();
 
         _auditMock = new Mock<IAuditService>();
         _qrMock = new Mock<IQRService>();
@@ -160,6 +171,13 @@ public class PrescriptionServiceTests : IDisposable
         var patientId = Guid.NewGuid();
         var otherPatientId = Guid.NewGuid();
 
+        // Seed User entities for the extra patient IDs
+        _context.Users.AddRange(
+            MakeUser(patientId, "patient_a"),
+            MakeUser(otherPatientId, "patient_b")
+        );
+        await _context.SaveChangesAsync();
+
         await _service.CreatePrescriptionAsync(MakePrescription(patientId: patientId));
         await _service.CreatePrescriptionAsync(MakePrescription(patientId: patientId));
         await _service.CreatePrescriptionAsync(MakePrescription(patientId: otherPatientId));
@@ -174,6 +192,11 @@ public class PrescriptionServiceTests : IDisposable
     public async Task CountDoctorPrescriptions_ReturnsCorrectCount()
     {
         var doctorId = Guid.NewGuid();
+
+        // Seed User entity for the extra doctor ID
+        _context.Users.Add(MakeUser(doctorId, "doctor_extra"));
+        await _context.SaveChangesAsync();
+
         await _service.CreatePrescriptionAsync(MakePrescription(doctorId: doctorId));
         await _service.CreatePrescriptionAsync(MakePrescription(doctorId: doctorId));
 
@@ -190,13 +213,26 @@ public class PrescriptionServiceTests : IDisposable
         DateTime? expiresAt = null) => new()
     {
         Id = Guid.NewGuid(),
-        PatientId = patientId ?? Guid.NewGuid(),
-        DoctorId = doctorId ?? Guid.NewGuid(),
+        PatientId = patientId ?? DefaultPatientId,
+        DoctorId = doctorId ?? DefaultDoctorId,
         Status = PrescriptionStatus.Active,
         IssuedAt = DateTime.UtcNow,
         ExpiresAt = expiresAt ?? DateTime.UtcNow.AddDays(30),
         Diagnosis = "Hypertension",
         Instructions = "Take once daily"
+    };
+
+    private static User MakeUser(Guid id, string tag) => new()
+    {
+        Id = id,
+        Username = $"test_{tag}_{id:N}",
+        FirstName = "Test",
+        LastName = tag,
+        Email = $"{tag}_{id:N}@test.com",
+        PhoneNumber = "+994500000000",
+        IsActive = true,
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow
     };
 
     public void Dispose()

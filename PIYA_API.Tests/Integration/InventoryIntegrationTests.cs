@@ -51,7 +51,7 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
     [Fact]
     public async Task GetPharmacyInventory_Unauthenticated_Returns401()
     {
-        var response = await _client.GetAsync($"/api/pharmacy-inventory/{Guid.NewGuid()}");
+        var response = await _client.GetAsync($"/api/PharmacyInventory/pharmacy/{Guid.NewGuid()}");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -63,7 +63,7 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
         if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync($"/api/pharmacy-inventory/{Guid.NewGuid()}");
+        var response = await _client.GetAsync($"/api/PharmacyInventory/pharmacy/{Guid.NewGuid()}");
 
         // Patient should not access inventory management
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound);
