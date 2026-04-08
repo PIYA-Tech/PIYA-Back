@@ -18,6 +18,9 @@ WORKDIR /app
 # Non-root user for security
 RUN addgroup --system piya && adduser --system --ingroup piya piya
 
+# Install curl for Docker health checks
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Create directories the app writes to at runtime
 RUN mkdir -p /app/logs /app/uploads && chown -R piya:piya /app
 
@@ -28,5 +31,8 @@ USER piya
 EXPOSE 8080
 
 ENV ASPNETCORE_URLS=http://+:8080
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -sf http://localhost:8080/api/health || exit 1
 
 ENTRYPOINT ["dotnet", "PIYA_API.dll"]
