@@ -22,7 +22,7 @@ RUN addgroup --system piya && adduser --system --ingroup piya piya
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 # Create directories the app writes to at runtime
-RUN mkdir -p /app/logs /app/uploads && chown -R piya:piya /app
+RUN mkdir -p /app/logs /app/uploads /app/keys && chown -R piya:piya /app
 
 COPY --from=build /app/publish .
 

@@ -11,13 +11,20 @@ public class LoginRequestValidator : AbstractValidator<LoginRequest>
 {
     public LoginRequestValidator()
     {
-        // At least one identifier is required
+        // At least one identifier is required (mobile sends Identifier; web may send Email/Username)
         RuleFor(x => x)
-            .Must(x => !string.IsNullOrWhiteSpace(x.Email) || !string.IsNullOrWhiteSpace(x.Username))
+            .Must(x => !string.IsNullOrWhiteSpace(x.Identifier)
+                     || !string.IsNullOrWhiteSpace(x.Email)
+                     || !string.IsNullOrWhiteSpace(x.Username))
             .WithMessage("Email or username is required.");
 
         RuleFor(x => x.Email)
             .EmailAddress().When(x => !string.IsNullOrWhiteSpace(x.Email))
+            .WithMessage("Invalid email format.");
+
+        // When the unified Identifier field contains an '@', validate as email
+        RuleFor(x => x.Identifier)
+            .EmailAddress().When(x => !string.IsNullOrWhiteSpace(x.Identifier) && x.Identifier.Contains('@'))
             .WithMessage("Invalid email format.");
 
         RuleFor(x => x.Password)

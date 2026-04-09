@@ -59,7 +59,7 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
         if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync("/api/doctor/my-profile");
+        var response = await _client.GetAsync("/api/doctor/profile");
 
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound);
     }
@@ -90,7 +90,7 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
         if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync("/api/userslist/all");
+        var response = await _client.GetAsync("/api/v1/userslist");
 
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
     }
@@ -102,7 +102,7 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
         if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync("/api/userslist/all");
+        var response = await _client.GetAsync("/api/v1/userslist");
 
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
     }

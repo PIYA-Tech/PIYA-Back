@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using PIYA_API.Data;
 using System.Diagnostics;
 using System.Reflection;
@@ -12,10 +13,12 @@ namespace PIYA_API.Controllers;
 public class HealthController(
     PharmacyApiDbContext context,
     IConfiguration configuration,
+    IDistributedCache cache,
     ILogger<HealthController> logger) : ControllerBase
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IConfiguration _configuration = configuration;
+    private readonly IDistributedCache _cache = cache;
     private readonly ILogger<HealthController> _logger = logger;
 
     /// <summary>
@@ -127,6 +130,36 @@ public class HealthController(
             };
         }
 
+        // 5. Redis / Distributed Cache Health
+        try
+        {
+            var cacheStart = Stopwatch.StartNew();
+            var testKey = "__health_check__";
+            await _cache.SetStringAsync(testKey, "ok",
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5) });
+            var readBack = await _cache.GetStringAsync(testKey);
+            cacheStart.Stop();
+
+            var cacheProvider = _configuration["Caching:Provider"] ?? "Memory";
+            healthChecks["cache"] = new
+            {
+                status = readBack == "ok" ? "Healthy" : "Degraded",
+                responseTime = $"{cacheStart.ElapsedMilliseconds}ms",
+                provider = cacheProvider
+            };
+        }
+        catch (Exception ex)
+        {
+            if (overallStatus == "Healthy") overallStatus = "Degraded";
+            healthChecks["cache"] = new
+            {
+                status = "Unhealthy",
+                error = ex.Message,
+                provider = _configuration["Caching:Provider"] ?? "Memory"
+            };
+            _logger.LogError(ex, "Cache health check failed");
+        }
+
         var totalTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
 
         return Ok(new
@@ -146,27 +179,52 @@ public class HealthController(
     [AllowAnonymous]
     public async Task<IActionResult> GetReadiness()
     {
+        var checks = new Dictionary<string, string>();
+        var ready = true;
+
+        // Check database connectivity
         try
         {
-            // Check database connectivity
             await _context.Database.CanConnectAsync();
-
-            return Ok(new
-            {
-                status = "Ready",
-                timestamp = DateTime.UtcNow
-            });
+            checks["database"] = "ok";
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Readiness check failed");
-            return StatusCode(503, new
+            _logger.LogError(ex, "Readiness: database check failed");
+            checks["database"] = "failed";
+            ready = false;
+        }
+
+        // Check distributed cache connectivity
+        try
+        {
+            await _cache.SetStringAsync("__ready__", "1",
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5) });
+            checks["cache"] = "ok";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Readiness: cache check failed");
+            checks["cache"] = "failed";
+            ready = false;
+        }
+
+        if (ready)
+        {
+            return Ok(new
             {
-                status = "Not Ready",
+                status = "Ready",
                 timestamp = DateTime.UtcNow,
-                error = "Database connection failed"
+                checks
             });
         }
+
+        return StatusCode(503, new
+        {
+            status = "Not Ready",
+            timestamp = DateTime.UtcNow,
+            checks
+        });
     }
 
     /// <summary>
