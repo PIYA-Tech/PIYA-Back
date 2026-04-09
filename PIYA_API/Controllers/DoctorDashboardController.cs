@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -32,7 +33,7 @@ public class DoctorDashboardController(
     /// (allows the frontend to distinguish "no profile" from server errors without a 404 console warning).
     /// </summary>
     [HttpGet("profile")]
-    public async Task<ActionResult<DoctorProfile>> GetMyProfile()
+    public async Task<ActionResult<DoctorProfileResponseDto>> GetMyProfile()
     {
         try
         {
@@ -42,7 +43,7 @@ public class DoctorDashboardController(
             if (profile == null)
                 return NoContent(); // 204 — profile not yet created
 
-            return Ok(profile);
+            return Ok(DoctorProfileResponseDto.FromEntity(profile));
         }
         catch (Exception ex)
         {
@@ -132,7 +133,7 @@ public class DoctorDashboardController(
             profile.UpdatedAt = DateTime.UtcNow;
 
             var updated = await _doctorProfileService.UpdateProfileAsync(profile);
-            return Ok(updated);
+            return Ok(DoctorProfileResponseDto.FromEntity(updated));
         }
         catch (Exception ex)
         {
@@ -172,7 +173,7 @@ public class DoctorDashboardController(
 
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date, parsedStatus);
 
-            return Ok(appointments);
+            return Ok(appointments.Select(AppointmentResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -325,7 +326,7 @@ public class DoctorDashboardController(
             var userId = GetUserId();
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date);
             
-            return Ok(appointments);
+            return Ok(appointments.Select(AppointmentResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -387,7 +388,7 @@ public class DoctorDashboardController(
             }
 
             var updated = await _appointmentService.UpdateStatusAsync(id, AppointmentStatus.InProgress);
-            return Ok(updated);
+            return Ok(AppointmentResponseDto.FromEntity(updated));
         }
         catch (InvalidOperationException ex)
         {
@@ -422,7 +423,7 @@ public class DoctorDashboardController(
             }
 
             var updated = await _appointmentService.CompleteAppointmentAsync(id, request?.Notes);
-            return Ok(updated);
+            return Ok(AppointmentResponseDto.FromEntity(updated));
         }
         catch (InvalidOperationException ex)
         {
@@ -458,7 +459,7 @@ public class DoctorDashboardController(
 
             var reason = request?.Reason ?? "Cancelled by doctor";
             var updated = await _appointmentService.CancelAppointmentAsync(id, userId, reason);
-            return Ok(updated);
+            return Ok(AppointmentResponseDto.FromEntity(updated));
         }
         catch (InvalidOperationException ex)
         {
@@ -674,7 +675,7 @@ public class DoctorDashboardController(
                 return Forbid();
             }
 
-            return Ok(prescription);
+            return Ok(PrescriptionResponseDto.FromEntity(prescription));
         }
         catch (Exception ex)
         {
@@ -790,7 +791,7 @@ public class DoctorDashboardController(
             }
 
             var updated = await _prescriptionService.CancelPrescriptionAsync(id, request?.Reason);
-            return Ok(updated);
+            return Ok(PrescriptionResponseDto.FromEntity(updated));
         }
         catch (InvalidOperationException ex)
         {

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using PIYA_API.Configuration;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -131,7 +132,7 @@ public class PrescriptionController(
                 return Forbid();
             }
 
-            return Ok(prescription);
+            return Ok(PrescriptionResponseDto.FromEntity(prescription));
         }
         catch (Exception ex)
         {
@@ -158,7 +159,7 @@ public class PrescriptionController(
             }
 
             var prescriptions = await _prescriptionService.GetPatientPrescriptionsAsync(userId, prescriptionStatus);
-            return Ok(prescriptions);
+            return Ok(prescriptions.Select(PrescriptionResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -186,7 +187,7 @@ public class PrescriptionController(
             }
 
             var prescriptions = await _prescriptionService.GetDoctorPrescriptionsAsync(doctorId);
-            return Ok(prescriptions);
+            return Ok(prescriptions.Select(PrescriptionResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -293,7 +294,7 @@ public class PrescriptionController(
                 return NotFound(new { error = "Prescription not found" });
             }
 
-            return Ok(prescription);
+            return Ok(PrescriptionResponseDto.FromEntity(prescription));
         }
         catch (Exception ex)
         {

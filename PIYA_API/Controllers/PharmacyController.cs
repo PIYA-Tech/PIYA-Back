@@ -66,9 +66,10 @@ public class PharmacyController(
             var pharmacy = DtoToPharmacy(dto);
             pharmacy.Id = id;
             var updated = await _pharmacyService.Update(pharmacy);
+            var publicDto = ToPublicDto(updated);
             await _pharmacyHub.Clients.Group("pharmacies")
-                .SendAsync("PharmacyUpdated", updated);
-            return Ok(updated);
+                .SendAsync("PharmacyUpdated", publicDto);
+            return Ok(publicDto);
         }
         catch (KeyNotFoundException)
         {

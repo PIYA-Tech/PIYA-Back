@@ -154,7 +154,7 @@ public class HospitalController(
             var hospital = DtoToHospital(dto);
             hospital.Id = id;
             var updated = await _hospitalService.UpdateAsync(hospital);
-            return Ok(updated);
+            return Ok(ToPublicDto(updated));
         }
         catch (KeyNotFoundException)
         {
@@ -286,7 +286,7 @@ public class HospitalController(
         try
         {
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(id);
-            return Ok(doctors);
+            return Ok(doctors.Select(DoctorProfileResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -309,7 +309,7 @@ public class HospitalController(
         try
         {
             var updated = await _doctorProfileService.AssignHospitalsAsync(doctorProfileId, request.HospitalIds);
-            return Ok(updated);
+            return Ok(DoctorProfileResponseDto.FromEntity(updated));
         }
         catch (KeyNotFoundException ex)
         {
@@ -340,7 +340,7 @@ public class HospitalController(
                 doctorProfileId,
                 profile.HospitalIds.Where(h => h != hospitalId).ToList());
 
-            return Ok(updated);
+            return Ok(DoctorProfileResponseDto.FromEntity(updated));
         }
         catch (KeyNotFoundException ex)
         {
@@ -423,7 +423,7 @@ public class HospitalController(
                 return NotFound(new { error = "No hospital assigned to your account." });
 
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(hospital.Id);
-            return Ok(doctors);
+            return Ok(doctors.Select(DoctorProfileResponseDto.FromEntity));
         }
         catch (Exception ex)
         {

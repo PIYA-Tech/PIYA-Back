@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using PIYA_API.DTOs;
 using PIYA_API.Hubs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -54,7 +55,7 @@ public class PharmacyInventoryController(
         try
         {
             var inventory = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
-            return Ok(inventory);
+            return Ok(inventory.Select(InventoryResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -77,7 +78,7 @@ public class PharmacyInventoryController(
             {
                 return NotFound(new { error = "Inventory item not found" });
             }
-            return Ok(inventory);
+            return Ok(InventoryResponseDto.FromEntity(inventory));
         }
         catch (Exception ex)
         {
@@ -183,10 +184,11 @@ public class PharmacyInventoryController(
 
             var userId = GetUserId();
             var result = await _inventoryService.UpdateStockAsync(id, request.Quantity, userId, request.Notes);
+            var dto = InventoryResponseDto.FromEntity(result);
             await _inventoryHub.Clients
                 .Group($"inventory:{result.PharmacyId}")
-                .SendAsync("InventoryUpdated", result);
-            return Ok(result);
+                .SendAsync("InventoryUpdated", dto);
+            return Ok(dto);
         }
         catch (InvalidOperationException ex)
         {
@@ -218,11 +220,12 @@ public class PharmacyInventoryController(
                 userId,
                 request.ReferenceNumber);
 
+            var dto = InventoryResponseDto.FromEntity(result);
             await _inventoryHub.Clients
                 .Group($"inventory:{request.PharmacyId}")
-                .SendAsync("InventoryUpdated", result);
+                .SendAsync("InventoryUpdated", dto);
 
-            return Ok(result);
+            return Ok(dto);
         }
         catch (InvalidOperationException ex)
         {
@@ -255,11 +258,12 @@ public class PharmacyInventoryController(
                 request.PrescriptionId,
                 request.ReferenceNumber);
 
+            var dto = InventoryResponseDto.FromEntity(result);
             await _inventoryHub.Clients
                 .Group($"inventory:{request.PharmacyId}")
-                .SendAsync("InventoryUpdated", result);
+                .SendAsync("InventoryUpdated", dto);
 
-            return Ok(result);
+            return Ok(dto);
         }
         catch (InvalidOperationException ex)
         {
