@@ -2,8 +2,10 @@ using Xunit;
 using Moq;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Class;
@@ -41,19 +43,24 @@ public class PrescriptionServiceTests : IDisposable
         _qrMock = new Mock<IQRService>();
         _inventoryMock = new Mock<IInventoryService>();
 
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
+        var securityOptions = Options.Create(
+            new SecurityOptions
             {
-                ["Security:PrescriptionSigningKey"] = "UNIT_TEST_PRESCRIPTION_SIGNING_KEY_32_CHARS__1234",
-                ["Security:QrSigningKey"] = "UNIT_TEST_QR_SIGNING_KEY_32_CHARS__1234",
-            })
-            .Build();
+                PrescriptionSigningKey =
+                    "UNIT_TEST_PRESCRIPTION_SIGNING_KEY_32_CHARS__1234",
+                QrSigningKey =
+                    "UNIT_TEST_QR_SIGNING_KEY_32_CHARS__1234"
+            });
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(candidate => candidate.EnvironmentName)
+            .Returns(Environments.Development);
 
         _service = new PrescriptionService(
             _context,
             _auditMock.Object,
             _qrMock.Object,
-            config,
+            securityOptions,
+            environment.Object,
             _inventoryMock.Object,
             Mock.Of<ILogger<PrescriptionService>>());
     }

@@ -16,7 +16,7 @@ public static class AuthenticationExtensions
     {
         var jwtSecretKey = config["Jwt:SecretKey"]
             ?? throw new InvalidOperationException(
-                "Jwt:SecretKey is not configured. Set the PIYA__Jwt__SecretKey environment variable. " +
+                "Jwt:SecretKey is not configured. Set the Jwt__SecretKey environment variable. " +
                 "Generate with: openssl rand -base64 64");
 
         if (jwtSecretKey.Length < 32)

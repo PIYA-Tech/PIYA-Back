@@ -97,12 +97,13 @@ public class QRValidationController(
     }
 
     /// <summary>
-    /// Validate and use QR code to retrieve prescription (Pharmacist only)
+    /// Atomically validate the QR code, deduct stock, and fulfill the prescription.
     /// </summary>
     [HttpPost("prescription/scan")]
-    [Authorize(Roles = "Pharmacist,SuperAdmin")]
+    [Authorize(Roles = "Pharmacist,PharmacyManager,SuperAdmin")]
     [ProducesResponseType(typeof(PrescriptionScanResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<PrescriptionScanResponse>> ScanPrescriptionQR(
         [FromBody] ScanQRRequest request)
@@ -113,73 +114,49 @@ public class QRValidationController(
             var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
             var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
 
-            // ── Step 1: Read-only token validation (does NOT consume the token) ──
-            var (isValid, prescriptionId, entityType, expiresAt, errorMessage) =
-                await _qrService.ValidateQrTokenAsync(request.QrToken);
-
-            if (!isValid)
+            Guid pharmacyId;
+            if (User.IsInRole("SuperAdmin"))
             {
-                _logger.LogWarning("Invalid QR scan attempt by pharmacist {PharmacistId}: {Error}",
-                    pharmacistId, errorMessage);
-                return BadRequest(new { error = errorMessage });
-            }
-
-            if (entityType != "Prescription")
-            {
-                return BadRequest(new { error = "QR code is not for a prescription." });
-            }
-
-            // ── Step 2: Resolve dispensing pharmacy — must exist before consuming the token ──
-            var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(pharmacistId, activeOnly: true);
-            var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
-            if (!pharmacyId.HasValue)
-            {
-                _logger.LogWarning(
-                    "Pharmacist {PharmacistId} has no active pharmacy assignment; QR scan for prescription {PrescriptionId} rejected",
-                    pharmacistId, prescriptionId);
-                return Forbid(); // 403 — do not expose prescription data without a known dispensing pharmacy
-            }
-
-            // ── Step 3: Consume the token — only after all pre-checks pass ──
-            var consumed = await _qrService.MarkTokenAsUsedAsync(request.QrToken, pharmacistId, ipAddress, userAgent);
-            if (!consumed)
-            {
-                // Token was valid a moment ago but could not be marked used — treat as already consumed
-                return BadRequest(new { error = "QR code could not be consumed. It may have just been used by another session. Please ask the patient to generate a new QR code." });
-            }
-
-            // ── Step 4: Fetch prescription and fulfill ──
-            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
-            if (prescription == null)
-            {
-                return NotFound(new { error = "Prescription not found" });
-            }
-
-            // Guard: if prescription is already Fulfilled (e.g. a previous scan whose HTTP
-            // response was lost in transit), treat this as an idempotent success rather than
-            // an error — the token is consumed and cannot be replayed, so returning the
-            // fulfilled prescription details is safe and avoids a confusing "failed" state
-            // on the pharmacist's device.
-            if (prescription.Status == PrescriptionStatus.Fulfilled ||
-                prescription.Status == PrescriptionStatus.PartiallyFulfilled)
-            {
-                _logger.LogInformation(
-                    "Prescription {PrescriptionId} was already {Status}; returning idempotent success for QR scan by pharmacist {PharmacistId}",
-                    prescriptionId, prescription.Status, pharmacistId);
+                if (!request.PharmacyId.HasValue)
+                    return BadRequest(new { error = "pharmacyId is required for SuperAdmin dispensing." });
+                pharmacyId = request.PharmacyId.Value;
             }
             else
             {
-                try
+                var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(
+                    pharmacistId, activeOnly: true);
+                if (request.PharmacyId.HasValue)
                 {
-                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
+                    if (!assignments.Any(a => a.PharmacyId == request.PharmacyId.Value))
+                        return Forbid();
+                    pharmacyId = request.PharmacyId.Value;
                 }
-                catch (InvalidOperationException ex)
+                else
                 {
-                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} during QR scan: {Message}",
-                        prescriptionId, ex.Message);
-                    // Non-fatal: return the prescription details (already fulfilled or stock issue surfaced to caller)
+                    var distinctPharmacyIds = assignments
+                        .Select(a => a.PharmacyId)
+                        .Distinct()
+                        .ToList();
+                    if (distinctPharmacyIds.Count == 0)
+                        return Forbid();
+                    if (distinctPharmacyIds.Count > 1)
+                    {
+                        return BadRequest(new
+                        {
+                            error = "pharmacyId is required when the account has multiple active pharmacy assignments."
+                        });
+                    }
+
+                    pharmacyId = distinctPharmacyIds[0];
                 }
             }
+
+            var prescription = await _prescriptionService.FulfillPrescriptionByQrAsync(
+                request.QrToken,
+                pharmacistId,
+                pharmacyId,
+                ipAddress,
+                userAgent);
 
             return Ok(new PrescriptionScanResponse
             {
@@ -187,8 +164,13 @@ public class QRValidationController(
                 PatientId = prescription.PatientId,
                 DoctorId = prescription.DoctorId,
                 Status = prescription.Status.ToString(),
+                Diagnosis = prescription.Diagnosis,
+                Instructions = prescription.Instructions,
+                FulfilledByPharmacyId = prescription.FulfilledByPharmacyId,
+                FulfilledAt = prescription.FulfilledAt,
                 Medications = prescription.Items?.Select(item => new MedicationItemDto
                 {
+                    Id = item.Id,
                     MedicationId = item.MedicationId,
                     MedicationName = item.Medication?.BrandName ?? "Unknown",
                     GenericName = item.Medication?.GenericName,
@@ -196,17 +178,33 @@ public class QRValidationController(
                     Dosage = item.Dosage,
                     Frequency = item.Frequency,
                     Duration = item.Duration,
-                    Instructions = item.Instructions
+                    Instructions = item.Instructions,
+                    IsFulfilled = item.IsFulfilled
                 }).ToList() ?? [],
                 IssuedAt = prescription.IssuedAt,
                 ExpiresAt = prescription.ExpiresAt,
-                Message = "Prescription validated successfully. Status updated to Fulfilled."
+                Message = "Prescription dispensed successfully."
             });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Insufficient stock", StringComparison.Ordinal))
+        {
+            _logger.LogWarning("Prescription QR dispense rejected for stock: {Message}", ex.Message);
+            return Conflict(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning("Prescription QR dispense rejected: {Message}", ex.Message);
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error scanning QR code");
-            return StatusCode(500, new { error = "Failed to validate QR code" });
+            return StatusCode(500, new { error = "Failed to dispense prescription" });
         }
     }
 
@@ -274,6 +272,31 @@ public class QRValidationController(
             }
 
             var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var role = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            // Resolve the bearer QR to its prescription before mutating it. A
+            // Patient may revoke only their own prescription QR; a Doctor may
+            // revoke only one they issued. SuperAdmin retains break-glass access.
+            var (isValid, entityId, entityType, _, validationError) =
+                await _qrService.ValidateQrTokenAsync(request.Token);
+            if (!isValid)
+                return BadRequest(new { error = validationError });
+            if (!string.Equals(entityType, "Prescription", StringComparison.Ordinal))
+                return Forbid();
+
+            var prescription = await _prescriptionService.GetByIdAsync(entityId);
+            if (prescription == null)
+                return NotFound(new { error = "Prescription not found" });
+
+            var ownsToken = role switch
+            {
+                "Patient" => prescription.PatientId == userId,
+                "Doctor" => prescription.DoctorId == userId,
+                "SuperAdmin" => true,
+                _ => false
+            };
+            if (!ownsToken)
+                return Forbid();
 
             var revoked = await _qrService.RevokeTokenAsync(
                 request.Token,
@@ -410,6 +433,7 @@ public class QRTokenResponse
 public class ScanQRRequest
 {
     public string QrToken { get; set; } = string.Empty;
+    public Guid? PharmacyId { get; set; }
 }
 
 public class PrescriptionScanResponse
@@ -418,6 +442,10 @@ public class PrescriptionScanResponse
     public Guid PatientId { get; set; }
     public Guid DoctorId { get; set; }
     public string Status { get; set; } = string.Empty;
+    public string? Diagnosis { get; set; }
+    public string? Instructions { get; set; }
+    public Guid? FulfilledByPharmacyId { get; set; }
+    public DateTime? FulfilledAt { get; set; }
     public List<MedicationItemDto> Medications { get; set; } = [];
     public DateTime IssuedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
@@ -426,6 +454,7 @@ public class PrescriptionScanResponse
 
 public class MedicationItemDto
 {
+    public Guid Id { get; set; }
     public Guid MedicationId { get; set; }
     public string MedicationName { get; set; } = string.Empty;
     public string? GenericName { get; set; }
@@ -434,6 +463,7 @@ public class MedicationItemDto
     public string? Frequency { get; set; }
     public string? Duration { get; set; }
     public string? Instructions { get; set; }
+    public bool IsFulfilled { get; set; }
 }
 
 public class QRStatusResponse

@@ -1,6 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PIYA_API.Model;
+using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Data
 {
@@ -68,6 +70,10 @@ namespace PIYA_API.Data
 
         // Auth security
         public DbSet<UsedRefreshToken> UsedRefreshTokens { get; set; }
+        public DbSet<WebhookSubscription> WebhookSubscriptions { get; set; }
+        public DbSet<WebhookDelivery> WebhookDeliveries { get; set; }
+        public DbSet<UserConsent> UserConsents { get; set; }
+        public DbSet<IntegrationSyncState> IntegrationSyncStates { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -103,6 +109,34 @@ namespace PIYA_API.Data
                 .HasIndex(u => u.ExpiresAt); // for cleanup
             modelBuilder.Entity<UsedRefreshToken>()
                 .HasIndex(u => u.UserId);
+
+            var webhookEventsProperty = modelBuilder.Entity<WebhookSubscription>()
+                .Property(item => item.Events)
+                .HasConversion(
+                    events => System.Text.Json.JsonSerializer.Serialize(events, (System.Text.Json.JsonSerializerOptions?)null),
+                    json => System.Text.Json.JsonSerializer.Deserialize<List<WebhookEventType>>(json, (System.Text.Json.JsonSerializerOptions?)null) ?? new());
+            webhookEventsProperty.Metadata.SetValueComparer(
+                new ValueComparer<List<WebhookEventType>>(
+                    (left, right) => left != null && right != null && left.SequenceEqual(right),
+                    events => events.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
+                    events => events.ToList()));
+            modelBuilder.Entity<WebhookSubscription>().HasIndex(item => item.IsActive);
+            modelBuilder.Entity<WebhookSubscription>().Property(item => item.Url).HasMaxLength(2048);
+            modelBuilder.Entity<WebhookSubscription>().Property(item => item.Secret).HasMaxLength(4096);
+            modelBuilder.Entity<WebhookDelivery>().HasIndex(item => new { item.Success, item.NextAttemptAt, item.LockedUntil });
+            modelBuilder.Entity<WebhookDelivery>().HasIndex(item => item.WebhookId);
+            modelBuilder.Entity<WebhookDelivery>().Property(item => item.Response).HasMaxLength(4096);
+            modelBuilder.Entity<WebhookDelivery>()
+                .HasOne<WebhookSubscription>()
+                .WithMany()
+                .HasForeignKey(item => item.WebhookId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<UserConsent>().HasIndex(item => new { item.UserId, item.Purpose, item.GrantedAt });
+            modelBuilder.Entity<UserConsent>().Property(item => item.Purpose).HasMaxLength(200);
+            modelBuilder.Entity<UserConsent>().Property(item => item.IpAddress).HasMaxLength(64);
+            modelBuilder.Entity<UserConsent>().Property(item => item.UserAgent).HasMaxLength(1024);
+            modelBuilder.Entity<IntegrationSyncState>().HasKey(item => item.Key);
+            modelBuilder.Entity<IntegrationSyncState>().Property(item => item.Key).HasMaxLength(200);
 
             // Token.Family — index for fast family-revocation queries
             modelBuilder.Entity<Token>()

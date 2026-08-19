@@ -12,11 +12,16 @@ namespace PIYA_API.Service.Class;
 /// </summary>
 public class PerformanceMonitoringService(
     ILogger<PerformanceMonitoringService> logger,
+    DatabasePerformanceInterceptor databasePerformance,
     ICacheService? cacheService = null) : IPerformanceMonitoringService
 {
     private readonly ILogger<PerformanceMonitoringService> _logger = logger;
-    private readonly ConcurrentDictionary<string, List<EndpointMetric>> _endpointMetrics = new();
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<EndpointMetric>> _endpointMetrics = new();
     private readonly ICacheService? _cacheService = cacheService;
+    private readonly DatabasePerformanceInterceptor _databasePerformance = databasePerformance;
+    private readonly object _cpuGate = new();
+    private TimeSpan _lastCpuTime = Process.GetCurrentProcess().TotalProcessorTime;
+    private DateTime _lastCpuSampleAt = DateTime.UtcNow;
 
     public async Task RecordEndpointMetricAsync(string endpoint, string method, int statusCode, long durationMs, long? memoryUsed = null)
     {
@@ -34,16 +39,12 @@ public class PerformanceMonitoringService(
             };
 
             _endpointMetrics.AddOrUpdate(key,
-                [metric],
-                (_, list) =>
+                _ => new ConcurrentQueue<EndpointMetric>([metric]),
+                (metricKey, queue) =>
                 {
-                    list.Add(metric);
-                    // Keep only last 10000 metrics per endpoint
-                    if (list.Count > 10000)
-                    {
-                        list.RemoveRange(0, 5000);
-                    }
-                    return list;
+                    queue.Enqueue(metric);
+                    while (queue.Count > 10000) queue.TryDequeue(out _);
+                    return queue;
                 });
 
             await Task.CompletedTask;
@@ -144,9 +145,7 @@ public class PerformanceMonitoringService(
 
     public async Task<List<DatabaseQueryMetric>> GetDatabaseMetricsAsync(int top = 20)
     {
-        // This would require EF Core interceptors or profiling tools
-        // For now, return placeholder data
-        return await Task.FromResult(new List<DatabaseQueryMetric>());
+        return await Task.FromResult(_databasePerformance.Snapshot(top));
     }
 
     public async Task<CacheStatistics> GetCacheStatisticsAsync()
@@ -154,17 +153,17 @@ public class PerformanceMonitoringService(
         // Get stats from cache service if available
         if (_cacheService != null)
         {
-            // Would need to implement stats tracking in cache service
+            var stats = _cacheService.GetStatistics();
             return await Task.FromResult(new CacheStatistics
             {
-                TotalRequests = 0,
-                CacheHits = 0,
-                CacheMisses = 0,
-                HitRate = 0,
+                TotalRequests = stats.TotalRequests,
+                CacheHits = stats.Hits,
+                CacheMisses = stats.Misses,
+                HitRate = stats.TotalRequests == 0 ? 0 : stats.Hits * 100d / stats.TotalRequests,
                 TotalKeys = 0,
                 ExpiredKeys = 0,
                 MemoryUsedBytes = 0,
-                AverageGetTimeMs = 0
+                AverageGetTimeMs = stats.AverageGetTimeMs
             });
         }
 
@@ -174,15 +173,30 @@ public class PerformanceMonitoringService(
     public async Task<SystemResourceMetrics> GetSystemResourcesAsync()
     {
         var process = Process.GetCurrentProcess();
+        double cpuUsage;
+        lock (_cpuGate)
+        {
+            var sampledAt = DateTime.UtcNow;
+            var cpuTime = process.TotalProcessorTime;
+            var wallTime = sampledAt - _lastCpuSampleAt;
+            cpuUsage = wallTime <= TimeSpan.Zero
+                ? 0
+                : (cpuTime - _lastCpuTime).TotalMilliseconds /
+                  (wallTime.TotalMilliseconds * Environment.ProcessorCount) * 100;
+            _lastCpuTime = cpuTime;
+            _lastCpuSampleAt = sampledAt;
+        }
+        var drive = new DriveInfo(Path.GetPathRoot(AppContext.BaseDirectory) ?? "/");
+        var totalMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         
         return await Task.FromResult(new SystemResourceMetrics
         {
-            CpuUsagePercent = 0, // Requires periodic sampling
+            CpuUsagePercent = Math.Clamp(cpuUsage, 0, 100),
             MemoryUsedBytes = process.WorkingSet64,
-            MemoryTotalBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
-            MemoryUsagePercent = (double)process.WorkingSet64 / GC.GetGCMemoryInfo().TotalAvailableMemoryBytes * 100,
-            DiskUsedBytes = 0, // Would need DriveInfo
-            DiskTotalBytes = 0,
+            MemoryTotalBytes = totalMemory,
+            MemoryUsagePercent = totalMemory <= 0 ? 0 : (double)process.WorkingSet64 / totalMemory * 100,
+            DiskUsedBytes = drive.TotalSize - drive.AvailableFreeSpace,
+            DiskTotalBytes = drive.TotalSize,
             ActiveConnections = 0, // Would need to track
             ThreadPoolThreads = ThreadPool.ThreadCount,
             MeasuredAt = DateTime.UtcNow
@@ -196,9 +210,10 @@ public class PerformanceMonitoringService(
 
         foreach (var kvp in _endpointMetrics)
         {
-            var before = kvp.Value.Count;
-            kvp.Value.RemoveAll(m => m.Timestamp < cutoffDate);
-            totalRemoved += before - kvp.Value.Count;
+            while (kvp.Value.TryPeek(out var metric) && metric.Timestamp < cutoffDate)
+            {
+                if (kvp.Value.TryDequeue(out _)) totalRemoved++;
+            }
         }
 
         _logger.LogInformation("Cleaned up {Count} old performance metrics", totalRemoved);

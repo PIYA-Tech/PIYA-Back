@@ -16,7 +16,8 @@ public class Complete2FARequestValidator : AbstractValidator<Complete2FARequest>
             .Matches(@"^\d{6}$").WithMessage("Code must be a 6-digit number.");
 
         RuleFor(x => x.ChallengeToken)
-            .NotEmpty().WithMessage("ChallengeToken is required.");
+            .NotEmpty().WithMessage("ChallengeToken is required.")
+            .MaximumLength(512).WithMessage("ChallengeToken is too long.");
     }
 }
 
@@ -29,10 +30,36 @@ public class Complete2FABackupRequestValidator : AbstractValidator<Complete2FABa
             .NotEmpty().WithMessage("UserId is required.");
 
         RuleFor(x => x.BackupCode)
-            .NotEmpty().WithMessage("Backup code is required.");
+            .NotEmpty().WithMessage("Backup code is required.")
+            .Matches(@"^\d{8}$").WithMessage("Backup code must be an 8-digit number.");
 
         RuleFor(x => x.ChallengeToken)
-            .NotEmpty().WithMessage("ChallengeToken is required.");
+            .NotEmpty().WithMessage("ChallengeToken is required.")
+            .MaximumLength(512).WithMessage("ChallengeToken is too long.");
+    }
+}
+
+public class RefreshTokenRequestValidator : AbstractValidator<RefreshTokenRequest>
+{
+    public RefreshTokenRequestValidator()
+    {
+        RuleFor(x => x.RefreshToken)
+            .MaximumLength(1024).WithMessage("Refresh token is too long.")
+            .When(x => x.RefreshToken != null);
+    }
+}
+
+public class LogoutRequestValidator : AbstractValidator<LogoutRequest>
+{
+    public LogoutRequestValidator()
+    {
+        RuleFor(x => x.RefreshToken)
+            .MaximumLength(1024).WithMessage("Refresh token is too long.")
+            .When(x => x.RefreshToken != null);
+
+        RuleFor(x => x.AccessToken)
+            .MaximumLength(4096).WithMessage("Access token is too long.")
+            .When(x => x.AccessToken != null);
     }
 }
 
@@ -42,6 +69,7 @@ public class ValidateTokenRequestValidator : AbstractValidator<ValidateTokenRequ
     public ValidateTokenRequestValidator()
     {
         RuleFor(x => x.Token)
-            .NotEmpty().WithMessage("Token is required.");
+            .NotEmpty().WithMessage("Token is required.")
+            .MaximumLength(4096).WithMessage("Token is too long.");
     }
 }

@@ -34,7 +34,7 @@ public class SmsService : ISmsService
     {
         if (!_isEnabled)
         {
-            _logger.LogWarning("SMS service is disabled. SMS not sent to {PhoneNumber}", toPhoneNumber);
+            _logger.LogWarning("SMS service is disabled; message was not sent");
             return false;
         }
 
@@ -59,7 +59,9 @@ public class SmsService : ISmsService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send SMS to {PhoneNumber}", toPhoneNumber);
+            _logger.LogError(
+                "SMS delivery failed with {ExceptionType}",
+                ex.GetType().Name);
             return false;
         }
     }

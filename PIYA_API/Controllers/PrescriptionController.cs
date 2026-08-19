@@ -110,22 +110,15 @@ public class PrescriptionController(
             }
             else if (userRole == "Pharmacist")
             {
-                // Pharmacists need to read Active/PartiallyFulfilled prescriptions in order
-                // to fulfil them — blocking reads on unfulfilled Rx (FulfilledByPharmacyId == null)
-                // created a Catch-22 that made the dispensing flow impossible.
-                // Allow read if: (a) the prescription is Active or PartiallyFulfilled, OR
-                // (b) it was already fulfilled by a pharmacy this pharmacist is assigned to.
-                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-                var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(callerId, activeOnly: true);
-                var pharmacyIds = pharmacyAssignments.Select(a => a.PharmacyId).ToHashSet();
-
-                var isActive = prescription.Status == PrescriptionStatus.Active ||
-                               prescription.Status == PrescriptionStatus.PartiallyFulfilled;
-                var isFulfilledByMyPharmacy = prescription.FulfilledByPharmacyId.HasValue &&
-                                              pharmacyIds.Contains(prescription.FulfilledByPharmacyId.Value);
-
-                if (!isActive && !isFulfilledByMyPharmacy)
+                // An unassigned prescription is disclosed only through the one-time patient
+                // QR presentation flow. Direct ID lookup is limited to prescriptions already
+                // assigned to a pharmacy where the caller is active staff.
+                if (!prescription.FulfilledByPharmacyId.HasValue ||
+                    !await _pharmacyStaffService.IsStaffAtPharmacyAsync(
+                        prescription.FulfilledByPharmacyId.Value, userId))
+                {
                     return Forbid();
+                }
             }
             else if (prescription.PatientId != userId && prescription.DoctorId != userId)
             {
@@ -241,10 +234,11 @@ public class PrescriptionController(
     }
 
     /// <summary>
-    /// Validate QR code and mark it as used (Pharmacist only — one-time scan)
+    /// Legacy atomic QR dispensing route. New clients should use
+    /// POST /api/QRValidation/prescription/scan.
     /// </summary>
     [HttpPost("validate-qr")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = "Pharmacist,PharmacyManager,SuperAdmin")]
     public async Task<ActionResult<Prescription>> ValidateQrCode([FromBody] ValidateQrRequest request)
     {
         try
@@ -253,48 +247,55 @@ public class PrescriptionController(
             var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
             var userAgent = Request.Headers.UserAgent.ToString();
 
-            // ValidateAndUsePrescriptionQrTokenAsync marks the token as used (anti-replay)
-            var (isValid, prescriptionId, errorMessage) = await _qrService.ValidateAndUsePrescriptionQrTokenAsync(
-                request.QrToken, userId, ipAddress, userAgent);
-
-            if (!isValid)
+            Guid pharmacyId;
+            if (User.IsInRole("SuperAdmin"))
             {
-                return BadRequest(new { error = errorMessage });
-            }
-
-            // Fulfill the prescription (deduct stock, mark Fulfilled) — consistent with
-            // QRValidationController.ScanPrescriptionQR which also calls FulfillPrescriptionAsync.
-            var pharmacyAssignments = await _pharmacyStaffService.GetUserPharmaciesAsync(userId, activeOnly: true);
-            var pharmacyId = pharmacyAssignments.FirstOrDefault()?.PharmacyId;
-
-            Prescription? prescription;
-            if (pharmacyId.HasValue)
-            {
-                try
-                {
-                    prescription = await _prescriptionService.FulfillPrescriptionAsync(prescriptionId, pharmacyId.Value);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    _logger.LogWarning("Could not fulfill prescription {PrescriptionId} after QR validation: {Message}",
-                        prescriptionId, ex.Message);
-                    // Return the prescription data even if already fulfilled or stock issue
-                    prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
-                }
+                if (!request.PharmacyId.HasValue)
+                    return BadRequest(new { error = "pharmacyId is required for SuperAdmin dispensing." });
+                pharmacyId = request.PharmacyId.Value;
             }
             else
             {
-                _logger.LogWarning("Pharmacist {UserId} has no active pharmacy assignment; prescription {PrescriptionId} not fulfilled",
-                    userId, prescriptionId);
-                prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+                var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(
+                    userId, activeOnly: true);
+                if (request.PharmacyId.HasValue)
+                {
+                    if (!assignments.Any(a => a.PharmacyId == request.PharmacyId.Value))
+                        return Forbid();
+                    pharmacyId = request.PharmacyId.Value;
+                }
+                else
+                {
+                    var ids = assignments.Select(a => a.PharmacyId).Distinct().ToList();
+                    if (ids.Count == 0)
+                        return Forbid();
+                    if (ids.Count > 1)
+                        return BadRequest(new { error = "pharmacyId is required for accounts assigned to multiple pharmacies." });
+                    pharmacyId = ids[0];
+                }
             }
 
-            if (prescription == null)
-            {
-                return NotFound(new { error = "Prescription not found" });
-            }
+            var prescription = await _prescriptionService.FulfillPrescriptionByQrAsync(
+                request.QrToken,
+                userId,
+                pharmacyId,
+                ipAddress,
+                userAgent);
 
             return Ok(PrescriptionResponseDto.FromEntity(prescription));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Insufficient stock", StringComparison.Ordinal))
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -313,10 +314,25 @@ public class PrescriptionController(
         try
         {
             // Ensure the calling pharmacist is actually staff at the requested pharmacy
-            if (!User.IsInRole("Admin"))
+            // and that the prescription was already assigned through a patient-presented
+            // QR flow. A raw prescription GUID is never sufficient to start dispensing.
+            if (!User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
             {
                 var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
                 if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(request.PharmacyId, callerId))
+                    return Forbid();
+
+                var prescription = await _prescriptionService.GetByIdAsync(id);
+                if (prescription == null)
+                    return NotFound(new { error = "Prescription not found" });
+                if (!prescription.FulfilledByPharmacyId.HasValue)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Patient presentation is required. Scan the prescription QR code before dispensing."
+                    });
+                }
+                if (prescription.FulfilledByPharmacyId.Value != request.PharmacyId)
                     return Forbid();
             }
 
@@ -351,12 +367,14 @@ public class PrescriptionController(
             if (!User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
             {
                 var item = await _prescriptionService.GetPrescriptionItemAsync(itemId);
-                if (item?.Prescription?.FulfilledByPharmacyId is Guid pharmacyId)
-                {
-                    var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
-                    if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, callerId))
-                        return Forbid();
-                }
+                if (item == null)
+                    return NotFound(new { error = "Prescription item not found" });
+                if (item.Prescription?.FulfilledByPharmacyId is not Guid pharmacyId)
+                    return BadRequest(new { error = "Patient presentation is required before dispensing an item." });
+
+                var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                if (!await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, callerId))
+                    return Forbid();
             }
 
             var fulfilledItem = await _prescriptionService.FulfillPrescriptionItemAsync(itemId);
@@ -513,6 +531,16 @@ public class PrescriptionController(
         try
         {
             var prescriptions = await _prescriptionService.GetExpiringSoonAsync(daysThreshold);
+            if (User.IsInRole("Pharmacist"))
+            {
+                var userId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+                var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(userId, activeOnly: true);
+                var pharmacyIds = assignments.Select(a => a.PharmacyId).ToHashSet();
+                prescriptions = prescriptions
+                    .Where(p => p.FulfilledByPharmacyId.HasValue &&
+                                pharmacyIds.Contains(p.FulfilledByPharmacyId.Value))
+                    .ToList();
+            }
             return Ok(prescriptions);
         }
         catch (Exception ex)
@@ -551,7 +579,7 @@ public class PrescriptionController(
     }
 }
 
-public record ValidateQrRequest(string QrToken);
+public record ValidateQrRequest(string QrToken, Guid? PharmacyId = null);
 
 public record FulfillPrescriptionRequest(Guid PharmacyId);
 

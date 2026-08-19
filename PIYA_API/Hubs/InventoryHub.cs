@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using PIYA_API.Service.Interface;
+using System.Security.Claims;
 
 namespace PIYA_API.Hubs;
 
@@ -14,15 +16,32 @@ namespace PIYA_API.Hubs;
 ///   - InventoryUpdated  (PharmacyInventory)  — stock level / availability changed
 ///   - InventoryDeleted  (string inventoryId) — item removed
 /// </summary>
-[Authorize]
-public class InventoryHub : Hub
+[Authorize(Roles = "Pharmacist,PharmacyManager,Admin,SuperAdmin")]
+public class InventoryHub(IPharmacyStaffService pharmacyStaffService) : Hub
 {
+    private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
+
     /// <summary>
     /// Client calls this after connecting to subscribe to a pharmacy's inventory feed.
     /// </summary>
     public async Task JoinPharmacy(string pharmacyId)
     {
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"inventory:{pharmacyId}");
+        if (!Guid.TryParse(pharmacyId, out var parsedPharmacyId))
+            throw new HubException("Invalid pharmacy identifier.");
+
+        if (!Context.User!.IsInRole("Admin") && !Context.User.IsInRole("SuperAdmin"))
+        {
+            var userIdClaim = Context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId) ||
+                !await _pharmacyStaffService.IsStaffAtPharmacyAsync(parsedPharmacyId, userId))
+            {
+                throw new HubException("You are not authorized to subscribe to this pharmacy.");
+            }
+        }
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"inventory:{parsedPharmacyId:D}");
     }
 
     /// <summary>
@@ -30,6 +49,11 @@ public class InventoryHub : Hub
     /// </summary>
     public async Task LeavePharmacy(string pharmacyId)
     {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"inventory:{pharmacyId}");
+        if (!Guid.TryParse(pharmacyId, out var parsedPharmacyId))
+            throw new HubException("Invalid pharmacy identifier.");
+
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"inventory:{parsedPharmacyId:D}");
     }
 }

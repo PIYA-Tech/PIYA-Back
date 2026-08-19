@@ -7,6 +7,8 @@ namespace PIYA_API.DTOs;
 /// </summary>
 public class PharmacyUpsertDto
 {
+    /// <summary>The owning pharmacy company. Required when creating a pharmacy.</summary>
+    public Guid? CompanyId { get; set; }
     public required string Name { get; set; }
     public required string Country { get; set; }
     public required string Address { get; set; }
@@ -17,5 +19,7 @@ public class PharmacyUpsertDto
     public string? EmergencyContact { get; set; }
     public List<string>? Services { get; set; }
     public string? OperatingHours { get; set; }
+    public bool? IsActive { get; set; }
+    public bool? Is24Hours { get; set; }
     public CoordinatesDto? Coordinates { get; set; }
 }

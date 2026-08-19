@@ -20,5 +20,6 @@ public class PharmacyPublicDto
     public decimal AverageRating { get; set; }
     public int TotalRatings { get; set; }
     public CoordinatesDto? Coordinates { get; set; }
+    public Guid CompanyId { get; set; }
     public string? CompanyName { get; set; }
 }

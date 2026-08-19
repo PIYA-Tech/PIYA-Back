@@ -25,16 +25,29 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
 
         try
         {
+            var existing = await _twoFactorService.GetTwoFactorStatusAsync(userId);
+            if (existing?.IsEnabled == true)
+            {
+                if (string.IsNullOrWhiteSpace(request.CurrentCode))
+                    return Unauthorized(new { Error = "A valid current 2FA or backup code is required to reconfigure 2FA" });
+
+                var stepUp = new StepUpTwoFactorRequest(
+                    request.CurrentCode,
+                    request.CurrentCodeIsBackup);
+                if (!await VerifyStepUpAsync(userId, stepUp))
+                    return Unauthorized(new { Error = "A valid current 2FA or backup code is required to reconfigure 2FA" });
+            }
+
             var (secretKey, qrCodeUri, backupCodes) = await _twoFactorService.EnableTwoFactorAsync(userId, request.Method);
 
-            await _auditService.LogActionAsync("Enable2FA", userId, $"2FA enabled with method: {request.Method}");
+            await _auditService.LogActionAsync("Begin2FASetup", userId, $"2FA setup started with method: {request.Method}");
 
             return Ok(new
             {
                 SecretKey = secretKey,
                 QrCodeUri = qrCodeUri,
                 BackupCodes = backupCodes,
-                Message = "2FA has been enabled. Save your backup codes in a secure location."
+                Message = "Verify the configured factor to finish enabling 2FA. Save your backup codes in a secure location."
             });
         }
         catch (Exception ex)
@@ -48,11 +61,14 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     /// Disable 2FA for the current user
     /// </summary>
     [HttpPost("disable")]
-    public async Task<ActionResult> DisableTwoFactor()
+    public async Task<ActionResult> DisableTwoFactor([FromBody] StepUpTwoFactorRequest request)
     {
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
             return Unauthorized();
+
+        if (!await VerifyStepUpAsync(userId, request))
+            return Unauthorized(new { Error = "A valid current 2FA or backup code is required" });
 
         await _twoFactorService.DisableTwoFactorAsync(userId);
         await _auditService.LogActionAsync("Disable2FA", userId, "2FA has been disabled");
@@ -123,10 +139,19 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     [AllowAnonymous]
     public async Task<ActionResult> VerifyBackupCode([FromBody] VerifyBackupCodeRequest request)
     {
-        // Same caller-ownership guard as /verify
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userIdClaim != null && Guid.TryParse(userIdClaim, out var callerId) && callerId != request.UserId)
-            return Forbid();
+        var callerId = Guid.Empty;
+        var isAuthenticated = userIdClaim != null && Guid.TryParse(userIdClaim, out callerId);
+        if (isAuthenticated)
+        {
+            if (callerId != request.UserId)
+                return Forbid();
+        }
+        else if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
+                 !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+        {
+            return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
+        }
 
         var isValid = await _twoFactorService.VerifyBackupCodeAsync(request.UserId, request.BackupCode);
 
@@ -152,7 +177,7 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     /// Regenerate backup codes
     /// </summary>
     [HttpPost("regenerate-backup-codes")]
-    public async Task<ActionResult> RegenerateBackupCodes()
+    public async Task<ActionResult> RegenerateBackupCodes([FromBody] StepUpTwoFactorRequest request)
     {
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
@@ -160,6 +185,9 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
 
         try
         {
+            if (!await VerifyStepUpAsync(userId, request))
+                return Unauthorized(new { Error = "A valid current 2FA or backup code is required" });
+
             var backupCodes = await _twoFactorService.RegenerateBackupCodesAsync(userId);
             await _auditService.LogActionAsync("RegenerateBackupCodes", userId, "Backup codes regenerated");
 
@@ -182,12 +210,12 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     [AllowAnonymous]
     public async Task<ActionResult> SendSmsCode([FromBody] SendCodeRequest request)
     {
-        var success = await _twoFactorService.SendSmsCodeAsync(request.UserId);
-        
-        if (success)
-            return Ok(new { Message = "SMS code sent successfully" });
+        var authorizationError = await AuthorizeChallengeScopedRequest(request.UserId, request.ChallengeToken);
+        if (authorizationError != null)
+            return authorizationError;
 
-        return BadRequest(new { Error = "Failed to send SMS code" });
+        await _twoFactorService.SendSmsCodeAsync(request.UserId);
+        return Accepted(new { Message = "If SMS delivery is available, a code has been sent." });
     }
 
     /// <summary>
@@ -197,12 +225,12 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
     [AllowAnonymous]
     public async Task<ActionResult> SendEmailCode([FromBody] SendCodeRequest request)
     {
-        var success = await _twoFactorService.SendEmailCodeAsync(request.UserId);
-        
-        if (success)
-            return Ok(new { Message = "Email code sent successfully" });
+        var authorizationError = await AuthorizeChallengeScopedRequest(request.UserId, request.ChallengeToken);
+        if (authorizationError != null)
+            return authorizationError;
 
-        return BadRequest(new { Error = "Failed to send email code" });
+        await _twoFactorService.SendEmailCodeAsync(request.UserId);
+        return Accepted(new { Message = "If email delivery is available, a code has been sent." });
     }
 
     /// <summary>
@@ -229,10 +257,35 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
             BackupCodesRemaining = twoFactor.BackupCodes?.Count ?? 0
         });
     }
+
+    private async Task<ActionResult?> AuthorizeChallengeScopedRequest(
+        Guid requestedUserId,
+        string? challengeToken)
+    {
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdClaim != null && Guid.TryParse(userIdClaim, out var callerId))
+            return callerId == requestedUserId ? null : Forbid();
+
+        if (string.IsNullOrWhiteSpace(challengeToken) ||
+            !await _twoFactorService.ValidateChallenge(requestedUserId, challengeToken))
+        {
+            return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
+        }
+
+        return null;
+    }
+
+    private Task<bool> VerifyStepUpAsync(Guid userId, StepUpTwoFactorRequest request) =>
+        request.IsBackupCode
+            ? _twoFactorService.VerifyBackupCodeAsync(userId, request.Code)
+            : _twoFactorService.VerifyCodeAsync(userId, request.Code);
 }
 
 // DTOs
-public record EnableTwoFactorRequest(TwoFactorMethod Method);
+public record EnableTwoFactorRequest(
+    TwoFactorMethod Method,
+    string? CurrentCode = null,
+    bool CurrentCodeIsBackup = false);
 
 /// <param name="UserId">The user to verify 2FA for.</param>
 /// <param name="Code">The 6-digit TOTP / SMS / email code.</param>
@@ -242,5 +295,6 @@ public record EnableTwoFactorRequest(TwoFactorMethod Method);
 /// </param>
 public record VerifyCodeRequest(Guid UserId, string Code, string? ChallengeToken = null);
 
-public record VerifyBackupCodeRequest(Guid UserId, string BackupCode);
-public record SendCodeRequest(Guid UserId);
+public record VerifyBackupCodeRequest(Guid UserId, string BackupCode, string? ChallengeToken = null);
+public record SendCodeRequest(Guid UserId, string? ChallengeToken = null);
+public record StepUpTwoFactorRequest(string Code, bool IsBackupCode = false);

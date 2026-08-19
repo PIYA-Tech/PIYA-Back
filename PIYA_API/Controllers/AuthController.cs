@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using PIYA_API.Configuration;
 using PIYA_API.Model;
+using PIYA_API.Security;
 using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Controllers;
@@ -31,6 +32,7 @@ public class AuthController(
     private readonly ILogger<AuthController> _logger = logger;
 
     [HttpPost("register")]
+    [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -89,8 +91,9 @@ public class AuthController(
                 $"New user registered: {createdUser.Username} with role {createdUser.Role}"
             );
 
+            var usesBodyRefreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request);
             var tokenResponse = await _jwtService.GenerateSecurityToken(
-                createdUser.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
+                createdUser.Username, RefreshTokenTransportPolicy.GetDeviceInfo(Request));
 
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
@@ -108,9 +111,8 @@ public class AuthController(
                 _logger.LogWarning(evEx, "Could not send verification email for user {UserId}", createdUser.Id);
             }
 
-            // Return the token key in multiple forms so existing integration tests (and older clients) can find it.
-            // Also set the refresh token as an HttpOnly cookie for browser clients.
-            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+            if (!usesBodyRefreshToken)
+                SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new
             {
@@ -119,9 +121,9 @@ public class AuthController(
                 email = createdUser.Email,
                 accessToken = tokenResponse.AccessToken,
                 expiresAt = tokenResponse.ExpiresAt,
-                // refreshToken is included for mobile/API clients that cannot use HttpOnly cookies.
-                // Browser clients should use the cookie set above instead.
-                refreshToken = tokenResponse.RefreshToken,
+                // Native clients explicitly opt into body transport with X-PIYA-Client.
+                // Browser JavaScript can never receive the refresh token.
+                refreshToken = usesBodyRefreshToken ? tokenResponse.RefreshToken : null,
                 role = createdUser.Role.ToString(),
                 isEmailVerified = createdUser.IsEmailVerified,
                 // legacy short key used by some tests
@@ -168,6 +170,7 @@ public class AuthController(
     }
 
     [HttpPost("login")]
+    [AllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -214,11 +217,9 @@ public class AuthController(
             // Successful login — clear any prior failed attempts
             await _securityHardeningService.ResetFailedLoginAttemptsAsync(identifier);
 
-            // Detect mobile clients up-front (used for both 2FA and token response)
-            var isMobileClient = userAgent.Contains("Expo") ||
-                                 userAgent.Contains("okhttp") ||
-                                 userAgent.Contains("CFNetwork") ||
-                                 userAgent.Contains("Darwin");
+            // Native clients must opt into response-body refresh tokens explicitly;
+            // User-Agent sniffing is not a security boundary.
+            var usesBodyRefreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request);
 
             // Check if 2FA is enabled
             var requires2FA = await _twoFactorService.IsTwoFactorEnabledAsync(user.Id);
@@ -233,8 +234,9 @@ public class AuthController(
                 string twoFADelivery = "totp";
                 if (hasTrustedDevice)
                 {
-                    await _twoFactorService.SendPush2FACodeAsync(user.Id);
-                    twoFADelivery = "push";
+                    var pushSent = await _twoFactorService.SendPush2FACodeAsync(user.Id);
+                    if (pushSent)
+                        twoFADelivery = "push";
                 }
 
                 await _auditService.LogSecurityEventAsync(
@@ -247,14 +249,14 @@ public class AuthController(
                     userId = user.Id,
                     challengeToken,
                     twoFADelivery, // "push" | "totp" — lets the client show the right UI
-                    message = hasTrustedDevice
+                    message = twoFADelivery == "push"
                         ? "A verification code has been sent to your trusted device."
                         : "Please provide your authenticator code."
                 });
             }
 
             var tokenResponse = await _jwtService.GenerateSecurityToken(
-                user.Username, isMobileClient ? "Mobile" : "Web");
+                user.Username, RefreshTokenTransportPolicy.GetDeviceInfo(Request));
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
 
@@ -288,7 +290,8 @@ public class AuthController(
             // Set the refresh token as an HttpOnly Secure SameSite=Strict cookie.
             // The access token is returned in the body only — the client must store it
             // in memory (not localStorage) to eliminate XSS token-theft risk.
-            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+            if (!usesBodyRefreshToken)
+                SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new AuthResponse
             {
@@ -299,8 +302,7 @@ public class AuthController(
                 LastName = user.LastName,
                 Role = user.Role.ToString(),
                 AccessToken = tokenResponse.AccessToken,
-                // Return refresh token in body for mobile clients; browser clients use the HttpOnly cookie.
-                RefreshToken = isMobileClient ? tokenResponse.RefreshToken : null,
+                RefreshToken = usesBodyRefreshToken ? tokenResponse.RefreshToken : null,
                 ExpiresAt = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified
             });
@@ -354,7 +356,7 @@ public class AuthController(
                 return NotFound(new { message = "User not found" });
 
             var tokenResponse = await _jwtService.GenerateSecurityToken(
-                user.Username, Request.Headers.UserAgent.ToString().Contains("Expo") ? "Mobile" : "Web");
+                user.Username, RefreshTokenTransportPolicy.GetDeviceInfo(Request));
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
 
@@ -362,16 +364,9 @@ public class AuthController(
                 "LoginSuccess2FA", user.Id, ipAddress, userAgent, true,
                 $"User completed 2FA login: {user.Username}");
 
-            // For browser clients, also set the cookie
-            SetRefreshTokenCookie(tokenResponse.RefreshToken);
-
-            // Mobile/native clients cannot read HttpOnly cookies, so they receive the
-            // refresh token in the body. Browser clients get it via the cookie above and
-            // must NOT receive it in the JSON body (prevents JS access / XSS exfiltration).
-            var isMobileClient = userAgent.Contains("Expo") ||
-                                 userAgent.Contains("okhttp") ||
-                                 userAgent.Contains("CFNetwork") ||
-                                 userAgent.Contains("Darwin");
+            var usesBodyRefreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request);
+            if (!usesBodyRefreshToken)
+                SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new AuthResponse
             {
@@ -382,7 +377,7 @@ public class AuthController(
                 LastName        = user.LastName,
                 Role            = user.Role.ToString(),
                 AccessToken     = tokenResponse.AccessToken,
-                RefreshToken    = isMobileClient ? tokenResponse.RefreshToken : null,
+                RefreshToken    = usesBodyRefreshToken ? tokenResponse.RefreshToken : null,
                 ExpiresAt       = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified,
             });
@@ -429,7 +424,7 @@ public class AuthController(
                 return NotFound(new { message = "User not found" });
 
             var tokenResponse = await _jwtService.GenerateSecurityToken(
-                user.Username, userAgent.Contains("Expo") ? "Mobile" : "Web");
+                user.Username, RefreshTokenTransportPolicy.GetDeviceInfo(Request));
             if (tokenResponse == null)
                 return StatusCode(500, new { message = "Failed to generate token" });
 
@@ -437,12 +432,9 @@ public class AuthController(
                 "LoginSuccess2FABackup", user.Id, ipAddress, userAgent, true,
                 $"User completed 2FA login via backup code: {user.Username}");
 
-            SetRefreshTokenCookie(tokenResponse.RefreshToken);
-
-            var isMobileClient = userAgent.Contains("Expo") ||
-                                 userAgent.Contains("okhttp") ||
-                                 userAgent.Contains("CFNetwork") ||
-                                 userAgent.Contains("Darwin");
+            var usesBodyRefreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request);
+            if (!usesBodyRefreshToken)
+                SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new AuthResponse
             {
@@ -453,7 +445,7 @@ public class AuthController(
                 LastName        = user.LastName,
                 Role            = user.Role.ToString(),
                 AccessToken     = tokenResponse.AccessToken,
-                RefreshToken    = isMobileClient ? tokenResponse.RefreshToken : null,
+                RefreshToken    = usesBodyRefreshToken ? tokenResponse.RefreshToken : null,
                 ExpiresAt       = tokenResponse.ExpiresAt,
                 IsEmailVerified = user.IsEmailVerified,
             });
@@ -466,32 +458,24 @@ public class AuthController(
     }
 
     [HttpPost("validate-token")]
+    [Authorize]
     public IActionResult ValidateToken([FromBody] ValidateTokenRequest request)
     {
-        try
+        // Authentication middleware has already validated the signature, lifetime,
+        // issuer/audience, and revocation state of the bearer token. Never parse an
+        // arbitrary body-supplied JWT and perform another revocation-store lookup.
+        var bearer = GetAuthenticatedBearerToken();
+        if (string.IsNullOrWhiteSpace(bearer) ||
+            !FixedTimeEquals(bearer, request.Token))
         {
-            var username = _jwtService.ValidateToken(request.Token);
+            return Unauthorized(new { message = "The token must match the authenticated bearer token" });
+        }
 
-            if (username == null)
-            {
-                return Unauthorized(new { message = "Invalid or expired token" });
-            }
-
-            return Ok(new
-            {
-                valid = true,
-                username
-            });
-        }
-        catch (UnauthorizedAccessException ex)
+        return Ok(new
         {
-            return Unauthorized(new { message = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Token validation error");
-            return BadRequest(new { message = "Token validation failed" });
-        }
+            valid = true,
+            username = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        });
     }
 
     /// <summary>
@@ -531,14 +515,17 @@ public class AuthController(
     }
 
     [HttpPost("refresh")]
+    [AllowAnonymous]
     public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
     {
         try
         {
-            // Support both: refresh token in body (API/mobile clients) and HttpOnly cookie (browser clients)
-            var incomingRefresh = request.RefreshToken;
-            if (string.IsNullOrWhiteSpace(incomingRefresh))
-                incomingRefresh = Request.Cookies["piya_refresh_token"];
+            var usesBodyRefreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request);
+            // Native clients explicitly use the request/response body. Browsers must use
+            // the HttpOnly cookie; a browser body value is deliberately ignored.
+            var incomingRefresh = usesBodyRefreshToken
+                ? request.RefreshToken
+                : Request.Cookies["piya_refresh_token"];
 
             if (string.IsNullOrWhiteSpace(incomingRefresh))
                 return Unauthorized(new { message = "Refresh token is required" });
@@ -550,14 +537,21 @@ public class AuthController(
                 return Unauthorized(new { message = "Invalid or expired refresh token" });
             }
 
-            SetRefreshTokenCookie(tokenResponse.RefreshToken);
+            if (!usesBodyRefreshToken)
+                SetRefreshTokenCookie(tokenResponse.RefreshToken);
 
             return Ok(new
             {
                 accessToken = tokenResponse.AccessToken,
-                refreshToken = tokenResponse.RefreshToken,
+                refreshToken = usesBodyRefreshToken ? tokenResponse.RefreshToken : null,
                 expiresAt = tokenResponse.ExpiresAt
             });
+        }
+        catch (ConcurrentRefreshTokenException)
+        {
+            // A parallel request already rotated this token. Do not clear the cookie
+            // or audit it as an attack: the winning response owns the new credential.
+            return Conflict(new { message = "A concurrent refresh already completed. Please retry." });
         }
         catch (RefreshTokenReuseException ex)
         {
@@ -566,8 +560,7 @@ public class AuthController(
             _logger.LogWarning(
                 "Refresh token reuse attack detected for user {UserId}. All sessions revoked.",
                 ex.UserId);
-            Response.Cookies.Delete("piya_refresh_token",
-                new CookieOptions { Path = "/api/auth", Domain = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment() ? null : ".piya.life" });
+            DeleteRefreshTokenCookie();
             await _auditService.LogSecurityEventAsync(
                 "RefreshTokenReuseDetected",
                 ex.UserId,
@@ -584,11 +577,11 @@ public class AuthController(
         }
     }
 
-    /// <summary>Sets the refresh token as an HttpOnly Secure SameSite=None cookie (7-day window).
-    /// SameSite=None is required because the browser frontend (piya.life / piya.life) and
-    /// the API (api.piya.life) are on different subdomains — browsers block SameSite=Strict/Lax
-    /// cookies on cross-origin requests. SameSite=None mandates Secure=true per browser spec.
-    /// Domain=.piya.life makes the cookie visible to all *.piya.life subdomains.</summary>
+    /// <summary>
+    /// Sets a host-only HttpOnly refresh cookie. piya.life and api.piya.life are
+    /// cross-origin but same-site, so SameSite=Strict remains compatible while a
+    /// host-only cookie avoids exposing the credential to sibling subdomains.
+    /// </summary>
     private void SetRefreshTokenCookie(string? refreshToken)
     {
         if (string.IsNullOrWhiteSpace(refreshToken)) return;
@@ -603,10 +596,7 @@ public class AuthController(
         {
             HttpOnly = true,
             Secure   = !isNonProd,    // don't force Secure on http://localhost in tests
-            SameSite = isNonProd
-                ? SameSiteMode.Lax    // localhost/test: same-site, Lax is sufficient
-                : SameSiteMode.None,  // production: cross-subdomain (piya.life → api.piya.life)
-            Domain   = isNonProd ? null : ".piya.life",  // share across all *.piya.life subdomains
+            SameSite = SameSiteMode.Strict,
             Expires  = DateTimeOffset.UtcNow.AddDays(7),
             Path     = "/api/auth", // only sent to auth endpoints — reduces cookie surface
         });
@@ -616,40 +606,38 @@ public class AuthController(
     /// Logout — revokes the refresh token in the database so it cannot be reused
     /// </summary>
     [HttpPost("logout")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<IActionResult> Logout([FromBody] LogoutRequest request)
     {
         try
         {
-            // Support refresh token from body (API/mobile) or HttpOnly cookie (browser)
-            var refreshToken = request.RefreshToken;
-            if (string.IsNullOrWhiteSpace(refreshToken))
-                refreshToken = Request.Cookies["piya_refresh_token"];
+            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+                return Unauthorized(new { message = "Invalid authenticated principal" });
+
+            var refreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request)
+                ? request.RefreshToken
+                : Request.Cookies["piya_refresh_token"];
 
             if (!string.IsNullOrWhiteSpace(refreshToken))
             {
-                await _jwtService.RevokeRefreshTokenAsync(refreshToken);
-            }
-
-            // Clear the HttpOnly cookie regardless of how the refresh token arrived
-            Response.Cookies.Delete("piya_refresh_token",
-                new CookieOptions { Path = "/api/auth", Domain = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment() ? null : ".piya.life" });
-
-            // Revoke the access token jti so it is rejected immediately (before expiry)
-            if (!string.IsNullOrWhiteSpace(request.AccessToken))
-            {
-                await _jwtService.RevokeAccessTokenAsync(request.AccessToken);
-            }
-            else
-            {
-                // Fallback: extract from Authorization header if client didn't send it in body
-                var bearerToken = Request.Headers.Authorization.ToString();
-                if (bearerToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                var revoked = await _jwtService.RevokeRefreshTokenAsync(refreshToken, userId);
+                if (!revoked)
                 {
-                    await _jwtService.RevokeAccessTokenAsync(
-                        bearerToken["Bearer ".Length..].Trim());
+                    _logger.LogWarning(
+                        "Logout for user {UserId} supplied an unknown or non-owned refresh token; current access token will still be revoked",
+                        userId);
                 }
             }
+
+            DeleteRefreshTokenCookie();
+
+            // Revoke only the token that authentication middleware validated for this
+            // principal. The body AccessToken field is retained for wire compatibility
+            // but intentionally ignored.
+            var bearerToken = GetAuthenticatedBearerToken();
+            if (!string.IsNullOrWhiteSpace(bearerToken))
+                await _jwtService.RevokeAccessTokenAsync(bearerToken);
 
             return Ok(new { message = "Logged out successfully" });
         }
@@ -658,6 +646,30 @@ public class AuthController(
             _logger.LogError(ex, "Error during logout");
             return StatusCode(500, new { message = "An error occurred during logout" });
         }
+    }
+
+    private void DeleteRefreshTokenCookie() =>
+        Response.Cookies.Delete("piya_refresh_token", new CookieOptions
+        {
+            Path = "/api/auth",
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Strict
+        });
+
+    private string? GetAuthenticatedBearerToken()
+    {
+        var authorization = Request.Headers.Authorization.ToString();
+        return authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? authorization["Bearer ".Length..].Trim()
+            : null;
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        var leftBytes = System.Text.Encoding.UTF8.GetBytes(left);
+        var rightBytes = System.Text.Encoding.UTF8.GetBytes(right);
+        return leftBytes.Length == rightBytes.Length &&
+               System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
 
     /// <summary>

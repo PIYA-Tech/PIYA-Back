@@ -14,7 +14,7 @@ namespace PIYA_API.Service.Class;
 ///
 /// All operations are fully idempotent — safe to run on every startup.
 /// The SuperAdmin password is read from:
-///   env var  : PIYA__SuperAdmin__Password   (recommended for production)
+///   env var  : SuperAdmin__Password          (recommended for production)
 ///   appsettings: SuperAdmin:Password        (fallback — do not commit real values)
 /// </summary>
 public static class ProductionSeeder

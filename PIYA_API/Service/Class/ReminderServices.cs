@@ -5,9 +5,15 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class AppointmentReminderService(PharmacyApiDbContext context, ILogger<AppointmentReminderService> logger) : IAppointmentReminderService
+public class AppointmentReminderService(
+    PharmacyApiDbContext context,
+    INotificationService notificationService,
+    ISignalRNotificationService signalRNotificationService,
+    ILogger<AppointmentReminderService> logger) : IAppointmentReminderService
 {
     private readonly PharmacyApiDbContext _context = context;
+    private readonly INotificationService _notificationService = notificationService;
+    private readonly ISignalRNotificationService _signalRNotificationService = signalRNotificationService;
     private readonly ILogger<AppointmentReminderService> _logger = logger;
 
     public async Task<List<AppointmentReminder>> CreateAppointmentRemindersAsync(Guid appointmentId, Guid userId, 
@@ -63,7 +69,7 @@ public class AppointmentReminderService(PharmacyApiDbContext context, ILogger<Ap
         return await _context.AppointmentReminders
             .Include(ar => ar.Appointment)
             .Include(ar => ar.User)
-            .Where(ar => !ar.IsSent && ar.ReminderTime <= cutoffTime)
+            .Where(ar => !ar.IsSent && ar.RetryCount < 3 && ar.ReminderTime <= cutoffTime)
             .OrderBy(ar => ar.ReminderTime)
             .ToListAsync();
     }
@@ -101,61 +107,123 @@ public class AppointmentReminderService(PharmacyApiDbContext context, ILogger<Ap
         {
             try
             {
-                // TODO: Implement actual notification sending logic
-                // For now, just mark as sent
-                var deliveryResults = new List<string>();
+                var message = reminder.CustomMessage ??
+                    $"You have an appointment scheduled for {reminder.Appointment.ScheduledAt:u}.";
+                var deliveryResults = new List<(ReminderDeliveryMethod Method, bool Succeeded)>();
 
-                foreach (var method in reminder.DeliveryMethods)
+                foreach (var method in reminder.DeliveryMethods.Distinct())
                 {
-                    switch (method)
-                    {
-                        case ReminderDeliveryMethod.Email:
-                            // Send email notification
-                            deliveryResults.Add("Email: Success");
-                            break;
-                        case ReminderDeliveryMethod.SMS:
-                            // Send SMS notification
-                            deliveryResults.Add("SMS: Success");
-                            break;
-                        case ReminderDeliveryMethod.PushNotification:
-                            // Send push notification
-                            deliveryResults.Add("Push: Success");
-                            break;
-                        case ReminderDeliveryMethod.InApp:
-                            // Create in-app notification
-                            deliveryResults.Add("InApp: Success");
-                            break;
-                    }
+                    var succeeded = await DeliverAppointmentReminderAsync(reminder, method, message);
+                    deliveryResults.Add((method, succeeded));
                 }
 
-                await MarkReminderAsSentAsync(reminder.Id, string.Join(", ", deliveryResults));
-                processedCount++;
+                var deliveryStatus = deliveryResults.Count == 0
+                    ? "No delivery methods configured"
+                    : string.Join(", ", deliveryResults.Select(result =>
+                        $"{result.Method}: {(result.Succeeded ? "Sent" : "Failed")}"));
 
-                _logger.LogInformation("Sent appointment reminder {ReminderId} for appointment {AppointmentId}", 
-                    reminder.Id, reminder.AppointmentId);
+                if (deliveryResults.Count > 0 && deliveryResults.All(result => result.Succeeded))
+                {
+                    await MarkReminderAsSentAsync(reminder.Id, deliveryStatus);
+                    processedCount++;
+
+                    _logger.LogInformation(
+                        "Sent appointment reminder {ReminderId} for appointment {AppointmentId}",
+                        reminder.Id,
+                        reminder.AppointmentId);
+                }
+                else
+                {
+                    await RecordAppointmentDeliveryFailureAsync(reminder, deliveryStatus);
+                    _logger.LogWarning(
+                        "Appointment reminder {ReminderId} was not marked sent because at least one requested channel failed",
+                        reminder.Id);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send appointment reminder {ReminderId}", reminder.Id);
-                
-                // Increment retry count
-                reminder.RetryCount++;
-                if (reminder.RetryCount < 3)
-                {
-                    // Schedule retry in 5 minutes
-                    reminder.ReminderTime = DateTime.UtcNow.AddMinutes(5);
-                }
-                await _context.SaveChangesAsync();
+                await RecordAppointmentDeliveryFailureAsync(reminder, "Delivery failed");
             }
         }
 
         return processedCount;
     }
+
+    private async Task<bool> DeliverAppointmentReminderAsync(
+        AppointmentReminder reminder,
+        ReminderDeliveryMethod method,
+        string message)
+    {
+        try
+        {
+            return method switch
+            {
+                ReminderDeliveryMethod.Email when !string.IsNullOrWhiteSpace(reminder.User.Email) =>
+                    await _notificationService.SendEmailAsync(
+                        reminder.User.Email,
+                        "Appointment reminder",
+                        message,
+                        isHtml: false),
+                ReminderDeliveryMethod.SMS when !string.IsNullOrWhiteSpace(reminder.User.PhoneNumber) =>
+                    await _notificationService.SendSmsAsync(reminder.User.PhoneNumber, message),
+                ReminderDeliveryMethod.PushNotification =>
+                    await _notificationService.SendPushNotificationAsync(
+                        reminder.UserId,
+                        "Appointment reminder",
+                        message,
+                        new Dictionary<string, string>
+                        {
+                            ["type"] = "appointment-reminder",
+                            ["appointmentId"] = reminder.AppointmentId.ToString()
+                        }),
+                ReminderDeliveryMethod.InApp =>
+                    await SendAppointmentInAppAsync(reminder, message),
+                _ => false
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Appointment reminder {ReminderId} failed on channel {DeliveryMethod}",
+                reminder.Id,
+                method);
+            return false;
+        }
+    }
+
+    private async Task<bool> SendAppointmentInAppAsync(AppointmentReminder reminder, string message)
+    {
+        await _signalRNotificationService.SendAppointmentNotificationAsync(
+            reminder.UserId,
+            message,
+            reminder.AppointmentId);
+        return true;
+    }
+
+    private async Task RecordAppointmentDeliveryFailureAsync(
+        AppointmentReminder reminder,
+        string deliveryStatus)
+    {
+        reminder.DeliveryStatus = deliveryStatus;
+        reminder.RetryCount++;
+        if (reminder.RetryCount < 3)
+            reminder.ReminderTime = DateTime.UtcNow.AddMinutes(5);
+
+        await _context.SaveChangesAsync();
+    }
 }
 
-public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILogger<PrescriptionRefillReminderService> logger) : IPrescriptionRefillReminderService
+public class PrescriptionRefillReminderService(
+    PharmacyApiDbContext context,
+    INotificationService notificationService,
+    ISignalRNotificationService signalRNotificationService,
+    ILogger<PrescriptionRefillReminderService> logger) : IPrescriptionRefillReminderService
 {
     private readonly PharmacyApiDbContext _context = context;
+    private readonly INotificationService _notificationService = notificationService;
+    private readonly ISignalRNotificationService _signalRNotificationService = signalRNotificationService;
     private readonly ILogger<PrescriptionRefillReminderService> _logger = logger;
 
     public async Task<PrescriptionRefillReminder> CreateRefillReminderAsync(Guid prescriptionId, Guid patientId, 
@@ -214,7 +282,11 @@ public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILo
         return await _context.PrescriptionRefillReminders
             .Include(prr => prr.Prescription)
             .Include(prr => prr.Patient)
-            .Where(prr => !prr.IsSent && prr.ReminderDate <= cutoffDate && !prr.IsRefilled)
+            .Where(prr =>
+                !prr.IsSent &&
+                prr.RetryCount < 3 &&
+                prr.ReminderDate <= cutoffDate &&
+                !prr.IsRefilled)
             .OrderBy(prr => prr.ReminderDate)
             .ToListAsync();
     }
@@ -279,48 +351,106 @@ public class PrescriptionRefillReminderService(PharmacyApiDbContext context, ILo
         {
             try
             {
-                // TODO: Implement actual notification sending logic
-                var deliveryResults = new List<string>();
+                var message =
+                    $"Your prescription refill is due on {reminder.EstimatedRefillDate:yyyy-MM-dd}.";
+                var deliveryResults = new List<bool>();
 
-                foreach (var method in reminder.DeliveryMethods)
+                foreach (var method in reminder.DeliveryMethods.Distinct())
                 {
-                    switch (method)
-                    {
-                        case ReminderDeliveryMethod.Email:
-                            deliveryResults.Add("Email: Success");
-                            break;
-                        case ReminderDeliveryMethod.SMS:
-                            deliveryResults.Add("SMS: Success");
-                            break;
-                        case ReminderDeliveryMethod.PushNotification:
-                            deliveryResults.Add("Push: Success");
-                            break;
-                        case ReminderDeliveryMethod.InApp:
-                            deliveryResults.Add("InApp: Success");
-                            break;
-                    }
+                    deliveryResults.Add(
+                        await DeliverRefillReminderAsync(reminder, method, message));
                 }
 
-                await MarkRefillReminderAsSentAsync(reminder.Id);
-                processedCount++;
+                if (deliveryResults.Count > 0 && deliveryResults.All(succeeded => succeeded))
+                {
+                    await MarkRefillReminderAsSentAsync(reminder.Id);
+                    processedCount++;
 
-                _logger.LogInformation("Sent refill reminder {ReminderId} for prescription {PrescriptionId}", 
-                    reminder.Id, reminder.PrescriptionId);
+                    _logger.LogInformation(
+                        "Sent refill reminder {ReminderId} for prescription {PrescriptionId}",
+                        reminder.Id,
+                        reminder.PrescriptionId);
+                }
+                else
+                {
+                    await RecordRefillDeliveryFailureAsync(reminder);
+                    _logger.LogWarning(
+                        "Refill reminder {ReminderId} was not marked sent because at least one requested channel failed",
+                        reminder.Id);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send refill reminder {ReminderId}", reminder.Id);
-                
-                reminder.RetryCount++;
-                if (reminder.RetryCount < 3)
-                {
-                    reminder.ReminderDate = DateTime.UtcNow.AddHours(1);
-                }
-                await _context.SaveChangesAsync();
+                await RecordRefillDeliveryFailureAsync(reminder);
             }
         }
 
         return processedCount;
+    }
+
+    private async Task<bool> DeliverRefillReminderAsync(
+        PrescriptionRefillReminder reminder,
+        ReminderDeliveryMethod method,
+        string message)
+    {
+        try
+        {
+            return method switch
+            {
+                ReminderDeliveryMethod.Email when !string.IsNullOrWhiteSpace(reminder.Patient.Email) =>
+                    await _notificationService.SendEmailAsync(
+                        reminder.Patient.Email,
+                        "Prescription refill reminder",
+                        message,
+                        isHtml: false),
+                ReminderDeliveryMethod.SMS when !string.IsNullOrWhiteSpace(reminder.Patient.PhoneNumber) =>
+                    await _notificationService.SendSmsAsync(reminder.Patient.PhoneNumber, message),
+                ReminderDeliveryMethod.PushNotification =>
+                    await _notificationService.SendPushNotificationAsync(
+                        reminder.PatientId,
+                        "Prescription refill reminder",
+                        message,
+                        new Dictionary<string, string>
+                        {
+                            ["type"] = "prescription-refill-reminder",
+                            ["prescriptionId"] = reminder.PrescriptionId.ToString()
+                        }),
+                ReminderDeliveryMethod.InApp =>
+                    await SendRefillInAppAsync(reminder, message),
+                _ => false
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Refill reminder {ReminderId} failed on channel {DeliveryMethod}",
+                reminder.Id,
+                method);
+            return false;
+        }
+    }
+
+    private async Task<bool> SendRefillInAppAsync(
+        PrescriptionRefillReminder reminder,
+        string message)
+    {
+        await _signalRNotificationService.SendPrescriptionNotificationAsync(
+            reminder.PatientId,
+            message,
+            reminder.PrescriptionId);
+        return true;
+    }
+
+    private async Task RecordRefillDeliveryFailureAsync(PrescriptionRefillReminder reminder)
+    {
+        reminder.RetryCount++;
+        reminder.UpdatedAt = DateTime.UtcNow;
+        if (reminder.RetryCount < 3)
+            reminder.ReminderDate = DateTime.UtcNow.AddHours(1);
+
+        await _context.SaveChangesAsync();
     }
 
     public async Task AutoCreateRefillRemindersAsync(Guid prescriptionId)

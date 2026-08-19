@@ -9,10 +9,12 @@ namespace PIYA_API.Service.Class;
 public class FileUploadService(
     PharmacyApiDbContext context,
     IConfiguration configuration,
-    IFileStorageService fileStorage) : IFileUploadService
+    IFileStorageService fileStorage,
+    IFileSecurityScanner fileSecurityScanner) : IFileUploadService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IFileStorageService _fileStorage = fileStorage;
+    private readonly IFileSecurityScanner _fileSecurityScanner = fileSecurityScanner;
     private readonly long _maxFileSizeBytes = long.Parse(configuration["FileUpload:MaxFileSizeMB"] ?? "10") * 1024 * 1024;
     private readonly HashSet<string> _allowedMimeTypes =
         [
@@ -37,12 +39,20 @@ public class FileUploadService(
         Guid? appointmentId = null,
         Guid? prescriptionId = null)
     {
-        if (!IsValidFileType(contentType, fileName))
+        var safeFileName = Path.GetFileName(fileName);
+        var normalizedContentType = contentType.Split(';', 2)[0].Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(safeFileName) || !IsValidFileType(normalizedContentType, safeFileName))
             throw new InvalidOperationException($"File type '{contentType}' is not allowed");
 
-        if (fileStream.Length > _maxFileSizeBytes)
+        if (!fileStream.CanSeek)
+            throw new InvalidOperationException("The upload stream must be seekable.");
+
+        if (!IsValidFileSize(fileStream.Length))
             throw new InvalidOperationException(
                 $"File size exceeds maximum allowed size of {_maxFileSizeBytes / (1024 * 1024)} MB");
+
+        await ValidateFileSignatureAsync(fileStream, safeFileName);
+        await _fileSecurityScanner.ScanAsync(fileStream);
 
         var documentId = Guid.NewGuid();
 
@@ -54,10 +64,10 @@ public class FileUploadService(
             fileHash = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
         }
 
-        var objectKey = IFileStorageService.BuildObjectKey("patients", userId, documentId, fileName);
+        var objectKey = IFileStorageService.BuildObjectKey("patients", userId, documentId, safeFileName);
 
         fileStream.Position = 0;
-        await _fileStorage.UploadAsync(fileStream, objectKey, contentType);
+        await _fileStorage.UploadAsync(fileStream, objectKey, normalizedContentType);
 
         var document = new MedicalDocument
         {
@@ -65,11 +75,11 @@ public class FileUploadService(
             UserId = userId,
             DocumentType = documentType,
             Title = title ?? $"{documentType} - {DateTime.UtcNow:yyyy-MM-dd}",
-            FileName = fileName,
+            FileName = safeFileName,
             StoredFileName = Path.GetFileName(objectKey),
             FilePath = null,
             ObjectKey = objectKey,
-            ContentType = contentType,
+            ContentType = normalizedContentType,
             FileSizeBytes = fileStream.Length,
             FileHash = fileHash,
             UploadedByUserId = uploadedByUserId,
@@ -81,8 +91,18 @@ public class FileUploadService(
             IsVerified = false
         };
 
-        _context.MedicalDocuments.Add(document);
-        await _context.SaveChangesAsync();
+        try
+        {
+            _context.MedicalDocuments.Add(document);
+            await _context.SaveChangesAsync();
+        }
+        catch
+        {
+            // Object storage and the relational database cannot share a transaction.
+            // Compensate a metadata failure so sensitive orphaned blobs are not retained.
+            await _fileStorage.DeleteAsync(objectKey);
+            throw;
+        }
 
         return document;
     }
@@ -194,14 +214,50 @@ public class FileUploadService(
 
     public bool IsValidFileType(string contentType, string fileName)
     {
-        if (!_allowedMimeTypes.Contains(contentType.ToLowerInvariant()))
+        var normalizedMime = contentType.Split(';', 2)[0].Trim().ToLowerInvariant();
+        if (!_allowedMimeTypes.Contains(normalizedMime))
             return false;
 
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        var allowedExtensions = new HashSet<string> { ".jpg", ".jpeg", ".png", ".pdf", ".dcm", ".tiff", ".tif", ".bmp" };
-        return allowedExtensions.Contains(extension);
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => normalizedMime is "image/jpeg" or "image/jpg",
+            ".png" => normalizedMime == "image/png",
+            ".pdf" => normalizedMime == "application/pdf",
+            ".dcm" => normalizedMime == "application/dicom",
+            ".tiff" or ".tif" => normalizedMime == "image/tiff",
+            ".bmp" => normalizedMime == "image/bmp",
+            _ => false,
+        };
     }
 
     public bool IsValidFileSize(long fileSizeBytes)
         => fileSizeBytes > 0 && fileSizeBytes <= _maxFileSizeBytes;
+
+    private static async Task ValidateFileSignatureAsync(Stream stream, string fileName)
+    {
+        var header = new byte[132];
+        stream.Position = 0;
+        var bytesRead = await stream.ReadAsync(header);
+        stream.Position = 0;
+
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        var valid = extension switch
+        {
+            ".jpg" or ".jpeg" => bytesRead >= 3 &&
+                header[0] == 0xff && header[1] == 0xd8 && header[2] == 0xff,
+            ".png" => bytesRead >= 8 &&
+                header.AsSpan(0, 8).SequenceEqual(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }),
+            ".pdf" => bytesRead >= 5 && header.AsSpan(0, 5).SequenceEqual("%PDF-"u8),
+            ".tiff" or ".tif" => bytesRead >= 4 &&
+                (header.AsSpan(0, 4).SequenceEqual(new byte[] { 0x49, 0x49, 0x2a, 0x00 }) ||
+                 header.AsSpan(0, 4).SequenceEqual(new byte[] { 0x4d, 0x4d, 0x00, 0x2a })),
+            ".bmp" => bytesRead >= 2 && header[0] == 0x42 && header[1] == 0x4d,
+            ".dcm" => bytesRead >= 132 && header.AsSpan(128, 4).SequenceEqual("DICM"u8),
+            _ => false,
+        };
+
+        if (!valid)
+            throw new InvalidOperationException("The file content does not match its declared type.");
+    }
 }

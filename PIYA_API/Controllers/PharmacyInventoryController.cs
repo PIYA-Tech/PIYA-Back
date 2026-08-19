@@ -15,30 +15,64 @@ namespace PIYA_API.Controllers;
 public class PharmacyInventoryController(
     IInventoryService inventoryService,
     IPharmacyStaffService pharmacyStaffService,
-    IPharmacyCompanyService pharmacyCompanyService,
     IHubContext<InventoryHub> inventoryHub,
     ILogger<PharmacyInventoryController> logger) : ControllerBase
 {
+    private const string InventoryReadRoles = "Pharmacist,PharmacyManager,Admin,SuperAdmin";
+    private const string InventoryManagementRoles = "PharmacyManager,Admin,SuperAdmin";
+    private const string DispensingRoles = "Pharmacist,Admin,SuperAdmin";
+    private const string GlobalAdministrationRoles = "Admin,SuperAdmin";
+
     private readonly IInventoryService _inventoryService = inventoryService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
-    private readonly IPharmacyCompanyService _pharmacyCompanyService = pharmacyCompanyService;
     private readonly IHubContext<InventoryHub> _inventoryHub = inventoryHub;
     private readonly ILogger<PharmacyInventoryController> _logger = logger;
 
     private Guid GetUserId() => Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
 
     /// <summary>
-    /// Returns true when the caller is an Admin, is active staff at the given pharmacy,
-    /// or is a PharmacyNetworkOwner whose company owns the pharmacy.
+    /// Returns true when the caller is a global administrator or has a current,
+    /// active staff assignment at the given pharmacy.
     /// </summary>
     private async Task<bool> CanAccessPharmacy(Guid pharmacyId)
     {
         if (User.IsInRole("Admin") || User.IsInRole("SuperAdmin"))
             return true;
-        if (User.IsInRole("PharmacyNetworkOwner") &&
-            await _pharmacyCompanyService.IsPharmacyInOwnerNetworkAsync(pharmacyId, GetUserId()))
+
+        var now = DateTime.UtcNow;
+        var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(
+            GetUserId(),
+            activeOnly: true);
+
+        return assignments.Any(assignment =>
+            assignment.PharmacyId == pharmacyId &&
+            assignment.IsActive &&
+            (!assignment.AssignmentEndsAt.HasValue || assignment.AssignmentEndsAt.Value > now));
+    }
+
+    private async Task<HashSet<Guid>> GetAccessiblePharmacyIds()
+    {
+        var now = DateTime.UtcNow;
+        var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(
+            GetUserId(),
+            activeOnly: true);
+
+        return assignments
+            .Where(assignment =>
+                assignment.IsActive &&
+                (!assignment.AssignmentEndsAt.HasValue || assignment.AssignmentEndsAt.Value > now))
+            .Select(assignment => assignment.PharmacyId)
+            .ToHashSet();
+    }
+
+    private async Task<bool> CanManagePharmacyInventory(Guid pharmacyId)
+    {
+        if (User.IsInRole("Admin") || User.IsInRole("SuperAdmin"))
             return true;
-        return await _pharmacyStaffService.IsStaffAtPharmacyAsync(pharmacyId, GetUserId());
+
+        return await _pharmacyStaffService.IsManagerAtPharmacyAsync(
+            pharmacyId,
+            GetUserId());
     }
 
     #region Inventory Management
@@ -47,7 +81,7 @@ public class PharmacyInventoryController(
     /// Get all inventory for a pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<PharmacyInventory>>> GetPharmacyInventory(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))
@@ -68,7 +102,7 @@ public class PharmacyInventoryController(
     /// Get inventory item by ID
     /// </summary>
     [HttpGet("{id}")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<PharmacyInventory>> GetInventoryItem(Guid id)
     {
         try
@@ -78,6 +112,10 @@ public class PharmacyInventoryController(
             {
                 return NotFound(new { error = "Inventory item not found" });
             }
+
+            if (!await CanAccessPharmacy(inventory.PharmacyId))
+                return Forbid();
+
             return Ok(InventoryResponseDto.FromEntity(inventory));
         }
         catch (Exception ex)
@@ -91,11 +129,11 @@ public class PharmacyInventoryController(
     /// Add or update inventory item
     /// </summary>
     [HttpPost]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryManagementRoles)]
     public async Task<ActionResult<PharmacyInventory>> AddOrUpdateInventory(
         [FromBody] PharmacyInventoryRequest request)
     {
-        if (!await CanAccessPharmacy(request.PharmacyId))
+        if (!await CanManagePharmacyInventory(request.PharmacyId))
             return Forbid();
         try
         {
@@ -128,7 +166,7 @@ public class PharmacyInventoryController(
     /// Delete inventory item
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryManagementRoles)]
     public async Task<ActionResult> DeleteInventory(Guid id)
     {
         try
@@ -139,7 +177,7 @@ public class PharmacyInventoryController(
                 return NotFound(new { error = "Inventory item not found" });
 
             // Only staff of the owning pharmacy (or Admin) may delete inventory.
-            if (!await CanAccessPharmacy(item.PharmacyId))
+            if (!await CanManagePharmacyInventory(item.PharmacyId))
                 return Forbid();
 
             var deleted = await _inventoryService.DeleteAsync(id);
@@ -167,7 +205,7 @@ public class PharmacyInventoryController(
     /// Update stock quantity
     /// </summary>
     [HttpPut("{id}/stock")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryManagementRoles)]
     public async Task<ActionResult<PharmacyInventory>> UpdateStock(
         Guid id,
         [FromBody] UpdateStockRequest request)
@@ -179,7 +217,7 @@ public class PharmacyInventoryController(
             if (item == null)
                 return NotFound(new { error = "Inventory item not found" });
 
-            if (!await CanAccessPharmacy(item.PharmacyId))
+            if (!await CanManagePharmacyInventory(item.PharmacyId))
                 return Forbid();
 
             var userId = GetUserId();
@@ -205,10 +243,10 @@ public class PharmacyInventoryController(
     /// Increase stock (restock)
     /// </summary>
     [HttpPost("restock")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryManagementRoles)]
     public async Task<ActionResult<PharmacyInventory>> Restock([FromBody] RestockRequest request)
     {
-        if (!await CanAccessPharmacy(request.PharmacyId))
+        if (!await CanManagePharmacyInventory(request.PharmacyId))
             return Forbid();
         try
         {
@@ -242,7 +280,7 @@ public class PharmacyInventoryController(
     /// Decrease stock (sale/fulfillment)
     /// </summary>
     [HttpPost("decrease")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = DispensingRoles)]
     public async Task<ActionResult<PharmacyInventory>> DecreaseStock([FromBody] DecreaseStockRequest request)
     {
         if (!await CanAccessPharmacy(request.PharmacyId))
@@ -284,11 +322,18 @@ public class PharmacyInventoryController(
     /// Add new inventory batch
     /// </summary>
     [HttpPost("batch")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryManagementRoles)]
     public async Task<ActionResult<InventoryBatch>> AddBatch([FromBody] BatchRequest request)
     {
         try
         {
+            var inventory = await _inventoryService.GetByIdAsync(request.InventoryId);
+            if (inventory == null)
+                return NotFound(new { error = "Inventory item not found" });
+
+            if (!await CanManagePharmacyInventory(inventory.PharmacyId))
+                return Forbid();
+
             var batch = new InventoryBatch
             {
                 PharmacyInventoryId = request.InventoryId,
@@ -320,13 +365,20 @@ public class PharmacyInventoryController(
     /// Get batches for inventory item
     /// </summary>
     [HttpGet("{inventoryId}/batches")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<InventoryBatch>>> GetBatches(
         Guid inventoryId,
         [FromQuery] bool activeOnly = true)
     {
         try
         {
+            var inventory = await _inventoryService.GetByIdAsync(inventoryId);
+            if (inventory == null)
+                return NotFound(new { error = "Inventory item not found" });
+
+            if (!await CanAccessPharmacy(inventory.PharmacyId))
+                return Forbid();
+
             var batches = await _inventoryService.GetBatchesAsync(inventoryId, activeOnly);
             return Ok(batches);
         }
@@ -341,12 +393,23 @@ public class PharmacyInventoryController(
     /// Get expiring batches (system-wide or pharmacy-specific)
     /// </summary>
     [HttpGet("batches/expiring")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<InventoryBatch>>> GetExpiringBatches([FromQuery] int days = 30)
     {
         try
         {
             var batches = await _inventoryService.GetExpiringBatchesAsync(days);
+
+            if (!User.IsInRole("Admin") && !User.IsInRole("SuperAdmin"))
+            {
+                var accessiblePharmacyIds = await GetAccessiblePharmacyIds();
+                batches = batches
+                    .Where(batch =>
+                        batch.PharmacyInventory != null &&
+                        accessiblePharmacyIds.Contains(batch.PharmacyInventory.PharmacyId))
+                    .ToList();
+            }
+
             return Ok(batches);
         }
         catch (Exception ex)
@@ -360,7 +423,7 @@ public class PharmacyInventoryController(
     /// Remove expired batches
     /// </summary>
     [HttpPost("batches/remove-expired")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = GlobalAdministrationRoles)]
     public async Task<ActionResult> RemoveExpiredBatches()
     {
         try
@@ -385,7 +448,7 @@ public class PharmacyInventoryController(
     /// Get stock history for inventory item
     /// </summary>
     [HttpGet("{inventoryId}/history")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<InventoryHistory>>> GetStockHistory(
         Guid inventoryId,
         [FromQuery] DateTime? startDate = null,
@@ -394,6 +457,13 @@ public class PharmacyInventoryController(
     {
         try
         {
+            var inventory = await _inventoryService.GetByIdAsync(inventoryId);
+            if (inventory == null)
+                return NotFound(new { error = "Inventory item not found" });
+
+            if (!await CanAccessPharmacy(inventory.PharmacyId))
+                return Forbid();
+
             var history = await _inventoryService.GetStockHistoryAsync(inventoryId, startDate, endDate, transactionType);
             return Ok(history);
         }
@@ -408,7 +478,7 @@ public class PharmacyInventoryController(
     /// Get all stock history for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/history")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<InventoryHistory>>> GetPharmacyStockHistory(
         Guid pharmacyId,
         [FromQuery] DateTime? startDate = null,
@@ -436,7 +506,7 @@ public class PharmacyInventoryController(
     /// Get low stock items for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/low-stock")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<PharmacyInventory>>> GetLowStockItems(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))
@@ -457,7 +527,7 @@ public class PharmacyInventoryController(
     /// Get expiring items for pharmacy
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/expiring")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<List<PharmacyInventory>>> GetExpiringItems(
         Guid pharmacyId,
         [FromQuery] int days = 30)
@@ -480,7 +550,7 @@ public class PharmacyInventoryController(
     /// Get reorder suggestions
     /// </summary>
     [HttpGet("pharmacy/{pharmacyId}/reorder-suggestions")]
-    [Authorize(Roles = "Pharmacist,Admin,SuperAdmin")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<Dictionary<Guid, int>>> GetReorderSuggestions(Guid pharmacyId)
     {
         if (!await CanAccessPharmacy(pharmacyId))
@@ -526,11 +596,15 @@ public class PharmacyInventoryController(
     /// Check if medication is in stock at pharmacy
     /// </summary>
     [HttpGet("check-stock")]
+    [Authorize(Roles = InventoryReadRoles)]
     public async Task<ActionResult<StockCheckResponse>> CheckStock(
         [FromQuery] Guid pharmacyId,
         [FromQuery] Guid medicationId,
         [FromQuery] int quantity = 1)
     {
+        if (!await CanAccessPharmacy(pharmacyId))
+            return Forbid();
+
         try
         {
             var inStock = await _inventoryService.IsInStockAsync(pharmacyId, medicationId, quantity);

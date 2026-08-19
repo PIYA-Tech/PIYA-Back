@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Caching.Distributed;
 using PIYA_API.Service.Interface;
 using System.Text.Json;
+using System.Diagnostics;
+using StackExchange.Redis;
 
 namespace PIYA_API.Service.Class;
 
@@ -9,23 +11,45 @@ public class CacheService : ICacheService
     private readonly IDistributedCache _cache;
     private readonly IConfiguration _configuration;
     private readonly TimeSpan _defaultExpiration;
+    private readonly IConnectionMultiplexer? _redis;
+    private long _requests;
+    private long _hits;
+    private long _misses;
+    private long _getElapsedTicks;
 
-    public CacheService(IDistributedCache cache, IConfiguration configuration)
+    public CacheService(
+        IDistributedCache cache,
+        IConfiguration configuration,
+        IConnectionMultiplexer? redis = null)
     {
         _cache = cache;
         _configuration = configuration;
+        _redis = redis;
         _defaultExpiration = TimeSpan.FromMinutes(
             int.Parse(_configuration["Caching:DefaultExpirationMinutes"] ?? "60"));
     }
 
     public async Task<T?> GetAsync<T>(string key) where T : class
     {
-        var cachedData = await _cache.GetStringAsync(key);
+        var started = Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref _requests);
+        string? cachedData;
+        try
+        {
+            cachedData = await _cache.GetStringAsync(key);
+        }
+        finally
+        {
+            Interlocked.Add(ref _getElapsedTicks, Stopwatch.GetTimestamp() - started);
+        }
         
         if (string.IsNullOrEmpty(cachedData))
         {
+            Interlocked.Increment(ref _misses);
             return null;
         }
+
+        Interlocked.Increment(ref _hits);
 
         return JsonSerializer.Deserialize<T>(cachedData);
     }
@@ -81,18 +105,35 @@ public class CacheService : ICacheService
 
     public async Task RemoveByPatternAsync(string pattern)
     {
-        // Note: This is a simplified implementation
-        // For production, you would use Redis SCAN command with pattern matching
-        // This requires direct Redis connection (not IDistributedCache)
-        // For now, this is a placeholder that logs a warning
-        
-        Console.WriteLine($"Warning: RemoveByPatternAsync with pattern '{pattern}' is not fully implemented for distributed cache. Consider using Redis directly.");
-        
-        // In a real implementation, you would:
-        // 1. Use StackExchange.Redis directly
-        // 2. Use SCAN command with pattern
-        // 3. Delete matching keys
-        
-        await Task.CompletedTask;
+        if (_redis == null)
+            throw new NotSupportedException("Pattern invalidation requires the Redis cache provider.");
+
+        var database = _redis.GetDatabase();
+        var serverPattern = $"PIYA_{pattern}";
+        foreach (var endpoint in _redis.GetEndPoints())
+        {
+            var server = _redis.GetServer(endpoint);
+            if (!server.IsConnected || server.IsReplica) continue;
+            var batch = new List<RedisKey>(500);
+            await foreach (var key in server.KeysAsync(pattern: serverPattern, pageSize: 500))
+            {
+                batch.Add(key);
+                if (batch.Count < 500) continue;
+                await database.KeyDeleteAsync(batch.ToArray());
+                batch.Clear();
+            }
+            if (batch.Count > 0) await database.KeyDeleteAsync(batch.ToArray());
+        }
+    }
+
+    public CacheServiceStatistics GetStatistics()
+    {
+        var requests = Interlocked.Read(ref _requests);
+        var ticks = Interlocked.Read(ref _getElapsedTicks);
+        return new CacheServiceStatistics(
+            requests,
+            Interlocked.Read(ref _hits),
+            Interlocked.Read(ref _misses),
+            requests == 0 ? 0 : ticks * 1000d / Stopwatch.Frequency / requests);
     }
 }

@@ -6,6 +6,21 @@ using Serilog;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using Asp.Versioning;
+using System.Reflection;
+
+// Contract generators must build the full endpoint graph, but must never migrate
+// or seed a database. The entry-assembly check covers Microsoft's build-time
+// generator; the explicit flag covers the pinned Swashbuckle fallback used while
+// .NET 9's generator cannot resolve this app's recursive legacy response models.
+var isOpenApiGeneration =
+    string.Equals(
+        Assembly.GetEntryAssembly()?.GetName().Name,
+        "GetDocument.Insider",
+        StringComparison.Ordinal)
+    || string.Equals(
+        Environment.GetEnvironmentVariable("PIYA_GENERATE_OPENAPI"),
+        "true",
+        StringComparison.OrdinalIgnoreCase);
 
 // Configure Serilog (do not require appsettings.json at startup)
 var bootstrapConfig = new ConfigurationBuilder()
@@ -57,7 +72,7 @@ try
     builder.Services.AddHttpClient();
 
     // ── Infrastructure ──────────────────────────────────────────────────
-    builder.Services.AddPiyaConfiguration(builder.Configuration);
+    builder.Services.AddPiyaConfiguration(builder.Configuration, builder.Environment);
     builder.Services.AddPiyaCaching(builder.Configuration);
     builder.Services.AddPiyaDataProtection(builder.Configuration);
     builder.Services.AddPiyaDatabase(builder.Configuration, builder.Environment);
@@ -74,33 +89,47 @@ try
 
     var app = builder.Build();
 
+    // ── Startup tasks ───────────────────────────────────────────────────
+    if (!isOpenApiGeneration)
+    {
+        var migrateOnly = app.Configuration.GetValue<bool>("Database:MigrateOnly");
+        var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate");
+        if (migrateOnly || autoMigrate)
+        {
+            using var migrationScope = app.Services.CreateScope();
+            var db = migrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+            await db.Database.MigrateAsync();
+        }
+
+        if (migrateOnly)
+        {
+            Log.Information("Database migrations completed; exiting migration-only process");
+            await app.DisposeAsync();
+            return;
+        }
+
+        // Seed production super-admin from SuperAdmin:* config / SuperAdmin__* env vars.
+        // Integration tests explicitly opt out and create their own isolated fixture user.
+        if (!app.Configuration.GetValue<bool>("TestHarness:SkipProductionSeeding"))
+            await ProductionSeeder.SeedAsync(app.Services);
+
+        // Seed demo users when explicitly enabled — blocked in Production for safety.
+        var seedEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("ENABLE_DEMO_SEEDING"), "true", StringComparison.OrdinalIgnoreCase)
+            || app.Configuration.GetValue<bool>("DemoSeeding:Enabled");
+        if (seedEnabled && app.Environment.IsProduction())
+        {
+            Log.Warning("ENABLE_DEMO_SEEDING is set in Production — ignoring for safety. " +
+                        "Remove the env-var or set DemoSeeding:Enabled=false.");
+        }
+        else if (seedEnabled)
+        {
+            await DataSeeder.SeedAsync(app.Services);
+        }
+    }
+
     // ── Middleware pipeline ──────────────────────────────────────────────
     app.UsePiyaMiddleware();
-
-    // ── Startup tasks ───────────────────────────────────────────────────
-    // Apply pending EF Core migrations on startup (creates tables if needed).
-    using (var migrationScope = app.Services.CreateScope())
-    {
-        var db = migrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
-        await db.Database.MigrateAsync();
-    }
-
-    // Seed production super-admin from SuperAdmin:* config / PIYA__SuperAdmin__* env vars.
-    await ProductionSeeder.SeedAsync(app.Services);
-
-    // Seed demo users when explicitly enabled — blocked in Production for safety.
-    var seedEnabled =
-        string.Equals(Environment.GetEnvironmentVariable("ENABLE_DEMO_SEEDING"), "true", StringComparison.OrdinalIgnoreCase)
-        || app.Configuration.GetValue<bool>("DemoSeeding:Enabled");
-    if (seedEnabled && app.Environment.IsProduction())
-    {
-        Log.Warning("ENABLE_DEMO_SEEDING is set in Production — ignoring for safety. " +
-                    "Remove the env-var or set DemoSeeding:Enabled=false.");
-    }
-    else if (seedEnabled)
-    {
-        await DataSeeder.SeedAsync(app.Services);
-    }
 
     app.Run();
 }

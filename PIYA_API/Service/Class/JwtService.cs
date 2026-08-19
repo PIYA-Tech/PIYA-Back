@@ -1,4 +1,5 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
+using System.Data;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -178,88 +179,120 @@ public class JwtService(
     public async Task<TokenResponse?> RefreshAccessToken(string refreshToken)
     {
         var hash = HashToken(refreshToken);
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
 
-        // ── Reuse Detection ──────────────────────────────────────────────────
-        // Check if this token was already rotated away (consumed in a prior refresh).
-        var usedEntry = await _dbContext.UsedRefreshTokens
-            .FirstOrDefaultAsync(u => u.TokenHash == hash);
-
-        if (usedEntry != null)
+        return await strategy.ExecuteAsync(async () =>
         {
-            // Token re-use attack — revoke the entire family immediately
-            _logger.LogWarning(
-                "Refresh token reuse detected for user {UserId} family {Family}. Revoking all sessions.",
-                usedEntry.UserId, usedEntry.Family);
+            // SERIALIZABLE makes the "not used + currently active + rotate" sequence
+            // one indivisible operation. A competing request is retried and then sees
+            // the used-token row instead of minting a second refresh token.
+            await using var tx = await _dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable);
+            var now = DateTime.UtcNow;
 
-            var familySessions = await _dbContext.Tokens
-                .Where(t => t.Family == usedEntry.Family)
-                .ToListAsync();
-            _dbContext.Tokens.RemoveRange(familySessions);
+            var usedEntry = await _dbContext.UsedRefreshTokens
+                .FirstOrDefaultAsync(u => u.TokenHash == hash);
+
+            if (usedEntry != null)
+            {
+                var grace = TimeSpan.FromSeconds(
+                    _securityOptions.RefreshTokenConcurrencyGraceSeconds);
+                if (now - usedEntry.CreatedAt <= grace)
+                {
+                    _logger.LogInformation(
+                        "Rejected concurrent refresh for user {UserId} family {Family} without revoking the session.",
+                        usedEntry.UserId, usedEntry.Family);
+                    await tx.CommitAsync();
+                    throw new ConcurrentRefreshTokenException(usedEntry.UserId);
+                }
+
+                _logger.LogWarning(
+                    "Refresh token reuse detected for user {UserId} family {Family}. Revoking all sessions.",
+                    usedEntry.UserId, usedEntry.Family);
+
+                var familySessions = await _dbContext.Tokens
+                    .Where(t => t.Family == usedEntry.Family)
+                    .ToListAsync();
+                _dbContext.Tokens.RemoveRange(familySessions);
+                await _dbContext.SaveChangesAsync();
+                await tx.CommitAsync();
+                throw new RefreshTokenReuseException(usedEntry.UserId);
+            }
+
+            var tokenEntity = await _dbContext.Tokens
+                .FirstOrDefaultAsync(t => t.RefreshToken == hash);
+
+            if (tokenEntity == null)
+            {
+                await tx.CommitAsync();
+                return null;
+            }
+
+            // Absolute expiry: 7 days from original issuance (non-sliding)
+            if (tokenEntity.CreationTime.AddDays(7) < now)
+            {
+                _dbContext.Tokens.Remove(tokenEntity);
+                await _dbContext.SaveChangesAsync();
+                await tx.CommitAsync();
+                return null;
+            }
+
+            var user = await _dbContext.Users.FindAsync(tokenEntity.UserId);
+            if (user is null || !user.IsActive)
+            {
+                _dbContext.Tokens.Remove(tokenEntity);
+                await _dbContext.SaveChangesAsync();
+                await tx.CommitAsync();
+                return null;
+            }
+
+            var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
+            var newAccessToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
+            var newRefreshToken = GenerateRefreshToken();
+            var newRefreshHash = HashToken(newRefreshToken);
+            var newExpiry = now.AddMinutes(expiryMinutes);
+
+            _dbContext.UsedRefreshTokens.Add(new UsedRefreshToken
+            {
+                TokenHash = hash,
+                Family = tokenEntity.Family,
+                UserId = user.Id,
+                ExpiresAt = tokenEntity.CreationTime.AddDays(8),
+                CreatedAt = now,
+            });
+
+            tokenEntity.AccessToken = string.Empty;
+            tokenEntity.RefreshToken = newRefreshHash;
+            tokenEntity.ExpiresAt = newExpiry;
+            // CreationTime intentionally stays fixed to enforce absolute expiry.
+
             await _dbContext.SaveChangesAsync();
+            await tx.CommitAsync();
 
-            throw new RefreshTokenReuseException(usedEntry.UserId);
-        }
-
-        // ── Find the active token row (by hash) ──────────────────────────────
-        var tokenEntity = await _dbContext.Tokens
-            .FirstOrDefaultAsync(t => t.RefreshToken == hash);
-
-        if (tokenEntity == null) return null;
-
-        // Absolute expiry: 7 days from original issuance (non-sliding)
-        if (tokenEntity.CreationTime.AddDays(7) < DateTime.UtcNow) return null;
-
-        var user = await _dbContext.Users.FindAsync(tokenEntity.UserId);
-        if (user is null || !user.IsActive) return null;
-
-        var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
-        var newAccessToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
-        var newRefreshToken = GenerateRefreshToken();
-        var newRefreshHash = HashToken(newRefreshToken);
-        var newExpiry = DateTime.UtcNow.AddMinutes(expiryMinutes);
-
-        // ── Record the old refresh token hash as "used" (for reuse detection) ─
-        _dbContext.UsedRefreshTokens.Add(new UsedRefreshToken
-        {
-            TokenHash = hash,
-            Family = tokenEntity.Family,
-            UserId = user.Id,
-            ExpiresAt = tokenEntity.CreationTime.AddDays(8), // keep 1 extra day for clock skew
+            return new TokenResponse
+            {
+                AccessToken = newAccessToken,
+                RefreshToken = newRefreshToken,
+                ExpiresAt = newExpiry,
+            };
         });
-
-        // ── Rotate in-place — store new hash, do NOT reset CreationTime ─────
-        // Keeping CreationTime fixed enforces an absolute 7-day expiry window
-        // regardless of how frequently the token is refreshed.
-        tokenEntity.UserId = user.Id;
-        tokenEntity.AccessToken = string.Empty; // never store the raw JWT in DB
-        tokenEntity.RefreshToken = newRefreshHash;
-        tokenEntity.ExpiresAt = newExpiry;
-        // CreationTime intentionally NOT updated — prevents perpetual sliding window
-
-        await _dbContext.SaveChangesAsync();
-
-        return new TokenResponse
-        {
-            AccessToken = newAccessToken,
-            RefreshToken = newRefreshToken,
-            ExpiresAt = newExpiry,
-        };
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Revocation
     // ─────────────────────────────────────────────────────────────────────────
 
-    public async Task RevokeRefreshTokenAsync(string refreshToken)
+    public async Task<bool> RevokeRefreshTokenAsync(string refreshToken, Guid expectedUserId)
     {
         var hash = HashToken(refreshToken);
         var tokenEntity = await _dbContext.Tokens
-            .FirstOrDefaultAsync(t => t.RefreshToken == hash);
-        if (tokenEntity != null)
-        {
-            _dbContext.Tokens.Remove(tokenEntity);
-            await _dbContext.SaveChangesAsync();
-        }
+            .FirstOrDefaultAsync(t => t.RefreshToken == hash && t.UserId == expectedUserId);
+        if (tokenEntity == null)
+            return false;
+
+        _dbContext.Tokens.Remove(tokenEntity);
+        await _dbContext.SaveChangesAsync();
+        return true;
     }
 
     public async Task RevokeAccessTokenAsync(string accessToken)
@@ -323,18 +356,6 @@ public class JwtService(
     // ─────────────────────────────────────────────────────────────────────────
     // Validation
     // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Legacy stub — kept for interface compatibility only.
-    /// The method performed a synchronous EF query (thread-pool blocking) and is no longer
-    /// called by any code path. Callers should extract the user ID from JWT claims instead.
-    /// </summary>
-    [Obsolete("Extract user ID from ClaimTypes.NameIdentifier claims instead of calling this method.")]
-    public Guid GetId(string token)
-    {
-        // Intentionally empty — do not add synchronous DB access here.
-        return Guid.Empty;
-    }
 
     public string? ValidateToken(string token)
     {

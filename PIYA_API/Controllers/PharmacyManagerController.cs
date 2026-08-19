@@ -36,7 +36,7 @@ public class PharmacyManagerController(
     private async Task<bool> CanManagePharmacy(Guid pharmacyId)
     {
         if (User.IsInRole("Admin") || User.IsInRole("SuperAdmin")) return true;
-        return await _staffService.IsStaffAtPharmacyAsync(pharmacyId, GetUserId());
+        return await _staffService.IsManagerAtPharmacyAsync(pharmacyId, GetUserId());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -52,23 +52,19 @@ public class PharmacyManagerController(
         if (!await CanManagePharmacy(pharmacyId)) return Forbid();
         try
         {
-            var inventoryTask     = _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
-            var lowStockTask      = _inventoryService.GetLowStockItemsAsync(pharmacyId);
-            var expiringTask      = _inventoryService.GetExpiringItemsAsync(pharmacyId, 30);
-            var staffTask         = _staffService.GetPharmacyStaffAsync(pharmacyId, true);
-            var reorderTask       = _inventoryService.GetReorderSuggestionsAsync(pharmacyId);
-            var historyTask       = _inventoryService.GetPharmacyStockHistoryAsync(pharmacyId, DateTime.UtcNow.AddDays(-7), null);
-            var prescriptionsTask = _prescriptionService.GetByPharmacyAsync(pharmacyId);
-
-            await Task.WhenAll(inventoryTask, lowStockTask, expiringTask, staffTask, reorderTask, historyTask, prescriptionsTask);
-
-            var inventory     = inventoryTask.Result;
-            var lowStock      = lowStockTask.Result;
-            var expiring      = expiringTask.Result;
-            var staff         = staffTask.Result;
-            var reorder       = reorderTask.Result;
-            var history       = historyTask.Result;
-            var prescriptions = prescriptionsTask.Result;
+            // These services share the request-scoped PharmacyApiDbContext. EF Core
+            // does not permit concurrent operations on one context, so execute the
+            // independent reads sequentially instead of using Task.WhenAll.
+            var inventory = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
+            var lowStock = await _inventoryService.GetLowStockItemsAsync(pharmacyId);
+            var expiring = await _inventoryService.GetExpiringItemsAsync(pharmacyId, 30);
+            var staff = await _staffService.GetPharmacyStaffAsync(pharmacyId, true);
+            var reorder = await _inventoryService.GetReorderSuggestionsAsync(pharmacyId);
+            var history = await _inventoryService.GetPharmacyStockHistoryAsync(
+                pharmacyId,
+                DateTime.UtcNow.AddDays(-7),
+                null);
+            var prescriptions = await _prescriptionService.GetByPharmacyAsync(pharmacyId);
 
             var pendingRx   = prescriptions.Count(p => p.Status == PrescriptionStatus.Active || p.Status == PrescriptionStatus.PartiallyFulfilled);
             var fulfilledRx = prescriptions.Count(p => p.Status == PrescriptionStatus.Fulfilled);

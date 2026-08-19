@@ -34,4 +34,12 @@ public interface ICacheService
     /// Remove multiple keys matching a pattern
     /// </summary>
     Task RemoveByPatternAsync(string pattern);
+
+    CacheServiceStatistics GetStatistics();
 }
+
+public readonly record struct CacheServiceStatistics(
+    long TotalRequests,
+    long Hits,
+    long Misses,
+    double AverageGetTimeMs);

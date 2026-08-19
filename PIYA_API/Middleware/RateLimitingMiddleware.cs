@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -108,7 +110,8 @@ public class RateLimitingMiddleware
         var isLoginAttempt = context.Request.Path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase)
                              && string.Equals(context.Request.Method, HttpMethods.Post, StringComparison.OrdinalIgnoreCase);
 
-        if (isLoginAttempt)
+        if (isLoginAttempt &&
+            context.Request.ContentLength is > 0 and <= 65_536)
         {
             try
             {
@@ -131,8 +134,11 @@ public class RateLimitingMiddleware
                         else if (doc.RootElement.TryGetProperty("email", out var e))
                             resolvedKey = e.GetString();
 
-                        if (!string.IsNullOrEmpty(resolvedKey))
-                            rateLimitKey = $"{clientId}:user:{resolvedKey.ToLowerInvariant()}";
+                        if (!string.IsNullOrWhiteSpace(resolvedKey))
+                        {
+                            rateLimitKey =
+                                $"{clientId}:login:{HashLoginIdentifier(resolvedKey)}";
+                        }
                     }
                     catch
                     {
@@ -145,8 +151,6 @@ public class RateLimitingMiddleware
                 // ignore body read issues; fall back to client id
             }
         }
-
-        var clientInfo = _clients.GetOrAdd(rateLimitKey, _ => new ClientRateLimitInfo());
 
         // Determine if there's an endpoint-specific override (e.g., Authentication)
         var requestLimit = _globalRequestLimit;
@@ -164,8 +168,32 @@ public class RateLimitingMiddleware
                 if (windowSeconds.HasValue) timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
             }
 
+            if (IsQrGenerationRequest(context.Request))
+            {
+                var permit = _configuration.GetValue<int?>(
+                    "RateLimiting:Endpoints:QrGeneration:PermitLimit");
+                var windowSeconds = _configuration.GetValue<int?>(
+                    "RateLimiting:Endpoints:QrGeneration:WindowSeconds");
+                if (permit.HasValue) requestLimit = permit.Value;
+                if (windowSeconds.HasValue)
+                    timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
+                rateLimitKey = $"qrgeneration:{clientId}";
+            }
+
+            if (IsQrValidationRequest(context.Request))
+            {
+                var permit = _configuration.GetValue<int?>(
+                    "RateLimiting:Endpoints:QrValidation:PermitLimit");
+                var windowSeconds = _configuration.GetValue<int?>(
+                    "RateLimiting:Endpoints:QrValidation:WindowSeconds");
+                if (permit.HasValue) requestLimit = permit.Value;
+                if (windowSeconds.HasValue)
+                    timeWindow = TimeSpan.FromSeconds(windowSeconds.Value);
+                rateLimitKey = $"qrvalidation:{clientId}";
+            }
+
             // Apply a tighter limit to public (unauthenticated) search endpoints
-            var isPublicSearch = !context.User.Identity?.IsAuthenticated == true && (
+            var isPublicSearch = context.User.Identity?.IsAuthenticated != true && (
                 context.Request.Path.StartsWithSegments("/api/pharmacy/search") ||
                 context.Request.Path.StartsWithSegments("/api/pharmacy/searchBy") ||
                 context.Request.Path.StartsWithSegments("/api/hospital") ||
@@ -180,12 +208,6 @@ public class RateLimitingMiddleware
                 // Always key by IP for anonymous callers — ignore any user id claim
                 var remoteAddr = context.Connection.RemoteIpAddress;
                 var ip = remoteAddr?.ToString() ?? "unknown";
-                if (remoteAddr != null && IsPrivateOrLoopback(remoteAddr) &&
-                    context.Request.Headers.TryGetValue("X-Forwarded-For", out var xffPublic))
-                {
-                    var candidate = xffPublic.ToString().Split(',')[0].Trim();
-                    if (!string.IsNullOrEmpty(candidate)) ip = candidate;
-                }
                 rateLimitKey = $"publicsearch:ip:{ip}";
             }
         }
@@ -194,6 +216,7 @@ public class RateLimitingMiddleware
             // ignore and fall back to global limits
         }
 
+        var clientInfo = _clients.GetOrAdd(rateLimitKey, _ => new ClientRateLimitInfo());
         var now = DateTime.UtcNow;
 
         // Determine if this is a login attempt (we only count failed logins for authentication throttling)
@@ -310,6 +333,55 @@ public class RateLimitingMiddleware
         await _next(context);
     }
 
+    private static bool IsQrGenerationRequest(HttpRequest request)
+    {
+        if (!HttpMethods.IsPost(request.Method))
+            return false;
+
+        var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
+        return HasSingleGuidSegment(
+                   path,
+                   "/api/qrvalidation/prescription/",
+                   "/generate") ||
+               HasSingleGuidSegment(
+                   path,
+                   "/api/prescription/",
+                   "/generate-qr");
+    }
+
+    private static bool IsQrValidationRequest(HttpRequest request)
+    {
+        if (!HttpMethods.IsPost(request.Method))
+            return false;
+
+        var path = request.Path.Value?.TrimEnd('/') ?? string.Empty;
+        return path.Equals(
+                   "/api/qrvalidation/prescription/scan",
+                   StringComparison.OrdinalIgnoreCase) ||
+               path.Equals(
+                   "/api/qrvalidation/validate",
+                   StringComparison.OrdinalIgnoreCase) ||
+               path.Equals(
+                   "/api/prescription/validate-qr",
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasSingleGuidSegment(
+        string path,
+        string prefix,
+        string suffix)
+    {
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            !path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var segmentLength = path.Length - prefix.Length - suffix.Length;
+        return segmentLength > 0 &&
+               Guid.TryParse(path.AsSpan(prefix.Length, segmentLength), out _);
+    }
+
     private static string GetClientIdentifier(HttpContext context)
     {
         // Try to get user ID from claims
@@ -319,60 +391,52 @@ public class RateLimitingMiddleware
             return $"user:{userId}";
         }
 
-        // Fall back to IP address
-        var remoteIp = context.Connection.RemoteIpAddress;
-        var ip = remoteIp?.ToString() ?? "unknown";
-
-        // Only honour X-Forwarded-For when the direct connection comes from a trusted
-        // proxy (loopback or RFC-1918 private range). Accepting it unconditionally
-        // allows any client to spoof their IP and bypass per-IP rate limiting.
-        if (remoteIp != null && IsPrivateOrLoopback(remoteIp) &&
-            context.Request.Headers.TryGetValue("X-Forwarded-For", out var xff))
-        {
-            var candidate = xff.ToString().Split(',')[0].Trim();
-            if (!string.IsNullOrEmpty(candidate))
-                ip = candidate;
-        }
-
+        // ForwardedHeadersMiddleware has already replaced RemoteIpAddress when,
+        // and only when, the immediate peer is an explicitly trusted proxy.
+        // Never parse forwarding headers again at this layer.
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         return $"ip:{ip}";
     }
 
-    /// <summary>Returns true for loopback and RFC-1918 private addresses (IPv4 and IPv6).</summary>
-    private static bool IsPrivateOrLoopback(System.Net.IPAddress address)
+    internal static string HashLoginIdentifier(string identifier)
     {
-        if (System.Net.IPAddress.IsLoopback(address)) return true;
-
-        // Map IPv4-in-IPv6 to plain IPv4 for range checks
-        var addr = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
-
-        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-        {
-            var bytes = addr.GetAddressBytes();
-            return bytes[0] == 10 ||
-                   (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-                   (bytes[0] == 192 && bytes[1] == 168);
-        }
-
-        // IPv6 unique-local (fc00::/7)
-        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-        {
-            var bytes = addr.GetAddressBytes();
-            return (bytes[0] & 0xFE) == 0xFC;
-        }
-
-        return false;
+        var normalized = identifier.Trim().ToLowerInvariant();
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
     }
 
-    internal static void CleanupExpiredEntries()
+    internal static int CleanupExpiredEntries(
+        TimeSpan retentionWindow,
+        DateTime? utcNow = null)
     {
-        var keysToRemove = _clients
-            .Where(kvp => !kvp.Value.Requests.Any())
-            .Select(kvp => kvp.Key)
-            .ToList();
+        var now = utcNow ?? DateTime.UtcNow;
+        var removed = 0;
 
-        foreach (var key in keysToRemove)
+        foreach (var (key, clientInfo) in _clients)
         {
-            _clients.TryRemove(key, out _);
+            if (PruneExpiredRequests(
+                    clientInfo,
+                    retentionWindow,
+                    now) &&
+                _clients.TryRemove(key, out _))
+            {
+                removed++;
+            }
+        }
+
+        return removed;
+    }
+
+    internal static bool PruneExpiredRequests(
+        ClientRateLimitInfo clientInfo,
+        TimeSpan retentionWindow,
+        DateTime utcNow)
+    {
+        var cutoff = utcNow - retentionWindow;
+        lock (clientInfo)
+        {
+            clientInfo.Requests.RemoveAll(timestamp => timestamp <= cutoff);
+            return clientInfo.Requests.Count == 0;
         }
     }
 }
@@ -386,9 +450,13 @@ public class ClientRateLimitInfo
 /// Hosted service that periodically purges stale entries from the rate-limit in-memory store.
 /// Replaces the fire-and-forget Task.Run loop that was previously in the middleware constructor.
 /// </summary>
-public class RateLimitCleanupService(ILogger<RateLimitCleanupService> logger) : BackgroundService
+public class RateLimitCleanupService(
+    IConfiguration configuration,
+    ILogger<RateLimitCleanupService> logger) : BackgroundService
 {
     private readonly ILogger<RateLimitCleanupService> _logger = logger;
+    private readonly TimeSpan _retentionWindow =
+        ResolveMaximumWindow(configuration);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -396,9 +464,30 @@ public class RateLimitCleanupService(ILogger<RateLimitCleanupService> logger) : 
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            RateLimitingMiddleware.CleanupExpiredEntries();
-            _logger.LogDebug("Rate-limit cleanup executed.");
+            var removed = RateLimitingMiddleware.CleanupExpiredEntries(
+                _retentionWindow);
+            _logger.LogDebug(
+                "Rate-limit cleanup removed {Count} expired bucket(s)",
+                removed);
         }
         _logger.LogInformation("RateLimitCleanupService stopped.");
+    }
+
+    private static TimeSpan ResolveMaximumWindow(IConfiguration configuration)
+    {
+        var maximumSeconds = Math.Max(
+            1,
+            configuration.GetValue<int?>("RateLimiting:WindowSeconds") ?? 60);
+
+        foreach (var endpoint in configuration
+                     .GetSection("RateLimiting:Endpoints")
+                     .GetChildren())
+        {
+            maximumSeconds = Math.Max(
+                maximumSeconds,
+                endpoint.GetValue<int?>("WindowSeconds") ?? 0);
+        }
+
+        return TimeSpan.FromSeconds(maximumSeconds);
     }
 }

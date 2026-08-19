@@ -9,18 +9,23 @@ public interface IJwtService
     /// </summary>
     public Task<TokenResponse?> GenerateSecurityToken(string username, string deviceInfo = "Unknown");
     public string? ValidateToken(string token);
-    public Guid GetId(string token);
     public string GenerateRefreshToken();
 
     /// <summary>
     /// Validates the incoming refresh token, detects reuse attacks, rotates to a
     /// new refresh token, and returns fresh access + refresh tokens.
     /// Returns null if the token is invalid or expired.
+    /// Throws <see cref="ConcurrentRefreshTokenException"/> when another request
+    /// rotated the same token within the configured concurrency grace window.
     /// Throws <see cref="RefreshTokenReuseException"/> if reuse is detected,
     /// after revoking the entire token family.
     /// </summary>
     public Task<TokenResponse?> RefreshAccessToken(string refreshToken);
-    public Task RevokeRefreshTokenAsync(string refreshToken);
+    /// <summary>
+    /// Revokes a refresh token only when it belongs to <paramref name="expectedUserId"/>.
+    /// Returns false for an unknown token or an ownership mismatch.
+    /// </summary>
+    public Task<bool> RevokeRefreshTokenAsync(string refreshToken, Guid expectedUserId);
 
     /// <summary>
     /// Extracts the jti claim from a raw JWT string and records it in the
@@ -45,6 +50,15 @@ public class TokenResponse
 
 /// <summary>Thrown when a refresh token that was already rotated is reused.</summary>
 public sealed class RefreshTokenReuseException(Guid userId) : Exception("Refresh token reuse detected — entire session family revoked.")
+{
+    public Guid UserId { get; } = userId;
+}
+
+/// <summary>
+/// Thrown for a harmless duplicate refresh that races with a successful rotation.
+/// The session remains valid and clients should retry after accepting the winning token.
+/// </summary>
+public sealed class ConcurrentRefreshTokenException(Guid userId) : Exception("A concurrent token refresh already completed.")
 {
     public Guid UserId { get; } = userId;
 }

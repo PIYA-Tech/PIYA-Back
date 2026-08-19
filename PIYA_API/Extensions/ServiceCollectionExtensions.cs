@@ -1,3 +1,4 @@
+using PIYA_API.Configuration;
 using PIYA_API.Service.Class;
 using PIYA_API.Service.Interface;
 
@@ -49,20 +50,52 @@ public static class ServiceCollectionExtensions
 
         // External HTTP clients
         services.AddHttpClient<IGoogleMapsService, GoogleMapsService>();
-        services.AddHttpClient<IWebhookService, WebhookService>();
+        services.AddHttpClient<IWebhookService, WebhookService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                ConnectCallback = WebhookDestinationPolicy.ConnectAsync,
+            });
         services.AddHttpClient<IHmsIntegrationService, HmsIntegrationService>();
         services.AddHttpClient<IEhrIntegrationService, EhrIntegrationService>();
+        services.AddHttpClient("FirebaseCloudMessaging");
 
-        // File storage (S3 or local)
-        var storageProvider = config["Storage:Provider"] ?? "Local";
-        if (storageProvider.Equals("S3", StringComparison.OrdinalIgnoreCase))
-            services.AddSingleton<IFileStorageService, S3FileStorageService>();
+        services.AddOptions<FirebaseOptions>()
+            .Bind(config.GetSection(FirebaseOptions.SectionName))
+            .Validate(options =>
+                !options.Enabled ||
+                (!string.IsNullOrWhiteSpace(options.ProjectId) &&
+                 !string.IsNullOrWhiteSpace(options.CredentialsPath)),
+                "Firebase:ProjectId and Firebase:CredentialsPath are required when Firebase is enabled.")
+            .Validate(options => !options.Enabled || File.Exists(options.CredentialsPath),
+                "Firebase:CredentialsPath must reference a readable service-account file when Firebase is enabled.")
+            .ValidateOnStart();
+
+        services.AddPiyaFileStorage(config);
+
+        var malwareScanningEnabled = config.GetValue<bool>("FileUpload:MalwareScanning:Enabled");
+        if (malwareScanningEnabled)
+        {
+            services.AddOptions<MalwareScanningOptions>()
+                .Bind(config.GetSection(MalwareScanningOptions.SectionName))
+                .Validate(options => !string.IsNullOrWhiteSpace(options.Host),
+                    "FileUpload:MalwareScanning:Host is required when scanning is enabled.")
+                .Validate(options => options.Port is >= 1 and <= 65535,
+                    "FileUpload:MalwareScanning:Port must be between 1 and 65535.")
+                .Validate(options => options.TimeoutSeconds is >= 1 and <= 120,
+                    "FileUpload:MalwareScanning:TimeoutSeconds must be between 1 and 120.")
+                .ValidateOnStart();
+            services.AddScoped<IFileSecurityScanner, ClamAvFileSecurityScanner>();
+        }
         else
-            services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+        {
+            services.AddSingleton<IFileSecurityScanner, DisabledFileSecurityScanner>();
+        }
 
         services.AddScoped<IFileUploadService, FileUploadService>();
         services.AddScoped<IPdfExportService, PdfExportService>();
-        services.AddScoped<ICacheService, CacheService>();
+        services.AddSingleton<ICacheService, CacheService>();
         services.AddScoped<ISignalRNotificationService, SignalRNotificationService>();
         services.AddScoped<IFcmService, FcmService>();
 
@@ -78,14 +111,71 @@ public static class ServiceCollectionExtensions
 
         // Production readiness
         services.AddScoped<IGdprComplianceService, GdprComplianceService>();
-        services.AddScoped<IPerformanceMonitoringService, PerformanceMonitoringService>();
+        services.AddSingleton<IPerformanceMonitoringService, PerformanceMonitoringService>();
         services.AddSingleton<ISecurityHardeningService, SecurityHardeningService>();
 
         // Background hosted services
         services.AddHostedService<PIYA_API.Middleware.RateLimitCleanupService>();
         services.AddHostedService<PIYA_API.Middleware.RevokedTokenCleanupService>();
+        services.AddHostedService<PIYA_API.Middleware.QrTokenCleanupService>();
         services.AddHostedService<PIYA_API.Middleware.PrescriptionExpiryService>();
+        services.AddHostedService<PIYA_API.Middleware.WebhookDeliveryWorker>();
 
         return services;
     }
+
+    /// <summary>
+    /// Register the configured file-storage provider and validate S3 settings
+    /// during host startup rather than on the first upload request.
+    /// </summary>
+    public static IServiceCollection AddPiyaFileStorage(
+        this IServiceCollection services,
+        IConfiguration config)
+    {
+        var storageProvider = (config["Storage:Provider"] ?? "Local").Trim();
+        if (storageProvider.Equals("S3", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddOptions<S3StorageOptions>()
+                .Bind(config.GetSection(S3StorageOptions.SectionName))
+                .Validate(
+                    options => IsConfiguredStorageValue(options.BucketName),
+                    "Storage:S3:BucketName is required when Storage:Provider is S3.")
+                .Validate(
+                    options => !string.IsNullOrWhiteSpace(options.Region),
+                    "Storage:S3:Region is required when Storage:Provider is S3.")
+                .Validate(
+                    options => IsConfiguredStorageValue(options.AccessKeyId),
+                    "Storage:S3:AccessKeyId is required when Storage:Provider is S3.")
+                .Validate(
+                    options => IsConfiguredStorageValue(options.SecretAccessKey),
+                    "Storage:S3:SecretAccessKey is required when Storage:Provider is S3.")
+                .Validate(
+                    options =>
+                        string.IsNullOrWhiteSpace(options.ServiceUrl) ||
+                        IsAbsoluteHttpUrl(options.ServiceUrl),
+                    "Storage:S3:ServiceUrl must be an absolute HTTP(S) URL when configured.")
+                .ValidateOnStart();
+
+            services.AddSingleton<IFileStorageService, S3FileStorageService>();
+            return services;
+        }
+
+        if (!storageProvider.Equals("Local", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported Storage:Provider '{storageProvider}'. Expected 'Local' or 'S3'.");
+        }
+
+        services.AddSingleton<IFileStorageService, LocalFileStorageService>();
+        return services;
+    }
+
+    private static bool IsConfiguredStorageValue(string value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        !value.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase) &&
+        !value.Contains("REPLACE", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAbsoluteHttpUrl(string value) =>
+        Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 }

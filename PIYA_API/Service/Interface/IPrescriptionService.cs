@@ -41,6 +41,18 @@ public interface IPrescriptionService
     /// Mark prescription as fulfilled
     /// </summary>
     Task<Prescription> FulfillPrescriptionAsync(Guid prescriptionId, Guid pharmacyId);
+
+    /// <summary>
+    /// Atomically consume a patient-presented QR token and fulfill the associated
+    /// prescription at the selected pharmacy. If stock validation or fulfillment
+    /// fails, the QR token remains unused.
+    /// </summary>
+    Task<Prescription> FulfillPrescriptionByQrAsync(
+        string qrToken,
+        Guid pharmacistUserId,
+        Guid pharmacyId,
+        string? ipAddress = null,
+        string? userAgent = null);
     
     /// <summary>
     /// Mark prescription item as fulfilled

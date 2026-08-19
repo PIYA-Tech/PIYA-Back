@@ -71,7 +71,8 @@ public interface IAppointmentService
         CancellationToken ct = default);
 
     /// <summary>
-    /// Returns true when the doctor has at least one non-cancelled appointment with the patient.
+    /// Returns true when the doctor has at least one appointment with the patient
+    /// that was neither cancelled nor recorded as a no-show.
     /// Used to gate access to patient records without loading full appointment lists.
     /// </summary>
     Task<bool> HasDoctorPatientRelationshipAsync(Guid doctorId, Guid patientId);

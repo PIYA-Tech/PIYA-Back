@@ -113,6 +113,27 @@ public class PharmacyUpsertDtoValidator : AbstractValidator<PharmacyUpsertDto>
     }
 }
 
+/// <summary>Validator for the medication master-data write contract.</summary>
+public class MedicationUpsertDtoValidator : AbstractValidator<MedicationUpsertDto>
+{
+    public MedicationUpsertDtoValidator()
+    {
+        RuleFor(x => x.BrandName).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.GenericName).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.Form).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Strength).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Country).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Manufacturer).MaximumLength(200).When(x => x.Manufacturer != null);
+        RuleFor(x => x.AtcCode).MaximumLength(20).When(x => x.AtcCode != null);
+        RuleFor(x => x.Barcode).MaximumLength(100).When(x => x.Barcode != null);
+        RuleFor(x => x.ActiveIngredients).Must(values => values.Count <= 50)
+            .WithMessage("No more than 50 active ingredients are allowed.");
+        RuleForEach(x => x.ActiveIngredients).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.GenericAlternatives).Must(values => values.Count <= 100)
+            .WithMessage("No more than 100 generic alternatives are allowed.");
+    }
+}
+
 /// <summary>Validator for assigning hospitals to a doctor.</summary>
 public class AssignHospitalsRequestValidator : AbstractValidator<AssignHospitalsRequest>
 {

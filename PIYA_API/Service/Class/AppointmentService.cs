@@ -422,7 +422,8 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .AnyAsync(a =>
                 a.DoctorId == doctorId &&
                 a.PatientId == patientId &&
-                a.Status != AppointmentStatus.Cancelled);
+                a.Status != AppointmentStatus.Cancelled &&
+                a.Status != AppointmentStatus.NoShow);
     }
 
     public async Task<DoctorAppointmentCounts> GetDoctorAppointmentCountsAsync(Guid doctorId, DateTime asOf)

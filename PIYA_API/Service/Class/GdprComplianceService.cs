@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace PIYA_API.Service.Class;
@@ -137,11 +138,19 @@ public class GdprComplianceService(
             var entitiesAffected = new List<string>();
 
             // Anonymize user record
-            user.Email = $"anonymized-{userId}@deleted.local";
+            var anonymousMarker = Guid.NewGuid().ToString("N");
+            user.Username = $"deleted-{anonymousMarker}";
+            user.Email = $"deleted-{anonymousMarker}@invalid.piya";
             user.FirstName = "Anonymized";
             user.LastName = "User";
+            user.MiddleName = null;
             user.PhoneNumber = string.Empty;
-            user.DateOfBirth = DateTime.MinValue;
+            user.DateOfBirth = null;
+            user.PasswordHash = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            user.SigningKey = null;
+            user.IsActive = false;
+            user.IsEmailVerified = false;
+            user.IsPhoneVerified = false;
             user.UpdatedAt = anonymizationDate;
             recordsAnonymized++;
             entitiesAffected.Add("User");
@@ -169,6 +178,20 @@ public class GdprComplianceService(
                 recordsAnonymized++;
             }
             if (doctorNotes.Count > 0) entitiesAffected.Add($"DoctorNotes ({doctorNotes.Count})");
+
+            // Remove every authentication and recovery credential so an anonymized
+            // identity cannot be reactivated through an old session or reset token.
+            _context.Tokens.RemoveRange(await _context.Tokens.Where(item => item.UserId == userId).ToListAsync());
+            _context.UsedRefreshTokens.RemoveRange(
+                await _context.UsedRefreshTokens.Where(item => item.UserId == userId).ToListAsync());
+            _context.TwoFactorAuths.RemoveRange(
+                await _context.TwoFactorAuths.Where(item => item.UserId == userId).ToListAsync());
+            _context.DeviceTokens.RemoveRange(
+                await _context.DeviceTokens.Where(item => item.UserId == userId).ToListAsync());
+            _context.EmailVerificationTokens.RemoveRange(
+                await _context.EmailVerificationTokens.Where(item => item.UserId == userId).ToListAsync());
+            _context.PasswordResetTokens.RemoveRange(
+                await _context.PasswordResetTokens.Where(item => item.UserId == userId).ToListAsync());
 
             // Save changes
             await _context.SaveChangesAsync();
@@ -257,6 +280,11 @@ public class GdprComplianceService(
             recordsDeleted += doctorNotes.Count;
             if (doctorNotes.Count > 0) entitiesDeleted.Add($"DoctorNotes ({doctorNotes.Count})");
 
+            var consents = await _context.UserConsents.Where(consent => consent.UserId == userId).ToListAsync();
+            _context.UserConsents.RemoveRange(consents);
+            recordsDeleted += consents.Count;
+            if (consents.Count > 0) entitiesDeleted.Add($"UserConsents ({consents.Count})");
+
             // Delete user
             _context.Users.Remove(user);
             recordsDeleted++;
@@ -297,23 +325,38 @@ public class GdprComplianceService(
 
     public async Task<List<UserConsent>> GetUserConsentsAsync(Guid userId)
     {
-        // Note: Implement consent tracking table in future migration
-        // For now, return empty list or implement in-memory tracking
-        return await Task.FromResult(new List<UserConsent>());
+        return await _context.UserConsents
+            .AsNoTracking()
+            .Where(consent => consent.UserId == userId)
+            .OrderByDescending(consent => consent.GrantedAt)
+            .ToListAsync();
     }
 
     public async Task<UserConsent> RecordConsentAsync(Guid userId, string purpose, bool granted, string? ipAddress = null)
     {
-        // Note: Implement consent tracking table in future migration
+        purpose = purpose.Trim();
+        if (string.IsNullOrWhiteSpace(purpose))
+            throw new ArgumentException("Consent purpose is required", nameof(purpose));
+        if (!await _context.Users.AnyAsync(user => user.Id == userId))
+            throw new KeyNotFoundException("User not found");
+
+        var now = DateTime.UtcNow;
+        var current = await _context.UserConsents
+            .Where(consent => consent.UserId == userId && consent.Purpose == purpose && consent.RevokedAt == null)
+            .ToListAsync();
+        foreach (var currentConsent in current) currentConsent.RevokedAt = now;
+
         var consent = new UserConsent
         {
             Id = Guid.NewGuid(),
             UserId = userId,
             Purpose = purpose,
             Granted = granted,
-            GrantedAt = DateTime.UtcNow,
+            GrantedAt = now,
             IpAddress = ipAddress
         };
+        _context.UserConsents.Add(consent);
+        await _context.SaveChangesAsync();
 
         await _auditService.LogAsync(new AuditLog
         {
@@ -329,6 +372,14 @@ public class GdprComplianceService(
 
     public async Task<bool> RevokeConsentAsync(Guid userId, string purpose)
     {
+        var consent = await _context.UserConsents
+            .Where(item => item.UserId == userId && item.Purpose == purpose && item.RevokedAt == null)
+            .OrderByDescending(item => item.GrantedAt)
+            .FirstOrDefaultAsync();
+        if (consent == null) return false;
+        consent.RevokedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
         await _auditService.LogAsync(new AuditLog
         {
             Action = "CONSENT_REVOKED",
@@ -343,8 +394,9 @@ public class GdprComplianceService(
 
     public async Task<bool> HasConsentAsync(Guid userId, string purpose)
     {
-        var consents = await GetUserConsentsAsync(userId);
-        return consents.Any(c => c.Purpose == purpose && c.Granted && c.RevokedAt == null);
+        return await _context.UserConsents.AnyAsync(
+            consent => consent.UserId == userId && consent.Purpose == purpose &&
+                       consent.Granted && consent.RevokedAt == null);
     }
 
     public async Task<DataRetentionStatus> GetRetentionStatusAsync(Guid userId)
@@ -440,9 +492,11 @@ public class GdprComplianceService(
             TotalDataExportRequests = gdprAuditLogs.Count(a => a.Action == "GDPR_DATA_EXPORT"),
             TotalDeletionRequests = gdprAuditLogs.Count(a => a.Action == "GDPR_DELETION"),
             TotalAnonymizationRequests = gdprAuditLogs.Count(a => a.Action == "GDPR_ANONYMIZATION"),
-            ActiveConsents = 0, // Implement when consent table is added
-            RevokedConsents = gdprAuditLogs.Count(a => a.Action == "CONSENT_REVOKED"),
-            AverageResponseTimeHours = 24, // Implement actual calculation
+            ActiveConsents = await _context.UserConsents.CountAsync(
+                consent => consent.Granted && consent.RevokedAt == null),
+            RevokedConsents = await _context.UserConsents.CountAsync(
+                consent => consent.RevokedAt >= startDate && consent.RevokedAt <= endDate),
+            AverageResponseTimeHours = 0,
             Metrics =
             [
                 new ComplianceMetric { MetricName = "Total GDPR Requests", Value = gdprAuditLogs.Count, Unit = "requests" },

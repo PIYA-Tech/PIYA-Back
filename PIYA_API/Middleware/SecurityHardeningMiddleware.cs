@@ -57,44 +57,9 @@ public class SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityH
 
     private static string GetClientIpAddress(HttpContext context)
     {
-        // Only trust X-Forwarded-For / X-Real-IP when the immediate connection
-        // comes from a known loopback/private proxy (localhost or RFC-1918 range).
-        // If someone sends these headers directly from the internet, we ignore them
-        // to prevent IP spoofing that would bypass per-IP rate limiting.
-        var remoteIp = context.Connection.RemoteIpAddress;
-        var remoteIpStr = remoteIp?.ToString() ?? "unknown";
-
-        bool isFromTrustedProxy = remoteIp != null &&
-            (System.Net.IPAddress.IsLoopback(remoteIp) || IsPrivateRange(remoteIp));
-
-        if (isFromTrustedProxy)
-        {
-            var forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(forwardedFor))
-            {
-                // Take the leftmost (original client) IP from the chain
-                var clientIp = forwardedFor.Split(',')[0].Trim();
-                if (!string.IsNullOrEmpty(clientIp)) return clientIp;
-            }
-
-            var realIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
-            if (!string.IsNullOrEmpty(realIp)) return realIp;
-        }
-
-        return remoteIpStr;
-    }
-
-    private static bool IsPrivateRange(System.Net.IPAddress ip)
-    {
-        var bytes = ip.GetAddressBytes();
-        if (bytes.Length == 4)
-        {
-            return bytes[0] == 10 ||
-                   (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-                   (bytes[0] == 192 && bytes[1] == 168);
-        }
-        // IPv6 unique local (fc00::/7)
-        return bytes.Length == 16 && (bytes[0] & 0xFE) == 0xFC;
+        // ForwardedHeadersMiddleware is the single trust boundary for proxy
+        // headers and has already canonicalized this value for known Caddy peers.
+        return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     }
 
     private static void AddSecurityHeaders(HttpContext context)

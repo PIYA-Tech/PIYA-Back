@@ -59,6 +59,7 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
     {
         var existingPharmacy = await dbContext.Pharmacies
             .Include(p => p.Coordinates)
+            .Include(p => p.Company)
             .FirstOrDefaultAsync(p => p.Id == pharmacy.Id)
             ?? throw new KeyNotFoundException("Pharmacy not found");
         existingPharmacy.Name = pharmacy.Name;
@@ -68,7 +69,13 @@ public class PharmacyService(PharmacyApiDbContext dbContext) : IPharmacyService
         existingPharmacy.PhoneNumber = pharmacy.PhoneNumber;
         existingPharmacy.Email = pharmacy.Email;
         existingPharmacy.Website = pharmacy.Website;
+        existingPharmacy.EmergencyContact = pharmacy.EmergencyContact;
+        existingPharmacy.Services = pharmacy.Services;
+        existingPharmacy.OperatingHours = pharmacy.OperatingHours;
         existingPharmacy.IsActive = pharmacy.IsActive;
+        existingPharmacy.Is24Hours = pharmacy.Is24Hours;
+        existingPharmacy.Company = pharmacy.Company;
+        existingPharmacy.UpdatedAt = DateTime.UtcNow;
 
         // Update coordinates in-place to avoid inserting a duplicate Coordinates row
         if (pharmacy.Coordinates != null)

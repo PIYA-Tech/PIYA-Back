@@ -19,6 +19,7 @@ public class AzerbaijanPharmaceuticalRegistryService(
     
     private const string ApiBaseUrl = "https://admin.opendata.az/api/3/action";
     private const string DatasetId = "derman-vasitelerinin-dovlet-reyestri";
+    private const string SyncStateKey = "azerbaijan-pharmaceutical-registry";
 
     public async Task<RegistryMetadata?> GetRegistryMetadataAsync()
     {
@@ -298,9 +299,22 @@ public class AzerbaijanPharmaceuticalRegistryService(
             result.Success = true;
             result.SyncCompletedAt = DateTime.UtcNow;
 
-            // Store last sync date (would need a configuration/settings table)
-            _logger.LogInformation($"Sync completed successfully in {result.Duration.TotalSeconds:F2} seconds");
-            _logger.LogInformation($"Total records: {result.TotalRecords}, New: {result.NewRecords}, Updated: {result.UpdatedRecords}");
+            var syncState = await _context.IntegrationSyncStates.FindAsync(SyncStateKey);
+            if (syncState == null)
+            {
+                syncState = new IntegrationSyncState { Key = SyncStateKey };
+                _context.IntegrationSyncStates.Add(syncState);
+            }
+
+            syncState.SourceLastModifiedAt = metadata.LastModified.ToUniversalTime();
+            syncState.LastSuccessfulSyncAt = result.SyncCompletedAt;
+            syncState.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Sync completed successfully in {DurationSeconds:F2} seconds", result.Duration.TotalSeconds);
+            _logger.LogInformation(
+                "Total records: {TotalRecords}, New: {NewRecords}, Updated: {UpdatedRecords}",
+                result.TotalRecords, result.NewRecords, result.UpdatedRecords);
 
             return result;
         }
@@ -335,10 +349,10 @@ public class AzerbaijanPharmaceuticalRegistryService(
 
     public async Task<DateTime?> GetLastSyncDateAsync()
     {
-        // TODO: Implement configuration/settings table to store last sync date
-        // For now, return null (will trigger full sync on first run)
-        await Task.CompletedTask;
-        return null;
+        return await _context.IntegrationSyncStates
+            .Where(item => item.Key == SyncStateKey)
+            .Select(item => (DateTime?)item.SourceLastModifiedAt)
+            .SingleOrDefaultAsync();
     }
 
     #region Helper Methods

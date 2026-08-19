@@ -1,11 +1,21 @@
-bin
-obj
-.git
+**/bin/
+**/obj/
+**/.git/
 *.log
 .env
 .vs
 .vscode
 .DS_Store
-logs/
-uploads/
+**/logs/
+**/uploads/
 PIYA_API.Tests/
+
+# Runtime configuration and secrets must be injected by the orchestrator.
+# The API treats these files as optional and docker-compose supplies all
+# required production settings through environment variables.
+PIYA_API/appsettings*.json
+PIYA_API/secrets*.json
+**/*.pfx
+**/*.p12
+**/*.pem
+**/id_rsa*

@@ -1,33 +1,54 @@
 using PIYA_API.Service.Interface;
+using System.Net;
 
 namespace PIYA_API.Service.Class;
 
-public class NotificationService(IConfiguration configuration, ILogger<NotificationService> logger) : INotificationService
+public class NotificationService(
+    IConfiguration configuration,
+    IEmailService emailService,
+    ISmsService smsService,
+    IFcmService fcmService,
+    ILogger<NotificationService> logger) : INotificationService
 {
     private readonly IConfiguration _configuration = configuration;
+    private readonly IEmailService _emailService = emailService;
+    private readonly ISmsService _smsService = smsService;
+    private readonly IFcmService _fcmService = fcmService;
     private readonly ILogger<NotificationService> _logger = logger;
 
     public async Task<bool> SendEmailAsync(string to, string subject, string body, bool isHtml = true)
     {
+        if (!_configuration.GetValue<bool>("ExternalApis:EmailService:Enabled"))
+        {
+            _logger.LogWarning("Email notification was not sent because email delivery is disabled");
+            return false;
+        }
+
+        var smtpUsername = _configuration["ExternalApis:EmailService:SmtpUsername"];
+        if (string.IsNullOrWhiteSpace(smtpUsername) ||
+            smtpUsername.Contains("REPLACE", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError("Email notification was not sent because SMTP credentials are not configured");
+            return false;
+        }
+
         try
         {
-            // TODO: Integrate with SendGrid or similar email service
-            // var apiKey = _configuration["Notification:SendGrid:ApiKey"];
-            // var client = new SendGridClient(apiKey);
-            // var from = new EmailAddress(_configuration["Notification:SendGrid:FromEmail"], "PIYA Healthcare");
-            // var msg = MailHelper.CreateSingleEmail(from, new EmailAddress(to), subject, body, isHtml ? body : null);
-            // var response = await client.SendEmailAsync(msg);
-            // return response.IsSuccessStatusCode;
-
-            _logger.LogInformation($"[EMAIL] To: {to}, Subject: {subject}");
-            _logger.LogDebug($"[EMAIL] Body: {body}");
-            
-            await Task.CompletedTask;
+            var htmlBody = isHtml
+                ? body
+                : WebUtility.HtmlEncode(body).Replace("\r\n", "<br>").Replace("\n", "<br>");
+            await _emailService.SendEmailAsync(
+                to,
+                subject,
+                htmlBody,
+                isHtml ? null : body);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Failed to send email to {to}");
+            _logger.LogError(
+                "Email notification delivery failed with {ExceptionType}",
+                ex.GetType().Name);
             return false;
         }
     }
@@ -36,26 +57,13 @@ public class NotificationService(IConfiguration configuration, ILogger<Notificat
     {
         try
         {
-            // TODO: Integrate with Twilio or similar SMS service
-            // var accountSid = _configuration["Notification:Twilio:AccountSid"];
-            // var authToken = _configuration["Notification:Twilio:AuthToken"];
-            // var fromNumber = _configuration["Notification:Twilio:FromNumber"];
-            // TwilioClient.Init(accountSid, authToken);
-            // var messageResource = await MessageResource.CreateAsync(
-            //     body: message,
-            //     from: new PhoneNumber(fromNumber),
-            //     to: new PhoneNumber(phoneNumber)
-            // );
-            // return messageResource.Status != MessageResource.StatusEnum.Failed;
-
-            _logger.LogInformation($"[SMS] To: {phoneNumber}, Message: {message}");
-            
-            await Task.CompletedTask;
-            return true;
+            return await _smsService.SendSmsAsync(phoneNumber, message);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Failed to send SMS to {phoneNumber}");
+            _logger.LogError(
+                "SMS notification delivery failed with {ExceptionType}",
+                ex.GetType().Name);
             return false;
         }
     }
@@ -64,31 +72,14 @@ public class NotificationService(IConfiguration configuration, ILogger<Notificat
     {
         try
         {
-            // TODO: Integrate with Firebase Cloud Messaging (FCM)
-            // Fetch user's device token from database
-            // var user = await _context.Users.FindAsync(userId);
-            // var deviceToken = user.DeviceToken;
-            
-            // var serverKey = _configuration["Notification:FCM:ServerKey"];
-            // var message = new
-            // {
-            //     to = deviceToken,
-            //     notification = new { title, body },
-            //     data = data ?? new Dictionary<string, string>()
-            // };
-            // var httpClient = new HttpClient();
-            // httpClient.DefaultRequestHeaders.Add("Authorization", $"key={serverKey}");
-            // var response = await httpClient.PostAsJsonAsync("https://fcm.googleapis.com/fcm/send", message);
-            // return response.IsSuccessStatusCode;
-
-            _logger.LogInformation($"[PUSH] User: {userId}, Title: {title}, Body: {body}");
-            
-            await Task.CompletedTask;
-            return true;
+            return await _fcmService.SendToUserAsync(userId, title, body, data) > 0;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Failed to send push notification to user {userId}");
+            _logger.LogError(
+                "Push notification delivery failed for user {UserId} with {ExceptionType}",
+                userId,
+                ex.GetType().Name);
             return false;
         }
     }
@@ -139,7 +130,7 @@ public class NotificationService(IConfiguration configuration, ILogger<Notificat
         );
 
         var results = await Task.WhenAll(emailTask, smsTask);
-        return results.Any(r => r);
+        return results.All(r => r);
     }
 
     public async Task<bool> SendPrescriptionReadyAsync(string email, string phoneNumber, string patientName, string pharmacyName)
@@ -165,7 +156,7 @@ public class NotificationService(IConfiguration configuration, ILogger<Notificat
         );
 
         var results = await Task.WhenAll(emailTask, smsTask);
-        return results.Any(r => r); // Success if at least one channel succeeds
+        return results.All(r => r);
     }
 
     public async Task<bool> Send2FACodeEmailAsync(string email, string code)

@@ -2,6 +2,8 @@ using Amazon;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
@@ -24,16 +26,18 @@ public class S3FileStorageService : IFileStorageService
     private readonly string _bucketName;
     private readonly ILogger<S3FileStorageService> _logger;
 
-    public S3FileStorageService(IConfiguration configuration, ILogger<S3FileStorageService> logger)
+    public S3FileStorageService(
+        IOptions<S3StorageOptions> storageOptions,
+        ILogger<S3FileStorageService> logger)
     {
         _logger = logger;
 
-        var bucketName  = configuration["Storage:S3:BucketName"]      ?? throw new InvalidOperationException("Storage:S3:BucketName is required.");
-        var accessKeyId = configuration["Storage:S3:AccessKeyId"]      ?? throw new InvalidOperationException("Storage:S3:AccessKeyId is required.");
-        var secretKey   = configuration["Storage:S3:SecretAccessKey"]  ?? throw new InvalidOperationException("Storage:S3:SecretAccessKey is required.");
-        var regionStr   = configuration["Storage:S3:Region"]           ?? "us-east-1";
-        var serviceUrl  = configuration["Storage:S3:ServiceUrl"];       // null for AWS
-        var forcePathStyle = configuration.GetValue<bool>("Storage:S3:ForcePathStyle");
+        var options = storageOptions.Value;
+        var bucketName = options.BucketName.Trim();
+        var accessKeyId = options.AccessKeyId.Trim();
+        var secretKey = options.SecretAccessKey.Trim();
+        var region = options.Region.Trim();
+        var serviceUrl = options.ServiceUrl?.Trim();
 
         _bucketName = bucketName;
 
@@ -41,7 +45,7 @@ public class S3FileStorageService : IFileStorageService
 
         var config = new AmazonS3Config
         {
-            ForcePathStyle = forcePathStyle,
+            ForcePathStyle = options.ForcePathStyle,
         };
 
         if (!string.IsNullOrWhiteSpace(serviceUrl))
@@ -51,7 +55,7 @@ public class S3FileStorageService : IFileStorageService
         }
         else
         {
-            config.RegionEndpoint = RegionEndpoint.GetBySystemName(regionStr);
+            config.RegionEndpoint = RegionEndpoint.GetBySystemName(region);
         }
 
         _s3 = new AmazonS3Client(credentials, config);

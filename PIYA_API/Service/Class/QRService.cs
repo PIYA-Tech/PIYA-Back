@@ -6,6 +6,7 @@ using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using QRCoder;
 
 namespace PIYA_API.Service.Class;
 
@@ -136,62 +137,78 @@ public class QRService : IQRService
         {
             _logger.LogInformation("Validating prescription QR token by pharmacist {PharmacistId}", pharmacistUserId);
 
-            // Open a serializable transaction so that the validate + mark-used are atomic.
-            // This eliminates the TOCTOU race condition where two concurrent scans both
-            // pass validation before either writes the IsUsed flag.
-            await using var tx = await _context.Database.BeginTransactionAsync(
-                System.Data.IsolationLevel.Serializable);
-            try
+            // A dispensing operation owns a wider transaction that also covers stock
+            // deduction and prescription state. Participate in that transaction when one
+            // exists; otherwise keep this lower-level operation atomic on its own.
+            if (_context.Database.CurrentTransaction != null)
+                return await ValidateAndUsePrescriptionQrTokenCoreAsync(
+                    token, pharmacistUserId, ipAddress, userAgent);
+
+            var strategy = _context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
             {
-                // Validate token structure and signature (does NOT increment counter here)
-                var (isValid, entityId, entityType, expiresAt, errorMessage) = await ValidateQrTokenAsync(token);
+                await using var tx = await _context.Database.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable);
+                try
+                {
+                    var result = await ValidateAndUsePrescriptionQrTokenCoreAsync(
+                        token, pharmacistUserId, ipAddress, userAgent);
+                    if (!result.IsValid)
+                    {
+                        await tx.RollbackAsync();
+                        return result;
+                    }
 
-                if (!isValid)
+                    await tx.CommitAsync();
+                    return result;
+                }
+                catch
                 {
                     await tx.RollbackAsync();
-                    return (false, Guid.Empty, errorMessage);
+                    throw;
                 }
-
-                if (entityType != "Prescription")
-                {
-                    await tx.RollbackAsync();
-                    return (false, Guid.Empty, "Invalid token type - expected Prescription QR token");
-                }
-
-                // Mark token as used AND increment the counter in the same transaction.
-                var marked = await MarkTokenAsUsedAsync(token, pharmacistUserId, ipAddress, userAgent);
-                if (!marked)
-                {
-                    await tx.RollbackAsync();
-                    return (false, Guid.Empty, "Token was already used or not found");
-                }
-
-                await tx.CommitAsync();
-
-                // NOTE: The caller (QRValidationController) is responsible for calling
-                // IPrescriptionService.FulfillPrescriptionAsync to update the prescription status,
-                // trigger item-level fulfillment, and write the audit trail.
-                // We intentionally do NOT update prescription.Status here to avoid a duplicate save.
-
-                // Audit log
-                await _auditService.LogEntityActionAsync("PRESCRIPTION_QR_SCANNED", "Prescription", entityId.ToString(), pharmacistUserId, 
-                    $"Scanned and validated prescription {entityId}");
-
-                _logger.LogInformation("Successfully validated and used prescription QR token for prescription {PrescriptionId}", entityId);
-
-                return (true, entityId, string.Empty);
-            }
-            catch
-            {
-                await tx.RollbackAsync();
-                throw;
-            }
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error validating prescription QR token");
-            return (false, Guid.Empty, $"Validation error: {ex.Message}");
+            return (false, Guid.Empty, "QR token validation failed");
         }
+    }
+
+    private async Task<(bool IsValid, Guid PrescriptionId, string ErrorMessage)>
+        ValidateAndUsePrescriptionQrTokenCoreAsync(
+            string token,
+            Guid pharmacistUserId,
+            string? ipAddress,
+            string? userAgent)
+    {
+        var (isValid, entityId, entityType, _, errorMessage) =
+            await ValidateQrTokenAsync(token);
+
+        if (!isValid)
+            return (false, Guid.Empty, errorMessage);
+
+        if (!string.Equals(entityType, "Prescription", StringComparison.Ordinal))
+            return (false, Guid.Empty, "Invalid token type - expected Prescription QR token");
+
+        var marked = await MarkTokenAsUsedAsync(
+            token, pharmacistUserId, ipAddress, userAgent);
+        if (!marked)
+            return (false, Guid.Empty, "Token was already used or not found");
+
+        await _auditService.LogEntityActionAsync(
+            "PRESCRIPTION_QR_SCANNED",
+            "Prescription",
+            entityId.ToString(),
+            pharmacistUserId,
+            $"Scanned and validated prescription {entityId}");
+
+        _logger.LogInformation(
+            "Successfully validated and used prescription QR token for prescription {PrescriptionId}",
+            entityId);
+
+        return (true, entityId, string.Empty);
     }
 
     public async Task<(bool IsValid, Guid EntityId, string EntityType, DateTime ExpiresAt, string ErrorMessage)> ValidateQrTokenAsync(string token)
@@ -412,21 +429,17 @@ public class QRService : IQRService
         }
     }
 
-    public async Task<string> GenerateQrCodeImageAsync(string data)
+    public Task<string> GenerateQrCodeImageAsync(string data)
     {
-        // Placeholder - requires QRCoder NuGet package
-        // Install: dotnet add package QRCoder
-        // Implementation:
-        // using QRCoder;
-        // var qrGenerator = new QRCodeGenerator();
-        // var qrCodeData = qrGenerator.CreateQrCode(data, QRCodeGenerator.ECCLevel.Q);
-        // var qrCode = new PngByteQRCode(qrCodeData);
-        // var bytes = qrCode.GetGraphic(20);
-        // return Convert.ToBase64String(bytes);
+        if (string.IsNullOrWhiteSpace(data))
+            throw new ArgumentException("QR data is required", nameof(data));
+        if (Encoding.UTF8.GetByteCount(data) > 2048)
+            throw new ArgumentException("QR data exceeds the supported size", nameof(data));
 
-        _logger.LogWarning("GenerateQrCodeImageAsync not implemented - requires QRCoder package");
-        await Task.CompletedTask;
-        return string.Empty;
+        using var generator = new QRCodeGenerator();
+        using var qrData = generator.CreateQrCode(data, QRCodeGenerator.ECCLevel.Q);
+        using var qrCode = new PngByteQRCode(qrData);
+        return Task.FromResult(Convert.ToBase64String(qrCode.GetGraphic(12)));
     }
 
     // Private helper methods

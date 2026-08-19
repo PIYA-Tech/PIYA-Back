@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -11,14 +13,16 @@ public class PrescriptionService(
     PharmacyApiDbContext context,
     IAuditService auditService,
     IQRService qrService,
-    IConfiguration configuration,
+    IOptions<SecurityOptions> securityOptions,
+    IHostEnvironment environment,
     IInventoryService inventoryService,
     ILogger<PrescriptionService> logger) : IPrescriptionService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IAuditService _auditService = auditService;
     private readonly IQRService _qrService = qrService;
-    private readonly IConfiguration _configuration = configuration;
+    private readonly string _prescriptionSigningKey =
+        ResolvePrescriptionSigningKey(securityOptions.Value, environment);
     private readonly IInventoryService _inventoryService = inventoryService;
     private readonly ILogger<PrescriptionService> _logger = logger;
 
@@ -138,16 +142,9 @@ public class PrescriptionService(
 
     public async Task<Prescription> FulfillPrescriptionAsync(Guid prescriptionId, Guid pharmacyId)
     {
-        var prescription = await GetByIdAsync(prescriptionId) ?? throw new InvalidOperationException("Prescription not found");
-        if (prescription.Status != PrescriptionStatus.Active && prescription.Status != PrescriptionStatus.PartiallyFulfilled)
-        {
-            throw new InvalidOperationException($"Cannot fulfill a prescription with status '{prescription.Status}'");
-        }
+        if (_context.Database.CurrentTransaction != null)
+            return await FulfillPrescriptionCoreAsync(prescriptionId, pharmacyId);
 
-        // Wrap the entire stock-check → state-mutation → QR-revoke → stock-deduction block
-        // in a single Serializable transaction. This eliminates the TOCTOU race where two
-        // concurrent pharmacists scanning the same QR could both pass the stock check before
-        // either committed, causing double-dispensing.
         var strategy = _context.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
@@ -155,81 +152,8 @@ public class PrescriptionService(
                 System.Data.IsolationLevel.Serializable);
             try
             {
-                // Re-fetch inside the transaction so we see the latest committed state
-                // (handles retries transparently — the entity tracked by the outer call
-                // may be stale on retry attempts).
-                var rx = await GetByIdAsync(prescriptionId)
-                    ?? throw new InvalidOperationException("Prescription not found");
-
-                if (rx.Status != PrescriptionStatus.Active && rx.Status != PrescriptionStatus.PartiallyFulfilled)
-                    throw new InvalidOperationException($"Cannot fulfill a prescription with status '{rx.Status}'");
-
-                // Verify adequate stock for all UNFULFILLED items.
-                // Items already fulfilled (PartiallyFulfilled re-entry) are skipped to
-                // avoid double-deducting stock handled in a prior partial call.
-                var unfulfilledItems = rx.Items.Where(i => !i.IsFulfilled).ToList();
-                var stockErrors = new List<string>();
-                foreach (var item in unfulfilledItems)
-                {
-                    var available = await _inventoryService.GetAvailableStockAsync(pharmacyId, item.MedicationId);
-                    if (available < item.Quantity)
-                    {
-                        stockErrors.Add(
-                            $"Medication {item.MedicationId}: required {item.Quantity}, available {available}");
-                    }
-                }
-                if (stockErrors.Count > 0)
-                {
-                    throw new InvalidOperationException(
-                        "Insufficient stock to fulfill prescription. " + string.Join("; ", stockErrors));
-                }
-
-                // Mutate prescription state
-                rx.Status = PrescriptionStatus.Fulfilled;
-                rx.FulfilledAt = DateTime.UtcNow;
-                rx.FulfilledByPharmacyId = pharmacyId;
-                rx.UpdatedAt = DateTime.UtcNow;
-
-                // Mark all items as fulfilled
-                foreach (var item in rx.Items)
-                {
-                    item.IsFulfilled = true;
-                    item.FulfilledAt = DateTime.UtcNow;
-                }
-
-                // Deduct stock BEFORE revoking the QR token so that if any deduction
-                // throws the QR remains valid and the patient is not locked out.
-                var referenceNumber = $"RX-{prescriptionId.ToString()[..8]}";
-                foreach (var item in unfulfilledItems)
-                {
-                    await _inventoryService.DecreaseStockAsync(
-                        pharmacyId,
-                        item.MedicationId,
-                        item.Quantity,
-                        rx.PatientId,
-                        prescriptionId,
-                        referenceNumber: referenceNumber
-                    );
-                }
-
-                // Revoke QR token only after all stock deductions have succeeded (one-time use).
-                if (!string.IsNullOrEmpty(rx.QrToken))
-                {
-                    await _qrService.RevokeTokenAsync(rx.QrToken, rx.PatientId, "Prescription fulfilled");
-                }
-
-                // Persist everything atomically
-                await _context.SaveChangesAsync();
+                var rx = await FulfillPrescriptionCoreAsync(prescriptionId, pharmacyId);
                 await tx.CommitAsync();
-
-                await _auditService.LogEntityActionAsync(
-                    "FulfillPrescription",
-                    "Prescription",
-                    prescriptionId.ToString(),
-                    null,
-                    $"Prescription fulfilled by pharmacy {pharmacyId}"
-                );
-
                 return rx;
             }
             catch
@@ -240,12 +164,188 @@ public class PrescriptionService(
         });
     }
 
+    public async Task<Prescription> FulfillPrescriptionByQrAsync(
+        string qrToken,
+        Guid pharmacistUserId,
+        Guid pharmacyId,
+        string? ipAddress = null,
+        string? userAgent = null)
+    {
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+            try
+            {
+                // Resolve and authorize the prescription before consuming the token.
+                // Serializable isolation plus the second validation during consumption
+                // prevents two scanners from successfully using the same QR.
+                var (isValid, prescriptionId, entityType, _, validationError) =
+                    await _qrService.ValidateQrTokenAsync(qrToken);
+                if (!isValid)
+                    throw new InvalidOperationException(validationError);
+                if (!string.Equals(entityType, "Prescription", StringComparison.Ordinal))
+                    throw new InvalidOperationException("QR code is not for a prescription.");
+
+                var prescription = await GetByIdAsync(prescriptionId)
+                    ?? throw new InvalidOperationException("Prescription not found");
+
+                if (prescription.FulfilledByPharmacyId.HasValue &&
+                    prescription.FulfilledByPharmacyId.Value != pharmacyId)
+                {
+                    throw new UnauthorizedAccessException(
+                        "Prescription is assigned to a different pharmacy.");
+                }
+
+                if (prescription.Status is not PrescriptionStatus.Active
+                    and not PrescriptionStatus.PartiallyFulfilled
+                    and not PrescriptionStatus.Fulfilled)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot dispense a prescription with status '{prescription.Status}'.");
+                }
+
+                var (consumed, consumedPrescriptionId, consumeError) =
+                    await _qrService.ValidateAndUsePrescriptionQrTokenAsync(
+                        qrToken,
+                        pharmacistUserId,
+                        ipAddress,
+                        userAgent);
+                if (!consumed || consumedPrescriptionId != prescriptionId)
+                {
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(consumeError)
+                            ? "QR code could not be consumed."
+                            : consumeError);
+                }
+
+                // A second QR may have been generated before a successful dispense whose
+                // response was lost. Consume that token without deducting stock again.
+                if (prescription.Status == PrescriptionStatus.Fulfilled)
+                {
+                    await tx.CommitAsync();
+                    return prescription;
+                }
+
+                prescription = await FulfillPrescriptionCoreAsync(prescriptionId, pharmacyId);
+                await tx.CommitAsync();
+                return prescription;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    private async Task<Prescription> FulfillPrescriptionCoreAsync(
+        Guid prescriptionId,
+        Guid pharmacyId)
+    {
+        var rx = await GetByIdAsync(prescriptionId)
+            ?? throw new InvalidOperationException("Prescription not found");
+
+        if (rx.Status != PrescriptionStatus.Active &&
+            rx.Status != PrescriptionStatus.PartiallyFulfilled)
+        {
+            throw new InvalidOperationException(
+                $"Cannot fulfill a prescription with status '{rx.Status}'");
+        }
+
+        var unfulfilledItems = rx.Items.Where(i => !i.IsFulfilled).ToList();
+        if (unfulfilledItems.Count == 0)
+            throw new InvalidOperationException("Prescription has no unfulfilled items.");
+
+        var stockErrors = new List<string>();
+        foreach (var item in unfulfilledItems)
+        {
+            var available = await _inventoryService.GetAvailableStockAsync(
+                pharmacyId, item.MedicationId);
+            if (available < item.Quantity)
+            {
+                stockErrors.Add(
+                    $"Medication {item.MedicationId}: required {item.Quantity}, available {available}");
+            }
+        }
+
+        if (stockErrors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Insufficient stock to fulfill prescription. " + string.Join("; ", stockErrors));
+        }
+
+        rx.Status = PrescriptionStatus.Fulfilled;
+        rx.FulfilledAt = DateTime.UtcNow;
+        rx.FulfilledByPharmacyId = pharmacyId;
+        rx.UpdatedAt = DateTime.UtcNow;
+
+        foreach (var item in unfulfilledItems)
+        {
+            item.IsFulfilled = true;
+            item.FulfilledAt = DateTime.UtcNow;
+        }
+
+        var referenceNumber = $"RX-{prescriptionId.ToString()[..8]}";
+        foreach (var item in unfulfilledItems)
+        {
+            await _inventoryService.DecreaseStockAsync(
+                pharmacyId,
+                item.MedicationId,
+                item.Quantity,
+                rx.PatientId,
+                prescriptionId,
+                referenceNumber: referenceNumber);
+        }
+
+        if (!string.IsNullOrEmpty(rx.QrToken))
+        {
+            await _qrService.RevokeTokenAsync(
+                rx.QrToken, rx.PatientId, "Prescription fulfilled");
+        }
+
+        await _context.SaveChangesAsync();
+        await _auditService.LogEntityActionAsync(
+            "FulfillPrescription",
+            "Prescription",
+            prescriptionId.ToString(),
+            null,
+            $"Prescription fulfilled by pharmacy {pharmacyId}");
+
+        return rx;
+    }
+
     public async Task<PrescriptionItem?> GetPrescriptionItemAsync(Guid itemId)
         => await _context.PrescriptionItems
             .Include(i => i.Prescription)
             .FirstOrDefaultAsync(i => i.Id == itemId);
 
     public async Task<PrescriptionItem> FulfillPrescriptionItemAsync(Guid itemId)
+    {
+        if (_context.Database.CurrentTransaction != null)
+            return await FulfillPrescriptionItemCoreAsync(itemId);
+
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+            try
+            {
+                var fulfilledItem = await FulfillPrescriptionItemCoreAsync(itemId);
+                await tx.CommitAsync();
+                return fulfilledItem;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        });
+    }
+
+    private async Task<PrescriptionItem> FulfillPrescriptionItemCoreAsync(Guid itemId)
     {
         var item = await _context.PrescriptionItems
             .Include(i => i.Prescription)
@@ -289,10 +389,13 @@ public class PrescriptionService(
             prescription.Id,
             referenceNumber: referenceNumber);
 
-        // Check if all items are now fulfilled
-        var allItemsFulfilled = await _context.PrescriptionItems
-            .Where(i => i.PrescriptionId == prescription.Id)
-            .AllAsync(i => i.IsFulfilled);
+        // The current item has not been saved yet, so exclude it from the database
+        // predicate and combine the persisted state with the tracked mutation.
+        var hasOtherUnfulfilledItems = await _context.PrescriptionItems
+            .AnyAsync(i => i.PrescriptionId == prescription.Id &&
+                           i.Id != item.Id &&
+                           !i.IsFulfilled);
+        var allItemsFulfilled = !hasOtherUnfulfilledItems;
 
         if (allItemsFulfilled)
         {
@@ -455,11 +558,26 @@ public class PrescriptionService(
         // Use a dedicated prescription signing key that is separate from the QR signing key.
         // Reusing the same key for two distinct cryptographic purposes violates key-separation
         // best practice and could expose one scheme's signatures to the other.
-        var signingKey = _configuration["Security:PrescriptionSigningKey"]
-            ?? _configuration["Security:QrSigningKey"]   // fallback for legacy deploys
-            ?? throw new InvalidOperationException("Security:PrescriptionSigningKey is not configured");
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(signingKey));
+        using var hmac = new HMACSHA256(
+            Encoding.UTF8.GetBytes(_prescriptionSigningKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
         return Convert.ToBase64String(hash);
+    }
+
+    private static string ResolvePrescriptionSigningKey(
+        SecurityOptions options,
+        IHostEnvironment environment)
+    {
+        if (!string.IsNullOrWhiteSpace(options.PrescriptionSigningKey))
+            return options.PrescriptionSigningKey;
+
+        if (!environment.IsProduction() &&
+            !string.IsNullOrWhiteSpace(options.QrSigningKey))
+        {
+            return options.QrSigningKey;
+        }
+
+        throw new InvalidOperationException(
+            "Security:PrescriptionSigningKey is required in production.");
     }
 }

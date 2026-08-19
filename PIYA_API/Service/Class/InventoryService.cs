@@ -194,10 +194,47 @@ public class InventoryService(
             throw new ArgumentException("Quantity must be positive", nameof(quantity));
         }
 
+        if (_context.Database.CurrentTransaction != null)
+        {
+            return await DecreaseStockCoreAsync(
+                pharmacyId,
+                medicationId,
+                quantity,
+                userId,
+                prescriptionId,
+                referenceNumber);
+        }
+
         await using var tx = await _context.Database.BeginTransactionAsync(
             System.Data.IsolationLevel.RepeatableRead);
         try
         {
+            var inventory = await DecreaseStockCoreAsync(
+                pharmacyId,
+                medicationId,
+                quantity,
+                userId,
+                prescriptionId,
+                referenceNumber);
+
+            await tx.CommitAsync();
+            return inventory;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    private async Task<PharmacyInventory> DecreaseStockCoreAsync(
+        Guid pharmacyId,
+        Guid medicationId,
+        int quantity,
+        Guid? userId,
+        Guid? prescriptionId,
+        string? referenceNumber)
+    {
         var inventory = await _context.PharmacyInventories
             .Include(i => i.Batches.Where(b => b.IsActive))
             .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found");
@@ -252,16 +289,9 @@ public class InventoryService(
         );
 
         await _context.SaveChangesAsync();
-        await tx.CommitAsync();
         await CheckAndTriggerLowStockAlertAsync(inventory);
 
         return inventory;
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
     }
 
     public async Task<PharmacyInventory> IncreaseStockAsync(
@@ -488,7 +518,7 @@ public class InventoryService(
         return await query.OrderByDescending(h => h.TransactionDate).ToListAsync();
     }
 
-    private async Task RecordInventoryHistoryAsync(
+    private Task RecordInventoryHistoryAsync(
         Guid inventoryId,
         Guid? batchId,
         InventoryTransactionType transactionType,
@@ -518,6 +548,7 @@ public class InventoryService(
         };
 
         _context.InventoryHistories.Add(history);
+        return Task.CompletedTask;
     }
 
     #endregion

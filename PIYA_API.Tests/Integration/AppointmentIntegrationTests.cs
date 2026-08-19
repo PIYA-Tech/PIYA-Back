@@ -285,13 +285,13 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
     {
         var adminLogin = new
         {
-            username = "admin_piya",
-            password = "Test@1234"
+            username = PiyaWebApplicationFactory.IntegrationAdminUsername,
+            password = PiyaWebApplicationFactory.IntegrationAdminPassword
         };
         var adminLoginResponse = await _client.PostAsJsonAsync("/api/auth/login", adminLogin);
         adminLoginResponse.StatusCode.Should().Be(
             HttpStatusCode.OK,
-            "seeded admin_piya login must succeed — ensure DataSeeder ran on startup");
+            "the deterministic integration-test administrator must be available");
         return await ParseAccessToken(adminLoginResponse);
     }
 

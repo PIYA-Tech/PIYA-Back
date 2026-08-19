@@ -31,8 +31,13 @@ public class PharmacyStaffService(
         }
 
         // Check if already assigned
+        var now = DateTime.UtcNow;
         var existingAssignment = await _context.PharmacyStaff
-            .FirstOrDefaultAsync(ps => ps.PharmacyId == pharmacyId && ps.UserId == userId && ps.IsActive);
+            .FirstOrDefaultAsync(ps =>
+                ps.PharmacyId == pharmacyId &&
+                ps.UserId == userId &&
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
 
         if (existingAssignment != null)
         {
@@ -130,7 +135,10 @@ public class PharmacyStaffService(
 
         if (activeOnly)
         {
-            query = query.Where(ps => ps.IsActive);
+            var now = DateTime.UtcNow;
+            query = query.Where(ps =>
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
         }
 
         return await query.OrderBy(ps => ps.Role).ThenBy(ps => ps.AssignedAt).ToListAsync();
@@ -145,7 +153,10 @@ public class PharmacyStaffService(
 
         if (activeOnly)
         {
-            query = query.Where(ps => ps.IsActive);
+            var now = DateTime.UtcNow;
+            query = query.Where(ps =>
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
         }
 
         return await query.OrderBy(ps => ps.Pharmacy.Name).ToListAsync();
@@ -161,22 +172,38 @@ public class PharmacyStaffService(
 
     public async Task<bool> IsStaffAtPharmacyAsync(Guid pharmacyId, Guid userId)
     {
+        var now = DateTime.UtcNow;
         return await _context.PharmacyStaff
-            .AnyAsync(ps => ps.PharmacyId == pharmacyId && ps.UserId == userId && ps.IsActive);
+            .AnyAsync(ps =>
+                ps.PharmacyId == pharmacyId &&
+                ps.UserId == userId &&
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
     }
 
     public async Task<bool> IsManagerAtPharmacyAsync(Guid pharmacyId, Guid userId)
     {
+        var now = DateTime.UtcNow;
         return await _context.PharmacyStaff
-            .AnyAsync(ps => ps.PharmacyId == pharmacyId && ps.UserId == userId && ps.Role == PharmacyStaffRole.Manager && ps.IsActive);
+            .AnyAsync(ps =>
+                ps.PharmacyId == pharmacyId &&
+                ps.UserId == userId &&
+                ps.Role == PharmacyStaffRole.Manager &&
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
     }
 
     public async Task<PharmacyStaff?> GetPharmacyManagerAsync(Guid pharmacyId)
     {
+        var now = DateTime.UtcNow;
         return await _context.PharmacyStaff
             .Include(ps => ps.User)
             .Include(ps => ps.Pharmacy)
-            .FirstOrDefaultAsync(ps => ps.PharmacyId == pharmacyId && ps.Role == PharmacyStaffRole.Manager && ps.IsActive);
+            .FirstOrDefaultAsync(ps =>
+                ps.PharmacyId == pharmacyId &&
+                ps.Role == PharmacyStaffRole.Manager &&
+                ps.IsActive &&
+                (!ps.AssignmentEndsAt.HasValue || ps.AssignmentEndsAt.Value > now));
     }
 
     #endregion

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -131,10 +132,11 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// </summary>
     [HttpPost]
     [Authorize(Roles = "Admin,SuperAdmin")]
-    public async Task<ActionResult<Medication>> Create([FromBody] Medication medication)
+    public async Task<ActionResult<Medication>> Create([FromBody] MedicationUpsertDto request)
     {
         try
         {
+            var medication = ToMedication(request);
             var created = await _medicationService.CreateAsync(medication);
             return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
         }
@@ -169,10 +171,11 @@ public class MedicationController(IMedicationService medicationService, ILogger<
     /// </summary>
     [HttpPut("{id:guid}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
-    public async Task<ActionResult<Medication>> Update(Guid id, [FromBody] Medication medication)
+    public async Task<ActionResult<Medication>> Update(Guid id, [FromBody] MedicationUpsertDto request)
     {
         try
         {
+            var medication = ToMedication(request);
             medication.Id = id;
             var updated = await _medicationService.UpdateAsync(medication);
             return Ok(updated);
@@ -209,4 +212,28 @@ public class MedicationController(IMedicationService medicationService, ILogger<
             return StatusCode(500, new { error = "Failed to delete medication" });
         }
     }
+
+    private static Medication ToMedication(MedicationUpsertDto request) => new()
+    {
+        BrandName = request.BrandName.Trim(),
+        GenericName = request.GenericName.Trim(),
+        ActiveIngredients = request.ActiveIngredients
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList(),
+        AtcCode = request.AtcCode?.Trim(),
+        Form = request.Form.Trim(),
+        Strength = request.Strength.Trim(),
+        Manufacturer = request.Manufacturer?.Trim(),
+        RequiresPrescription = request.RequiresPrescription,
+        IsControlledSubstance = request.IsControlledSubstance,
+        GenericAlternatives = request.GenericAlternatives,
+        Usage = request.Usage?.Trim(),
+        SideEffects = request.SideEffects?.Trim(),
+        Contraindications = request.Contraindications?.Trim(),
+        IsAvailable = request.IsAvailable,
+        Country = request.Country.Trim(),
+        Barcode = request.Barcode?.Trim(),
+    };
 }

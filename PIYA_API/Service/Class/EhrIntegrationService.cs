@@ -500,7 +500,7 @@ public class EhrIntegrationService : IEhrIntegrationService
         }
     }
 
-    public async Task<FhirValidationResult> ValidateFhirResourceAsync(string resourceType, string fhirJson)
+    public Task<FhirValidationResult> ValidateFhirResourceAsync(string resourceType, string fhirJson)
     {
         try
         {
@@ -510,26 +510,14 @@ public class EhrIntegrationService : IEhrIntegrationService
                 ValidatedAt = DateTime.UtcNow
             };
 
-            // Basic JSON validation
-            try
-            {
-                JsonDocument.Parse(fhirJson);
-            }
-            catch (JsonException ex)
-            {
-                result.IsValid = false;
-                result.Errors.Add($"Invalid JSON: {ex.Message}");
-                return result;
-            }
-
             // Validate against FHIR schema (simplified - in production use FHIR validator library)
-            var doc = JsonDocument.Parse(fhirJson);
+            using var doc = JsonDocument.Parse(fhirJson);
             if (!doc.RootElement.TryGetProperty("resourceType", out var resourceTypeElement) ||
                 resourceTypeElement.GetString() != resourceType)
             {
                 result.IsValid = false;
                 result.Errors.Add($"Resource type mismatch. Expected: {resourceType}");
-                return result;
+                return Task.FromResult(result);
             }
 
             if (!doc.RootElement.TryGetProperty("id", out _))
@@ -540,17 +528,28 @@ public class EhrIntegrationService : IEhrIntegrationService
             result.IsValid = result.Errors.Count == 0;
             _logger.LogInformation("FHIR validation completed for {ResourceType}: {IsValid}", resourceType, result.IsValid);
 
-            return result;
+            return Task.FromResult(result);
+        }
+        catch (JsonException ex)
+        {
+            return Task.FromResult(new FhirValidationResult
+            {
+                IsValid = false,
+                Errors = [$"Invalid JSON: {ex.Message}"],
+                FhirVersion = _fhirVersion,
+                ValidatedAt = DateTime.UtcNow
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error validating FHIR resource");
-            return new FhirValidationResult
+            return Task.FromResult(new FhirValidationResult
             {
                 IsValid = false,
                 Errors = [ex.Message],
+                FhirVersion = _fhirVersion,
                 ValidatedAt = DateTime.UtcNow
-            };
+            });
         }
     }
 

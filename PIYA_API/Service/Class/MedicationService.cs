@@ -131,20 +131,38 @@ public class MedicationService(
 
     public async Task<Medication> UpdateAsync(Medication medication)
     {
-        medication.UpdatedAt = DateTime.UtcNow;
-        
-        _context.Medications.Update(medication);
+        var existing = await _context.Medications.FindAsync(medication.Id)
+            ?? throw new KeyNotFoundException("Medication not found");
+
+        existing.BrandName = medication.BrandName;
+        existing.GenericName = medication.GenericName;
+        existing.ActiveIngredients = medication.ActiveIngredients;
+        existing.AtcCode = medication.AtcCode;
+        existing.Form = medication.Form;
+        existing.Strength = medication.Strength;
+        existing.Manufacturer = medication.Manufacturer;
+        existing.RequiresPrescription = medication.RequiresPrescription;
+        existing.IsControlledSubstance = medication.IsControlledSubstance;
+        existing.GenericAlternatives = medication.GenericAlternatives;
+        existing.Usage = medication.Usage;
+        existing.SideEffects = medication.SideEffects;
+        existing.Contraindications = medication.Contraindications;
+        existing.IsAvailable = medication.IsAvailable;
+        existing.Country = medication.Country;
+        existing.Barcode = medication.Barcode;
+        existing.UpdatedAt = DateTime.UtcNow;
+
         await _context.SaveChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "UpdateMedication",
             "Medication",
-            medication.Id.ToString(),
+            existing.Id.ToString(),
             null,
-            $"Medication updated: {medication.BrandName}"
+            $"Medication updated: {existing.BrandName}"
         );
 
-        return medication;
+        return existing;
     }
 
     public async Task<bool> DeleteAsync(Guid id)

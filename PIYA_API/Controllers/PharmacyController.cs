@@ -14,11 +14,13 @@ namespace PIYA_API.Controllers;
 public class PharmacyController(
     ISearchService searchService,
     IPharmacyService pharmacyService,
+    IPharmacyCompanyService pharmacyCompanyService,
     IHubContext<PharmacyHub> pharmacyHub,
     ILogger<PharmacyController> logger) : ControllerBase
 {
     private readonly ISearchService _searchService = searchService;
     private readonly IPharmacyService _pharmacyService = pharmacyService;
+    private readonly IPharmacyCompanyService _pharmacyCompanyService = pharmacyCompanyService;
     private readonly IHubContext<PharmacyHub> _pharmacyHub = pharmacyHub;
     private readonly ILogger<PharmacyController> _logger = logger;
 
@@ -27,6 +29,7 @@ public class PharmacyController(
     /// </summary>
     [HttpGet]
     [AllowAnonymous]
+    [ProducesResponseType<List<PharmacyPublicDto>>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll()
     {
         var pharmacies = await _pharmacyService.GetAll();
@@ -36,6 +39,7 @@ public class PharmacyController(
 
     [HttpGet("{id:guid}")]
     [AllowAnonymous]
+    [ProducesResponseType<PharmacyPublicDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPharmacy(Guid id)
     {
         var pharmacy = await _pharmacyService.GetById(id);
@@ -48,22 +52,44 @@ public class PharmacyController(
 
     [HttpPost("create")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType<PharmacyPublicDto>(StatusCodes.Status201Created)]
     public async Task<IActionResult> CreatePharmacy([FromBody] PharmacyUpsertDto dto)
     {
-        var pharmacy = DtoToPharmacy(dto);
+        if (!dto.CompanyId.HasValue)
+            return BadRequest(new { error = "CompanyId is required when creating a pharmacy" });
+
+        var company = await _pharmacyCompanyService.GetByIdAsync(dto.CompanyId.Value);
+        if (company == null)
+            return BadRequest(new { error = "The selected pharmacy company does not exist" });
+
+        var pharmacy = DtoToPharmacy(dto, company);
         var createdPharmacy = await _pharmacyService.Create(pharmacy);
+        var publicDto = ToPublicDto(createdPharmacy);
         await _pharmacyHub.Clients.Group("pharmacies")
-            .SendAsync("PharmacyCreated", createdPharmacy);
-        return CreatedAtAction(nameof(GetPharmacy), new { id = createdPharmacy.Id }, createdPharmacy);
+            .SendAsync("PharmacyCreated", publicDto);
+        return CreatedAtAction(nameof(GetPharmacy), new { id = createdPharmacy.Id }, publicDto);
     }
 
     [HttpPut("{id}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
+    [ProducesResponseType<PharmacyPublicDto>(StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdatePharmacy(Guid id, [FromBody] PharmacyUpsertDto dto)
     {
         try
         {
-            var pharmacy = DtoToPharmacy(dto);
+            var existing = await _pharmacyService.GetById(id);
+            if (existing == null)
+                return NotFound(new { error = "Pharmacy not found" });
+
+            var company = existing.Company;
+            if (dto.CompanyId.HasValue && dto.CompanyId.Value != company.Id)
+            {
+                company = await _pharmacyCompanyService.GetByIdAsync(dto.CompanyId.Value);
+                if (company == null)
+                    return BadRequest(new { error = "The selected pharmacy company does not exist" });
+            }
+
+            var pharmacy = DtoToPharmacy(dto, company, existing);
             pharmacy.Id = id;
             var updated = await _pharmacyService.Update(pharmacy);
             var publicDto = ToPublicDto(updated);
@@ -156,7 +182,7 @@ public class PharmacyController(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search pharmacies by medication");
-            return StatusCode(500, new { error = "Failed to search pharmacies by medication", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to search pharmacies by medication" });
         }
     }
 
@@ -208,7 +234,7 @@ public class PharmacyController(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search pharmacies by multiple medications");
-            return StatusCode(500, new { error = "Failed to search pharmacies by multiple medications", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to search pharmacies by multiple medications" });
         }
     }
 
@@ -263,7 +289,7 @@ public class PharmacyController(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search pharmacies by prescription {PrescriptionId}", prescriptionId);
-            return StatusCode(500, new { error = "Failed to search pharmacies by prescription", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to search pharmacies by prescription" });
         }
     }
 
@@ -327,7 +353,7 @@ public class PharmacyController(
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to perform smart pharmacy search");
-            return StatusCode(500, new { error = "Failed to perform smart search", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to perform smart search" });
         }
     }
 
@@ -349,13 +375,17 @@ public class PharmacyController(
         Is24Hours      = p.Is24Hours,
         AverageRating  = p.AverageRating,
         TotalRatings   = p.TotalRatings,
+        CompanyId      = p.Company.Id,
         CompanyName    = p.Company?.Name,
         Coordinates    = p.Coordinates is { } c
             ? new CoordinatesDto { Lat = c.Latitude, Lng = c.Longitude }
             : null,
     };
 
-    private static Pharmacy DtoToPharmacy(PharmacyUpsertDto dto) => new()
+    private static Pharmacy DtoToPharmacy(
+        PharmacyUpsertDto dto,
+        PharmacyCompany company,
+        Pharmacy? existing = null) => new()
     {
         Name             = dto.Name,
         Country          = dto.Country,
@@ -367,13 +397,13 @@ public class PharmacyController(
         EmergencyContact = dto.EmergencyContact,
         Services         = dto.Services ?? [],
         OperatingHours   = dto.OperatingHours,
+        IsActive          = dto.IsActive ?? existing?.IsActive ?? true,
+        Is24Hours         = dto.Is24Hours ?? existing?.Is24Hours ?? false,
         // Coordinates is required on the entity; create a stub if none provided
         Coordinates      = dto.Coordinates is { } c
             ? new Coordinates { Latitude = c.Lat, Longitude = c.Lng }
             : new Coordinates { Latitude = 0, Longitude = 0 },
-        // Company is required on the entity; the service's Update() ignores it,
-        // and Create() should be preceded by a company association — stub for now.
-        Company          = new PIYA_API.Model.PharmacyCompany { Name = string.Empty },
+        Company          = company,
     };
 }
 

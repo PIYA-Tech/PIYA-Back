@@ -1,6 +1,51 @@
 namespace PIYA_API.Configuration;
 
 /// <summary>
+/// Public frontend configuration used to construct user-facing links.
+/// </summary>
+public sealed class FrontendOptions
+{
+    public const string SectionName = "Frontend";
+
+    /// <summary>
+    /// Absolute public frontend URL. Required and HTTPS-only in production.
+    /// </summary>
+    public string BaseUrl { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Private S3-compatible object storage configuration.
+/// </summary>
+public sealed class S3StorageOptions
+{
+    public const string SectionName = "Storage:S3";
+
+    public string BucketName { get; set; } = string.Empty;
+    public string Region { get; set; } = "us-east-1";
+    public string AccessKeyId { get; set; } = string.Empty;
+    public string SecretAccessKey { get; set; } = string.Empty;
+    public string? ServiceUrl { get; set; }
+    public bool ForcePathStyle { get; set; }
+}
+
+public sealed class MalwareScanningOptions
+{
+    public const string SectionName = "FileUpload:MalwareScanning";
+    public bool Enabled { get; set; }
+    public string Host { get; set; } = "localhost";
+    public int Port { get; set; } = 3310;
+    public int TimeoutSeconds { get; set; } = 30;
+}
+
+public sealed class FirebaseOptions
+{
+    public const string SectionName = "Firebase";
+    public bool Enabled { get; set; }
+    public string ProjectId { get; set; } = string.Empty;
+    public string CredentialsPath { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Security configuration options
 /// </summary>
 public class SecurityOptions
@@ -11,6 +56,12 @@ public class SecurityOptions
     /// HMAC-SHA256 signing key for QR tokens (CRITICAL: Must be 32+ characters in production)
     /// </summary>
     public string QrSigningKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Dedicated HMAC-SHA256 key for prescription signatures. Production must
+    /// configure this independently from <see cref="QrSigningKey"/>.
+    /// </summary>
+    public string PrescriptionSigningKey { get; set; } = string.Empty;
 
     /// <summary>
     /// QR token validity period in minutes (default: 5 minutes)
@@ -42,6 +93,13 @@ public class SecurityOptions
     /// When exceeded the oldest session is evicted. 0 = unlimited (legacy behaviour).
     /// </summary>
     public int MaxConcurrentSessions { get; set; } = 3;
+
+    /// <summary>
+    /// A short interval in which a duplicate request for an already-rotated token
+    /// is rejected without revoking the family. This prevents simultaneous browser
+    /// refreshes from logging out a legitimate user while still returning no token.
+    /// </summary>
+    public int RefreshTokenConcurrencyGraceSeconds { get; set; } = 30;
 
     /// <summary>
     /// Require HTTPS for all endpoints (production only)
@@ -189,6 +247,8 @@ public class GoogleMapsOptions
 /// </summary>
 public class EmailServiceOptions
 {
+    public const string SectionName = "ExternalApis:EmailService";
+
     /// <summary>
     /// Email provider (SMTP, SendGrid, etc.)
     /// </summary>
@@ -264,6 +324,8 @@ public class EmailServiceOptions
 /// </summary>
 public class SmsServiceOptions
 {
+    public const string SectionName = "ExternalApis:SmsService";
+
     /// <summary>
     /// SMS provider (Twilio, etc.)
     /// </summary>

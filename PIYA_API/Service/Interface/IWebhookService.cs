@@ -55,6 +55,9 @@ public interface IWebhookService
     /// Retry failed webhook delivery
     /// </summary>
     Task<bool> RetryDeliveryAsync(Guid deliveryId);
+
+    /// <summary>Process due deliveries from the durable queue.</summary>
+    Task<int> ProcessPendingDeliveriesAsync(int batchSize = 25, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -86,4 +89,8 @@ public class WebhookDelivery
     public bool Success { get; set; }
     public int AttemptNumber { get; set; }
     public DateTime DeliveredAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime NextAttemptAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
+    public DateTime? LockedUntil { get; set; }
 }

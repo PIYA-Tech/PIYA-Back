@@ -25,7 +25,8 @@ public class SecurityHardeningService(
 
     // Cache key helpers
     private static string BlockedIpKey(string ip)     => $"security:blocked_ip:{ip}";
-    private static string FailedLoginsKey(string email) => $"security:failed_logins:{email}";
+    private static string FailedLoginsKey(string identifier) =>
+        $"security:failed_logins:{HashIdentifier(identifier)}";
 
     /// <summary>
     /// Resolves a short-lived scope to audit-log without holding a scoped IAuditService instance.
@@ -38,12 +39,18 @@ public class SecurityHardeningService(
     }
 
     // Common SQL injection patterns
-    private static readonly Regex[] SqlInjectionPatterns = new[]
+    private static readonly Regex[] SqlInjectionPatterns =
     {
-        new Regex(@"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|DECLARE)\b)", RegexOptions.IgnoreCase),
-        new Regex(@"(--|\#|\/\*|\*\/)", RegexOptions.None),
-        new Regex(@"('|('')|(\%27)|(0x27))", RegexOptions.None),
-        new Regex(@"(\bOR\b\s*\d+\s*=\s*\d+|\bAND\b\s*\d+\s*=\s*\d+)", RegexOptions.IgnoreCase)
+        new(@"\bUNION(?:\s+ALL)?\s+SELECT\b", RegexOptions.IgnoreCase),
+        new(@"\b(?:DROP|ALTER|CREATE)\s+(?:TABLE|DATABASE|SCHEMA|USER)\b",
+            RegexOptions.IgnoreCase),
+        new(@"\b(?:INSERT\s+INTO|UPDATE\s+[\w.\[\]""]+\s+SET|DELETE\s+FROM)\b",
+            RegexOptions.IgnoreCase),
+        new(@"(?:'|%27|0x27)\s*(?:OR|AND)\s*(?:'[^']*'|\d+)\s*=\s*(?:'[^']*'|\d+)",
+            RegexOptions.IgnoreCase),
+        new(@"\b(?:OR|AND)\s+\d+\s*=\s*\d+\b", RegexOptions.IgnoreCase),
+        new(@";\s*(?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|EXEC(?:UTE)?)\b",
+            RegexOptions.IgnoreCase)
     };
 
     // Common XSS patterns
@@ -115,7 +122,9 @@ public class SecurityHardeningService(
                 Action = "SUSPICIOUS_LOGIN_DETECTED",
                 EntityType = "Security",
                 EntityId = null,
-                Description = $"Suspicious login detected for {email} from {ipAddress}. Risk score: {result.RiskScore}",
+                Description =
+                    $"Suspicious login detected for account hash {HashIdentifier(email)} " +
+                    $"from {ipAddress}. Risk score: {result.RiskScore}",
                 UserId = null
             });
         }
@@ -277,7 +286,7 @@ public class SecurityHardeningService(
         {
             if (pattern.IsMatch(input))
             {
-                _logger.LogWarning("SQL injection pattern detected in input: {Input}", input.Substring(0, Math.Min(input.Length, 100)));
+                _logger.LogWarning("SQL injection pattern detected in request input");
                 return await Task.FromResult(true);
             }
         }
@@ -294,7 +303,7 @@ public class SecurityHardeningService(
         {
             if (pattern.IsMatch(input))
             {
-                _logger.LogWarning("XSS pattern detected in input: {Input}", input.Substring(0, Math.Min(input.Length, 100)));
+                _logger.LogWarning("XSS pattern detected in request input");
                 return await Task.FromResult(true);
             }
         }
@@ -332,7 +341,9 @@ public class SecurityHardeningService(
 
         attempts.Add(new FailedLoginAttempt
         {
-            Email = email,
+            // The cache key already correlates this list to the account. Do not
+            // duplicate the raw identifier in the serialized cache value.
+            Email = string.Empty,
             IpAddress = ipAddress ?? "unknown",
             AttemptedAt = DateTime.UtcNow,
             FailureReason = "InvalidCredentials"
@@ -401,5 +412,12 @@ public class SecurityHardeningService(
         };
 
         return commonPasswords.Contains(password);
+    }
+
+    private static string HashIdentifier(string identifier)
+    {
+        var normalized = identifier.Trim().ToLowerInvariant();
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
     }
 }

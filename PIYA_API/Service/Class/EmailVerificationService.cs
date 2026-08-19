@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -19,13 +21,17 @@ public class EmailVerificationService : IEmailVerificationService
         PharmacyApiDbContext context,
         IEmailService emailService,
         IConfiguration configuration,
+        IOptions<FrontendOptions> frontendOptions,
         ILogger<EmailVerificationService> logger)
     {
         _context = context;
         _emailService = emailService;
         _configuration = configuration;
         _logger = logger;
-        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "https://piya.life";
+        var configuredUrl = frontendOptions.Value.BaseUrl;
+        _frontendUrl = string.IsNullOrWhiteSpace(configuredUrl)
+            ? "https://piya.life"
+            : configuredUrl.Trim().TrimEnd('/');
     }
 
     public async Task<EmailVerificationToken> GenerateVerificationTokenAsync(Guid userId, string ipAddress, string userAgent)
@@ -75,7 +81,10 @@ public class EmailVerificationService : IEmailVerificationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send verification email to {Email} — token saved, user can retry", user.Email);
+            _logger.LogError(
+                "Verification email delivery failed for user {UserId} with {ExceptionType}; token was saved",
+                userId,
+                ex.GetType().Name);
             // Do NOT rethrow — the token was persisted; the user can request another resend.
         }
 

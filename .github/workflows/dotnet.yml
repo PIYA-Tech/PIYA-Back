@@ -1,95 +1,136 @@
-# This workflow will build a .NET project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
-
-name: .NET
+name: Backend verification
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ "master" ]
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-
-    # Start a Postgres service so tests that use the DB can run in CI
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16-alpine
         env:
-          POSTGRES_USER: piya
-          POSTGRES_PASSWORD: piya
-          POSTGRES_DB: piya_db
+          POSTGRES_USER: piya_test
+          POSTGRES_PASSWORD: piya_test_pw
+          POSTGRES_DB: piya_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U piya -d piya_db"
-          --health-interval 10s
+          --health-cmd "pg_isready -U piya_test -d piya_test"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
-
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ASPNETCORE_ENVIRONMENT: LoadTest
+      ENABLE_DEMO_SEEDING: "false"
+      EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
+      ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=piya_test;Username=piya_test;Password=piya_test_pw"
+      ConnectionStrings__Redis: "localhost:6379,abortConnect=false"
+      Caching__Provider: Redis
+      Caching__RedisConnectionString: "localhost:6379,abortConnect=false"
+      Jwt__SecretKey: "CI_TEST_JWT_SECRET_KEY_THAT_IS_AT_LEAST_64_CHARS_LONG_FOR_TESTING_PURPOSES_ONLY"
+      Jwt__Issuer: PIYA_API_TEST
+      Jwt__Audience: PIYA_Clients_TEST
+      Security__QrSigningKey: "CI_TEST_QR_SIGNING_KEY_THAT_IS_AT_LEAST_64_CHARS_FOR_TESTING_PURPOSES"
+      Security__PrescriptionSigningKey: "CI_TEST_RX_SIGNING_KEY_THAT_IS_AT_LEAST_64_CHARS_FOR_TESTING_PURPOSES"
+      Cors__AllowedOrigins__0: "http://localhost:5173"
+      SuperAdmin__Username: ci-admin
+      SuperAdmin__Email: "admin@test.piya.life"
+      SuperAdmin__Password: "TestAdmin123!@#"
+      SuperAdmin__FirstName: Test
+      SuperAdmin__LastName: Admin
+      SuperAdmin__Phone: "+994501234567"
     steps:
       - uses: actions/checkout@v4
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
 
-      - name: Wait for Postgres to accept connections
+      - name: Restore
         run: |
-          for i in $(seq 1 30); do
-            (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1 && break
-            echo "Waiting for Postgres... ($i)"
-            sleep 2
-          done
-
-      - name: Restore dependencies
-        run: dotnet restore
+          dotnet tool restore
+          dotnet restore PIYA_API.sln
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build PIYA_API.sln --configuration Release --no-restore
 
-      - name: Restore dotnet tools (dotnet-ef)
-        run: dotnet tool restore
+      - name: Reject model changes without a migration
+        run: >-
+          dotnet ef migrations has-pending-model-changes
+          --project PIYA_API/PIYA_API.csproj
+          --startup-project PIYA_API/PIYA_API.csproj
+          --no-build
+          --configuration Release
 
-      - name: Apply EF Core migrations
-        env:
-          ASPNETCORE_ENVIRONMENT: LoadTest
-          ENABLE_DEMO_SEEDING: "false"
-          EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
-          ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
-          Jwt__SecretKey: CI_TEST_SECRET_KEY_32_CHARS_MINIMUM__1234
-          Jwt__Issuer: PIYA_API_CI
-          Jwt__Audience: PIYA_Clients_CI
-          Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
-          Security__PrescriptionSigningKey: CI_PRESCRIPTION_SIGNING_KEY_32_CHARS_MINIMUM__1234
-          Cors__AllowedOrigins__0: "http://localhost"
+      - name: Apply migrations to a clean database
+        run: >-
+          dotnet ef database update
+          --project PIYA_API/PIYA_API.csproj
+          --startup-project PIYA_API/PIYA_API.csproj
+          --no-build
+          --configuration Release
+
+      - name: Run unit, integration, and security tests
+        run: >-
+          dotnet test PIYA_API.Tests/PIYA_API.Tests.csproj
+          --configuration Release
+          --no-build
+          --filter "Category!=LoadTest"
+          --logger "trx;LogFileName=test-results.trx"
+
+      - name: Audit NuGet dependencies
         run: |
-          dotnet tool run dotnet-ef database update \
-            --project PIYA_API/PIYA_API.csproj \
-            --startup-project PIYA_API/PIYA_API.csproj
+          dotnet list PIYA_API.sln package --vulnerable --include-transitive --format json | tee /tmp/piya-nuget-audit.json
+          if grep -q '"severity"' /tmp/piya-nuget-audit.json; then
+            echo "Vulnerable NuGet dependency detected." >&2
+            exit 1
+          fi
 
-      - name: Run tests (unit + integration + security; exclude LoadTest)
+      - name: Smoke-test OpenAPI generation
         env:
-          # PiyaWebApplicationFactory reads these to configure the hosted app.
-          # Always uses real Postgres — no InMemory DB.
-          ASPNETCORE_ENVIRONMENT: LoadTest
-          EFCORE_IGNORE_PENDING_MODEL_CHANGES: "true"
-          ConnectionStrings__DefaultConnection: Host=localhost;Database=piya_db;Username=piya;Password=piya;Pooling=true;MaxPoolSize=50;Timeout=30
-          Jwt__SecretKey: CI_TEST_SECRET_KEY_32_CHARS_MINIMUM__1234
-          Jwt__Issuer: PIYA_API_CI
-          Jwt__Audience: PIYA_Clients_CI
-          Security__QrSigningKey: CI_QR_SIGNING_KEY_32_CHARS_MINIMUM__1234
-          Security__PrescriptionSigningKey: CI_PRESCRIPTION_SIGNING_KEY_32_CHARS_MINIMUM__1234
-          Cors__AllowedOrigins__0: "http://localhost"
-          # Enable demo-user seeding so admin_piya exists for integration tests.
-          # The seeder is idempotent — safe to run on every CI invocation.
-          ENABLE_DEMO_SEEDING: "true"
+          ASPNETCORE_ENVIRONMENT: OpenApi
+          PIYA_GENERATE_OPENAPI: "true"
+          DataProtection__KeyPath: /tmp/piya-contract-keys
         run: |
-          # Run test project directly with Release configuration.
-          # WebApplicationFactory boots the API in-process — no separate server needed.
-          # Load tests are excluded so CI finishes quickly.
-          dotnet test PIYA_API.Tests/PIYA_API.Tests.csproj \
-            --no-build --configuration Release --verbosity normal \
-            --filter "Category!=LoadTest"
+          dotnet swagger tofile --output /tmp/piya-api-v1.json PIYA_API/bin/Release/net9.0/PIYA_API.dll v1
+          python3 - <<'PY'
+          import json
+          with open("/tmp/piya-api-v1.json", encoding="utf-8") as spec_file:
+              spec = json.load(spec_file)
+          assert spec["openapi"].startswith("3.")
+          assert spec["paths"], "OpenAPI document contains no paths"
+          PY
+
+      - name: Publish API
+        run: dotnet publish PIYA_API/PIYA_API.csproj --configuration Release --no-build --output artifacts/api
+
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-verification
+          path: |
+            artifacts/api
+            PIYA_API.Tests/TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 7

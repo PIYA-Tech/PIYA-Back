@@ -59,6 +59,12 @@ public interface ITwoFactorAuthService
     Task<string> IssueChallenge(Guid userId);
 
     /// <summary>
+    /// Validates a short-lived login challenge without consuming it. Used only
+    /// for delivery endpoints so the same challenge can still complete login.
+    /// </summary>
+    Task<bool> ValidateChallenge(Guid userId, string challengeToken);
+
+    /// <summary>
     /// Returns true if <paramref name="challengeToken"/> is valid for <paramref name="userId"/>
     /// and has not yet expired, then immediately removes it (single-use).
     /// </summary>

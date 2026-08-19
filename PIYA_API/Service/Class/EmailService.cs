@@ -27,7 +27,7 @@ public class EmailService : IEmailService
         _logger = logger;
         
         // Load SMTP settings from configuration — canonical path: ExternalApis:EmailService:*
-        // Env-var override (Docker/Linux): PIYA__ExternalApis__EmailService__SmtpPassword etc.
+        // Env-var override (Docker/Linux): ExternalApis__EmailService__SmtpPassword etc.
         _isEnabled    = configuration.GetValue<bool>("ExternalApis:EmailService:Enabled");
         _smtpHost     = _configuration["ExternalApis:EmailService:SmtpHost"]     ?? "smtp.gmail.com";
         _smtpPort     = int.Parse(_configuration["ExternalApis:EmailService:SmtpPort"] ?? "587");
@@ -265,7 +265,7 @@ public class EmailService : IEmailService
     {
         if (!_isEnabled)
         {
-            _logger.LogWarning("Email service is disabled. Email not sent to {ToEmail} — subject: {Subject}", toEmail, subject);
+            _logger.LogWarning("Email service is disabled; message was not sent");
             return;
         }
 
@@ -307,11 +307,13 @@ public class EmailService : IEmailService
             };
 
             await smtpClient.SendMailAsync(message);
-            _logger.LogInformation("Email sent successfully to {ToEmail}", toEmail);
+            _logger.LogInformation("Email sent successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send email to {ToEmail}", toEmail);
+            _logger.LogError(
+                "Email delivery failed with {ExceptionType}",
+                ex.GetType().Name);
             throw;
         }
     }

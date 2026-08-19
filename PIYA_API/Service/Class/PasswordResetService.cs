@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using PIYA_API.Configuration;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -13,7 +15,6 @@ public class PasswordResetService : IPasswordResetService
     private readonly IEmailService _emailService;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IAuditService _auditService;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<PasswordResetService> _logger;
     private readonly string _frontendUrl;
 
@@ -22,16 +23,18 @@ public class PasswordResetService : IPasswordResetService
         IEmailService emailService,
         IPasswordHasher passwordHasher,
         IAuditService auditService,
-        IConfiguration configuration,
+        IOptions<FrontendOptions> frontendOptions,
         ILogger<PasswordResetService> logger)
     {
         _context = context;
         _emailService = emailService;
         _passwordHasher = passwordHasher;
         _auditService = auditService;
-        _configuration = configuration;
         _logger = logger;
-        _frontendUrl = _configuration["Frontend:BaseUrl"] ?? "http://https://piya.life";
+        var configuredUrl = frontendOptions.Value.BaseUrl;
+        _frontendUrl = string.IsNullOrWhiteSpace(configuredUrl)
+            ? "https://piya.life"
+            : configuredUrl.Trim().TrimEnd('/');
     }
 
     public async Task<PasswordResetToken> GenerateResetTokenAsync(string email, string ipAddress, string userAgent)
@@ -40,7 +43,7 @@ public class PasswordResetService : IPasswordResetService
         if (user == null)
         {
             // Don't reveal that user doesn't exist for security reasons
-            _logger.LogWarning("Password reset requested for non-existent email: {Email}", email);
+            _logger.LogWarning("Password reset requested for a non-existent account");
             throw new KeyNotFoundException("If an account with that email exists, a reset link has been sent");
         }
 

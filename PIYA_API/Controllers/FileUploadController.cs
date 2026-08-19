@@ -12,10 +12,16 @@ namespace PIYA_API.Controllers;
 [Authorize]
 public class FileUploadController(
     IFileUploadService fileUploadService,
-    IFileStorageService fileStorageService) : ControllerBase
+    IFileStorageService fileStorageService,
+    IAppointmentService appointmentService,
+    IPrescriptionService prescriptionService,
+    ILogger<FileUploadController> logger) : ControllerBase
 {
     private readonly IFileUploadService _fileUploadService = fileUploadService;
     private readonly IFileStorageService _fileStorageService = fileStorageService;
+    private readonly IAppointmentService _appointmentService = appointmentService;
+    private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly ILogger<FileUploadController> _logger = logger;
 
     /// <summary>
     /// Upload a medical document
@@ -37,15 +43,49 @@ public class FileUploadController(
                 return Unauthorized(new { message = "Invalid user token" });
             }
 
-            // Verify user can upload documents for the specified userId:
-            // - Own documents always allowed
-            // - Doctors may upload on behalf of patients
-            // - Admins may upload for anyone
-            if (request.UserId != uploadedByUserId)
+            var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isAdministrator = IsAdministrator(callerRole);
+
+            // Cross-user uploads contain PHI and require an established care relationship.
+            // A Doctor role by itself is not sufficient.
+            if (request.UserId != uploadedByUserId &&
+                !isAdministrator &&
+                (callerRole != "Doctor" ||
+                 !await _appointmentService.HasDoctorPatientRelationshipAsync(uploadedByUserId, request.UserId)))
             {
-                var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-                if (callerRole != "Doctor" && callerRole != "Admin")
+                return Forbid();
+            }
+
+            // Never allow a caller to attach a document to an unrelated appointment or
+            // prescription. Besides preventing object-level authorization bypasses, this
+            // keeps the medical record graph internally consistent.
+            Appointment? appointment = null;
+            if (request.AppointmentId.HasValue)
+            {
+                appointment = await _appointmentService.GetByIdAsync(request.AppointmentId.Value);
+                if (appointment == null)
+                    return BadRequest(new { message = "Appointment not found" });
+                if (appointment.PatientId != request.UserId)
+                    return BadRequest(new { message = "Appointment does not belong to the document owner" });
+                if (callerRole == "Doctor" && appointment.DoctorId != uploadedByUserId)
                     return Forbid();
+            }
+
+            if (request.PrescriptionId.HasValue)
+            {
+                var prescription = await _prescriptionService.GetByIdAsync(request.PrescriptionId.Value);
+                if (prescription == null)
+                    return BadRequest(new { message = "Prescription not found" });
+                if (prescription.PatientId != request.UserId)
+                    return BadRequest(new { message = "Prescription does not belong to the document owner" });
+                if (callerRole == "Doctor" && prescription.DoctorId != uploadedByUserId)
+                    return Forbid();
+                if (appointment != null &&
+                    prescription.AppointmentId.HasValue &&
+                    prescription.AppointmentId.Value != appointment.Id)
+                {
+                    return BadRequest(new { message = "Prescription does not belong to the specified appointment" });
+                }
             }
 
             // Parse document type
@@ -96,7 +136,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while uploading the document", error = ex.Message });
+            _logger.LogError(ex, "Unexpected document upload failure");
+            return StatusCode(500, new { message = "An error occurred while uploading the document" });
         }
     }
 
@@ -118,14 +159,14 @@ public class FileUploadController(
                 return NotFound(new { message = "Document not found" });
 
             var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (document.UserId != userId && document.UploadedByUserId != userId
-                && callerRole != "Doctor" && callerRole != "Admin")
+            if (!await CanAccessDocumentAsync(document, userId, callerRole))
                 return Forbid();
 
-            var url = await _fileUploadService.GetPresignedUrlAsync(id, Math.Clamp(expirySeconds, 30, 3600));
-            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(expirySeconds);
+            var boundedExpirySeconds = Math.Clamp(expirySeconds, 30, 3600);
+            var url = await _fileUploadService.GetPresignedUrlAsync(id, boundedExpirySeconds);
+            var expiresAt = DateTimeOffset.UtcNow.AddSeconds(boundedExpirySeconds);
 
-            return Ok(new { url, expiresInSeconds = expirySeconds, expiresAt });
+            return Ok(new { url, expiresInSeconds = boundedExpirySeconds, expiresAt });
         }
         catch (FileNotFoundException)
         {
@@ -133,7 +174,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while generating the presigned URL", error = ex.Message });
+            _logger.LogError(ex, "Failed to generate a presigned URL for document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while generating the presigned URL" });
         }
     }
 
@@ -207,7 +249,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while retrieving documents", error = ex.Message });
+            _logger.LogError(ex, "Failed to retrieve documents for the current user");
+            return StatusCode(500, new { message = "An error occurred while retrieving documents" });
         }
     }
 
@@ -246,7 +289,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while retrieving documents", error = ex.Message });
+            _logger.LogError(ex, "Failed to retrieve documents by type {DocumentType}", documentType);
+            return StatusCode(500, new { message = "An error occurred while retrieving documents" });
         }
     }
 
@@ -275,7 +319,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while archiving the document", error = ex.Message });
+            _logger.LogError(ex, "Failed to archive document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while archiving the document" });
         }
     }
 
@@ -304,7 +349,8 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while deleting the document", error = ex.Message });
+            _logger.LogError(ex, "Failed to delete document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while deleting the document" });
         }
     }
 
@@ -322,9 +368,16 @@ public class FileUploadController(
                 return Unauthorized(new { message = "Invalid user token" });
             }
 
-            // Only Doctors and Admins may verify documents
-            var callerRole = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-            if (callerRole != "Doctor" && callerRole != "Admin")
+            // Only the patient's treating doctor (or an administrator) may verify a
+            // document. A global Doctor role is not an object-level permission.
+            var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            if (callerRole != "Doctor" && !IsAdministrator(callerRole))
+                return Forbid();
+
+            var document = await _fileUploadService.GetDocumentByIdAsync(id);
+            if (document == null)
+                return NotFound(new { message = "Document not found" });
+            if (!await CanAccessDocumentAsync(document, doctorUserId, callerRole))
                 return Forbid();
 
             var success = await _fileUploadService.VerifyDocumentAsync(id, doctorUserId);
@@ -338,7 +391,51 @@ public class FileUploadController(
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "An error occurred while verifying the document", error = ex.Message });
+            _logger.LogError(ex, "Failed to verify document {DocumentId}", id);
+            return StatusCode(500, new { message = "An error occurred while verifying the document" });
         }
+    }
+
+    private static bool IsAdministrator(string? role) =>
+        role is "Admin" or "SuperAdmin";
+
+    private async Task<bool> CanAccessDocumentAsync(
+        MedicalDocument document,
+        Guid callerId,
+        string? callerRole)
+    {
+        if (document.UserId == callerId || IsAdministrator(callerRole))
+            return true;
+
+        if (callerRole != "Doctor")
+            return false;
+
+        // Prefer an explicit document link when present.
+        if (document.AppointmentId.HasValue)
+        {
+            var appointment = await _appointmentService.GetByIdAsync(document.AppointmentId.Value);
+            if (appointment != null &&
+                appointment.PatientId == document.UserId &&
+                appointment.DoctorId == callerId &&
+                appointment.Status is not AppointmentStatus.Cancelled and not AppointmentStatus.NoShow)
+            {
+                return true;
+            }
+        }
+
+        if (document.PrescriptionId.HasValue)
+        {
+            var prescription = await _prescriptionService.GetByIdAsync(document.PrescriptionId.Value);
+            if (prescription != null &&
+                prescription.PatientId == document.UserId &&
+                prescription.DoctorId == callerId)
+            {
+                return true;
+            }
+        }
+
+        // Legacy documents may predate appointment/prescription links. Permit access only
+        // when the same doctor has a non-cancelled clinical relationship with the patient.
+        return await _appointmentService.HasDoctorPatientRelationshipAsync(callerId, document.UserId);
     }
 }
