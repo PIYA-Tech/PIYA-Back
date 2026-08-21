@@ -8,9 +8,10 @@ public sealed class FrontendOptions
     public const string SectionName = "Frontend";
 
     /// <summary>
-    /// Absolute public frontend URL. Required and HTTPS-only in production.
+    /// Absolute public frontend URL. Defaults to PIYA's canonical production
+    /// origin and may be overridden for other environments.
     /// </summary>
-    public string BaseUrl { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = "https://piya.life";
 }
 
 /// <summary>

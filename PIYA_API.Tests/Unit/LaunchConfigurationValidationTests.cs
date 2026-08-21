@@ -92,9 +92,28 @@ public class LaunchConfigurationValidationTests
     }
 
     [Fact]
-    public void ProductionFrontend_MustBeConfiguredAsHttps()
+    public void ProductionFrontend_UsesCanonicalSecureDefault()
     {
         var configuration = CreateBaseConfiguration();
+        using var provider = BuildConfigurationProvider(
+            configuration,
+            Environments.Production);
+
+        var options =
+            provider.GetRequiredService<IOptions<FrontendOptions>>().Value;
+
+        options.BaseUrl.Should().Be("https://piya.life");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://piya.life")]
+    public void ProductionFrontend_RejectsExplicitBlankOrInsecureUrl(string baseUrl)
+    {
+        var configuration = CreateBaseConfiguration(new Dictionary<string, string?>
+        {
+            ["Frontend:BaseUrl"] = baseUrl
+        });
         using var provider = BuildConfigurationProvider(
             configuration,
             Environments.Production);
@@ -103,7 +122,7 @@ public class LaunchConfigurationValidationTests
             provider.GetRequiredService<IOptions<FrontendOptions>>().Value;
 
         resolve.Should().Throw<OptionsValidationException>()
-            .WithMessage("*Frontend:BaseUrl is required in production*");
+            .WithMessage("*Frontend:BaseUrl*");
     }
 
     [Theory]
