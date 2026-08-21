@@ -335,9 +335,12 @@ public sealed class FacilityDirectoryService(PharmacyApiDbContext context) : IFa
         IsOnboarded = item.VerificationStatus == FacilityVerificationStatus.Onboarded ||
                       item.OperationalHospitalId.HasValue || item.OperationalPharmacyId.HasValue,
         PrimarySourceName = item.PrimarySourceName,
-        Attribution = item.PrimarySourceName == FacilityDirectorySources.OpenStreetMap
-            ? "© OpenStreetMap contributors (ODbL)"
-            : "Official Azerbaijan open data",
+        Attribution = item.PrimarySourceName switch
+        {
+            FacilityDirectorySources.OpenStreetMap => "© OpenStreetMap contributors (ODbL)",
+            FacilityDirectorySources.PiyaOperational => "PIYA connected provider",
+            _ => "Official Azerbaijan open data"
+        },
         LastVerifiedAt = item.LastVerifiedAt
     };
 
@@ -397,7 +400,7 @@ public sealed class FacilityDirectoryService(PharmacyApiDbContext context) : IFa
         Score(first) >= Score(second) ? first : second;
 
     private static int Score(DirectoryFacility item) =>
-        (int)item.VerificationStatus * 100 + item.Sources.Count * 10 +
+        VerificationRank(item.VerificationStatus) * 100 + item.Sources.Count * 10 +
         (item.Latitude.HasValue ? 2 : 0) + (item.Address != null ? 1 : 0);
 
     private static void MergeMissing(DirectoryFacility primary, DirectoryFacility secondary)
@@ -418,9 +421,19 @@ public sealed class FacilityDirectoryService(PharmacyApiDbContext context) : IFa
         primary.Services = primary.Services.Union(secondary.Services).Distinct().ToList();
         primary.IsPublished |= secondary.IsPublished;
         primary.IsActive |= secondary.IsActive;
-        if (secondary.VerificationStatus > primary.VerificationStatus)
+        if (VerificationRank(secondary.VerificationStatus) > VerificationRank(primary.VerificationStatus))
             primary.VerificationStatus = secondary.VerificationStatus;
     }
+
+    private static int VerificationRank(FacilityVerificationStatus status) => status switch
+    {
+        FacilityVerificationStatus.Rejected => -1,
+        FacilityVerificationStatus.Discovered => 0,
+        FacilityVerificationStatus.RegistryVerified => 1,
+        FacilityVerificationStatus.OwnerVerified => 2,
+        FacilityVerificationStatus.Onboarded => 3,
+        _ => 0
+    };
 
     private static string RequireValue(string value, string field) =>
         string.IsNullOrWhiteSpace(value) ? throw new InvalidOperationException($"{field} is required.") : value.Trim();

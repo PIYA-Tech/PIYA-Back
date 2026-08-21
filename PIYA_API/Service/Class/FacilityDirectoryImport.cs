@@ -19,6 +19,7 @@ public static class FacilityDirectorySources
     public const string TabibSubordinate = "tabib-subordinate";
     public const string ItsPrivate = "its-private";
     public const string OpenStreetMap = "openstreetmap";
+    public const string PiyaOperational = "piya-operational";
 }
 
 public static class FacilityDirectoryNormalizer
@@ -71,7 +72,10 @@ internal sealed record FacilityImportCandidate(
     FacilityOwnershipType Ownership,
     FacilityVerificationStatus VerificationStatus,
     string? ParentName,
-    string RawPayload);
+    string RawPayload,
+    IReadOnlyList<string>? Services = null,
+    Guid? OperationalHospitalId = null,
+    Guid? OperationalPharmacyId = null);
 
 public sealed class FacilityDirectorySyncService(
     PharmacyApiDbContext context,
@@ -85,7 +89,8 @@ public sealed class FacilityDirectorySyncService(
         FacilityDirectorySources.TabibMain,
         FacilityDirectorySources.TabibSubordinate,
         FacilityDirectorySources.ItsPrivate,
-        FacilityDirectorySources.OpenStreetMap
+        FacilityDirectorySources.OpenStreetMap,
+        FacilityDirectorySources.PiyaOperational
     ];
 
     private readonly PharmacyApiDbContext _context = context;
@@ -148,6 +153,7 @@ public sealed class FacilityDirectorySyncService(
                 FacilityDirectorySources.ItsPrivate => await ReadCkanAsync(
                     source, "itsda-ile-muqavile-olan-ozel-tibb-muessiseleri", MapItsPrivate, cancellationToken),
                 FacilityDirectorySources.OpenStreetMap => await ReadOpenStreetMapAsync(cancellationToken),
+                FacilityDirectorySources.PiyaOperational => await ReadOperationalFacilitiesAsync(cancellationToken),
                 _ => []
             };
             run.RecordsRead = candidates.Count;
@@ -260,6 +266,69 @@ public sealed class FacilityDirectorySyncService(
                 raw));
         }
         return result.GroupBy(item => item.ExternalId).Select(group => group.First()).ToList();
+    }
+
+    private async Task<List<FacilityImportCandidate>> ReadOperationalFacilitiesAsync(
+        CancellationToken cancellationToken)
+    {
+        var result = new List<FacilityImportCandidate>();
+        var hospitals = await _context.Hospitals.AsNoTracking().Include(item => item.Coordinates)
+            .Where(item => item.IsActive && item.City.ToLower() == "baku")
+            .ToListAsync(cancellationToken);
+        foreach (var hospital in hospitals)
+        {
+            result.Add(new FacilityImportCandidate(
+                FacilityDirectorySources.PiyaOperational,
+                $"hospital/{hospital.Id}",
+                $"https://piya.life/map?tab=hospitals&highlight={hospital.Id}",
+                null,
+                DirectoryFacilityKind.Hospital,
+                hospital.Name,
+                hospital.Address,
+                ExtractDistrict(hospital.Address),
+                SplitPhones(hospital.PhoneNumber),
+                hospital.Email,
+                hospital.Website,
+                hospital.OperatingHours,
+                hospital.Coordinates?.Latitude,
+                hospital.Coordinates?.Longitude,
+                FacilityOwnershipType.Unknown,
+                FacilityVerificationStatus.Onboarded,
+                null,
+                JsonSerializer.Serialize(new { hospital.Id, hospital.Name, hospital.Address, hospital.UpdatedAt }),
+                hospital.Departments,
+                OperationalHospitalId: hospital.Id));
+        }
+
+        var pharmacies = await _context.Pharmacies.AsNoTracking().Include(item => item.Coordinates)
+            .Where(item => item.IsActive && (item.City == null || item.City.ToLower() == "baku"))
+            .ToListAsync(cancellationToken);
+        foreach (var pharmacy in pharmacies)
+        {
+            result.Add(new FacilityImportCandidate(
+                FacilityDirectorySources.PiyaOperational,
+                $"pharmacy/{pharmacy.Id}",
+                $"https://piya.life/map?tab=pharmacies&highlight={pharmacy.Id}",
+                null,
+                DirectoryFacilityKind.Pharmacy,
+                pharmacy.Name,
+                pharmacy.Address,
+                ExtractDistrict(pharmacy.Address),
+                SplitPhones(pharmacy.PhoneNumber),
+                pharmacy.Email,
+                pharmacy.Website,
+                pharmacy.OperatingHours,
+                pharmacy.Coordinates.Latitude,
+                pharmacy.Coordinates.Longitude,
+                FacilityOwnershipType.Unknown,
+                FacilityVerificationStatus.Onboarded,
+                null,
+                JsonSerializer.Serialize(new { pharmacy.Id, pharmacy.Name, pharmacy.Address, pharmacy.UpdatedAt }),
+                pharmacy.Services,
+                OperationalPharmacyId: pharmacy.Id));
+        }
+
+        return result;
     }
 
     private async Task UpsertAsync(
@@ -515,6 +584,7 @@ public sealed class FacilityDirectorySyncService(
         Email = candidate.Email,
         Website = candidate.Website,
         OperatingHours = candidate.OperatingHours,
+        Services = candidate.Services?.ToList() ?? [],
         Latitude = candidate.Latitude,
         Longitude = candidate.Longitude,
         Ownership = candidate.Ownership,
@@ -524,7 +594,10 @@ public sealed class FacilityDirectorySyncService(
         IsActive = true,
         FirstSeenAt = now,
         LastSeenAt = now,
-        LastVerifiedAt = candidate.VerificationStatus == FacilityVerificationStatus.RegistryVerified ? now : null,
+        LastVerifiedAt = candidate.VerificationStatus is FacilityVerificationStatus.RegistryVerified or
+            FacilityVerificationStatus.OwnerVerified or FacilityVerificationStatus.Onboarded ? now : null,
+        OperationalHospitalId = candidate.OperationalHospitalId,
+        OperationalPharmacyId = candidate.OperationalPharmacyId,
         CreatedAt = now,
         UpdatedAt = now
     };
@@ -544,16 +617,31 @@ public sealed class FacilityDirectorySyncService(
         facility.Longitude ??= candidate.Longitude;
         facility.PhoneNumbers = facility.PhoneNumbers.Union(candidate.PhoneNumbers)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (candidate.VerificationStatus > facility.VerificationStatus)
+        facility.Services = facility.Services.Union(candidate.Services ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        facility.OperationalHospitalId ??= candidate.OperationalHospitalId;
+        facility.OperationalPharmacyId ??= candidate.OperationalPharmacyId;
+        if (VerificationRank(candidate.VerificationStatus) > VerificationRank(facility.VerificationStatus))
         {
             facility.VerificationStatus = candidate.VerificationStatus;
             facility.PrimarySourceName = candidate.SourceName;
             facility.Ownership = candidate.Ownership;
         }
-        if (candidate.VerificationStatus == FacilityVerificationStatus.RegistryVerified)
+        if (candidate.VerificationStatus is FacilityVerificationStatus.RegistryVerified or
+            FacilityVerificationStatus.OwnerVerified or FacilityVerificationStatus.Onboarded)
             facility.LastVerifiedAt = DateTime.UtcNow;
         if (sourceChanged) facility.UpdatedAt = DateTime.UtcNow;
     }
+
+    private static int VerificationRank(FacilityVerificationStatus status) => status switch
+    {
+        FacilityVerificationStatus.Rejected => -1,
+        FacilityVerificationStatus.Discovered => 0,
+        FacilityVerificationStatus.RegistryVerified => 1,
+        FacilityVerificationStatus.OwnerVerified => 2,
+        FacilityVerificationStatus.Onboarded => 3,
+        _ => 0
+    };
 
     private static FacilityImportCandidate? MapTabibMain(
         IReadOnlyDictionary<string, string> row,
