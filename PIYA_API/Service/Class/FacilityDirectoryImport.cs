@@ -210,9 +210,9 @@ public sealed class FacilityDirectorySyncService(
         const string query = """
             [out:json][timeout:120];
             (
-              nwr["amenity"="pharmacy"](39.13,49.45,40.82,50.58);
-              nwr["amenity"~"^(hospital|clinic)$"](39.13,49.45,40.82,50.58);
-              nwr["healthcare"~"^(hospital|clinic|laboratory)$"](39.13,49.45,40.82,50.58);
+              nwr["amenity"="pharmacy"](40.2983937,49.7597276,40.4413231,50.0013381);
+              nwr["amenity"~"^(hospital|clinic)$"](40.2983937,49.7597276,40.4413231,50.0013381);
+              nwr["healthcare"~"^(hospital|clinic|laboratory)$"](40.2983937,49.7597276,40.4413231,50.0013381);
             );
             out center tags;
             """;
@@ -340,7 +340,7 @@ public sealed class FacilityDirectorySyncService(
                 facility.Sources.Add(record);
             }
 
-            if (match.Facility != null && match.Score is >= 65 and < 92 && match.Facility.Id != facility.Id)
+            if (match.Facility != null && match.Score is >= 82 and < 92 && match.Facility.Id != facility.Id)
             {
                 run.DuplicateCandidates++;
                 if (!dryRun)
@@ -350,8 +350,23 @@ public sealed class FacilityDirectorySyncService(
 
         if (!dryRun)
         {
+            var staleFacilities = new HashSet<DirectoryFacility>();
             foreach (var oldSource in existingSources.Where(item => !seen.Contains(item.ExternalId)))
+            {
                 oldSource.IsCurrent = false;
+                staleFacilities.Add(oldSource.Facility);
+            }
+            foreach (var staleFacility in staleFacilities.Where(item => item.Sources.All(source => !source.IsCurrent)))
+            {
+                staleFacility.IsActive = false;
+                staleFacility.IsPublished = false;
+                staleFacility.UpdatedAt = now;
+            }
+            await _context.FacilityDuplicateCandidates
+                .Where(item => item.Status == FacilityDuplicateStatus.Pending && item.ConfidenceScore < 82)
+                .ExecuteUpdateAsync(update => update.SetProperty(
+                    item => item.Status,
+                    FacilityDuplicateStatus.Dismissed), cancellationToken);
             await _context.SaveChangesAsync(cancellationToken);
         }
     }
