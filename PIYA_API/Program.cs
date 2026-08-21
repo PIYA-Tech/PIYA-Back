@@ -94,7 +94,23 @@ try
     {
         var migrateOnly = app.Configuration.GetValue<bool>("Database:MigrateOnly");
         var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate");
-        if (migrateOnly || autoMigrate)
+        // One-release migration bridge for the public facility directory. The
+        // production environment intentionally keeps general auto-migration
+        // disabled, but this additive schema must exist before the directory
+        // endpoints and scheduled importer can run. Remove this bridge after
+        // the production migration is confirmed.
+        var applyFacilityDirectoryMigration = false;
+        if (!migrateOnly && !autoMigrate)
+        {
+            using var pendingMigrationScope = app.Services.CreateScope();
+            var pendingDb = pendingMigrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+            var pendingMigrations = await pendingDb.Database.GetPendingMigrationsAsync();
+            applyFacilityDirectoryMigration = pendingMigrations.Contains(
+                "20260821090914_CreateFacilityDirectory",
+                StringComparer.Ordinal);
+        }
+
+        if (migrateOnly || autoMigrate || applyFacilityDirectoryMigration)
         {
             using var migrationScope = app.Services.CreateScope();
             var db = migrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
