@@ -276,6 +276,9 @@ public sealed class FacilityDirectorySyncService(
             .Where(item => item.City == "Baku" && item.IsActive).ToListAsync(cancellationToken);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        if (!dryRun && run.SourceName == FacilityDirectorySources.OpenStreetMap)
+            RepairMergedOpenStreetMapLocations(candidates, existingSources, facilities, run, now);
+
         foreach (var candidate in candidates)
         {
             seen.Add(candidate.ExternalId);
@@ -425,7 +428,7 @@ public sealed class FacilityDirectorySyncService(
             {
                 var distance = DistanceMeters(candidate.Latitude.Value, candidate.Longitude!.Value,
                     facility.Latitude.Value, facility.Longitude!.Value);
-                if (distance <= 75 && score >= 70) score = Math.Max(score, 94);
+                score = ApplyDistanceGuard(score, distance);
                 matchReason += $", {Math.Round(distance)}m apart";
             }
             if (score <= bestScore) continue;
@@ -434,6 +437,45 @@ public sealed class FacilityDirectorySyncService(
             reason = matchReason;
         }
         return (best, bestScore, reason);
+    }
+
+    internal static int ApplyDistanceGuard(int nameAndAddressScore, double distanceMeters)
+    {
+        if (distanceMeters > 250) return Math.Min(nameAndAddressScore, 75);
+        if (distanceMeters <= 75 && nameAndAddressScore >= 70) return Math.Max(nameAndAddressScore, 94);
+        return nameAndAddressScore;
+    }
+
+    private void RepairMergedOpenStreetMapLocations(
+        IReadOnlyCollection<FacilityImportCandidate> candidates,
+        IReadOnlyCollection<FacilitySourceRecord> existingSources,
+        ICollection<DirectoryFacility> facilities,
+        FacilityImportRun run,
+        DateTime now)
+    {
+        var currentCandidates = candidates.ToDictionary(item => item.ExternalId, StringComparer.OrdinalIgnoreCase);
+        var mergedGroups = existingSources
+            .Where(source => currentCandidates.ContainsKey(source.ExternalId))
+            .GroupBy(source => source.FacilityId)
+            .Where(group => group.Count() > 1)
+            .ToList();
+
+        foreach (var group in mergedGroups)
+        {
+            foreach (var source in group.Skip(1))
+            {
+                var candidate = currentCandidates[source.ExternalId];
+                var original = source.Facility;
+                var split = CreateFacility(candidate, now);
+                original.Sources.Remove(source);
+                source.FacilityId = split.Id;
+                source.Facility = split;
+                split.Sources.Add(source);
+                _context.DirectoryFacilities.Add(split);
+                facilities.Add(split);
+                run.RecordsCreated++;
+            }
+        }
     }
 
     internal static int NameSimilarity(string first, string second)

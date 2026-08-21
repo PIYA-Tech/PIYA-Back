@@ -48,4 +48,17 @@ public sealed class FacilityDirectoryImportTests
 
         score.Should().BeGreaterThanOrEqualTo(80);
     }
+
+    [Fact]
+    public void Exact_chain_names_are_not_enough_to_identify_a_physical_branch()
+    {
+        FacilityDirectorySyncService.NameSimilarity(
+            FacilityDirectoryNormalizer.Normalize("Zəfəran Aptek"),
+            FacilityDirectoryNormalizer.Normalize("Zəfəran Aptek"))
+            .Should().Be(100);
+
+        // Branch identity is finalized by the importer's coordinate guard.
+        FacilityDirectorySyncService.ApplyDistanceGuard(100, 500)
+            .Should().BeLessThan(92);
+    }
 }
