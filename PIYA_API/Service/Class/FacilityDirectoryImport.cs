@@ -86,11 +86,11 @@ public sealed class FacilityDirectorySyncService(
     private static readonly SemaphoreSlim SyncLock = new(1, 1);
     private static readonly string[] Sources =
     [
+        FacilityDirectorySources.PiyaOperational,
         FacilityDirectorySources.TabibMain,
         FacilityDirectorySources.TabibSubordinate,
         FacilityDirectorySources.ItsPrivate,
-        FacilityDirectorySources.OpenStreetMap,
-        FacilityDirectorySources.PiyaOperational
+        FacilityDirectorySources.OpenStreetMap
     ];
 
     private readonly PharmacyApiDbContext _context = context;
