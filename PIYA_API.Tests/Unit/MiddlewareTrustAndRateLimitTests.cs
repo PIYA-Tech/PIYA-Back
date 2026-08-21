@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using FluentAssertions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -158,6 +159,65 @@ public class MiddlewareTrustAndRateLimitTests
         security.Verify(
             candidate => candidate.IsIpBlockedAsync("198.51.100.21"),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task SecurityHardening_AllowsBlockedClientToReadAllowAnonymousEndpoint()
+    {
+        var remoteAddress = NextPrivateAddress();
+        var security = new Mock<ISecurityHardeningService>();
+        security.Setup(candidate => candidate.IsIpBlockedAsync(It.IsAny<string>()))
+            .ReturnsAsync(true);
+        var reachedNext = false;
+        var middleware = new SecurityHardeningMiddleware(
+            _ =>
+            {
+                reachedNext = true;
+                return Task.CompletedTask;
+            },
+            Mock.Of<ILogger<SecurityHardeningMiddleware>>());
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = remoteAddress;
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/pharmacy";
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(new AllowAnonymousAttribute()),
+            "Public pharmacy directory"));
+
+        await middleware.InvokeAsync(context, security.Object);
+
+        reachedNext.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status200OK);
+        security.Verify(
+            candidate => candidate.IsIpBlockedAsync(It.IsAny<string>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SecurityHardening_StillBlocksProtectedEndpointForBlockedClient()
+    {
+        var remoteAddress = NextPrivateAddress();
+        var security = new Mock<ISecurityHardeningService>();
+        security.Setup(candidate => candidate.IsIpBlockedAsync(remoteAddress.ToString()))
+            .ReturnsAsync(true);
+        var reachedNext = false;
+        var middleware = new SecurityHardeningMiddleware(
+            _ =>
+            {
+                reachedNext = true;
+                return Task.CompletedTask;
+            },
+            Mock.Of<ILogger<SecurityHardeningMiddleware>>());
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = remoteAddress;
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/prescription";
+
+        await middleware.InvokeAsync(context, security.Object);
+
+        reachedNext.Should().BeFalse();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
     }
 
     [Fact]

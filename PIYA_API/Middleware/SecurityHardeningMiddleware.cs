@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Middleware;
@@ -27,8 +28,11 @@ public class SecurityHardeningMiddleware(RequestDelegate next, ILogger<SecurityH
         var isAuthEndpoint = path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
                           || path.StartsWith("/api/passwordreset/", StringComparison.OrdinalIgnoreCase)
                           || path.StartsWith("/api/emailverification/", StringComparison.OrdinalIgnoreCase);
+        var isAnonymousReadEndpoint =
+            (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+            && context.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() != null;
 
-        if (!isAuthEndpoint)
+        if (!isAuthEndpoint && !isAnonymousReadEndpoint)
         {
             // Check if IP is blocked
             if (await securityService.IsIpBlockedAsync(ipAddress))

@@ -22,6 +22,11 @@ public static class MiddlewareExtensions
         // Global exception handler MUST be first so it wraps all downstream middleware exceptions.
         app.UseMiddleware<PIYA_API.Middleware.GlobalExceptionHandlingMiddleware>();
 
+        // Resolve the selected controller action before CORS and request guards.
+        // Security hardening uses endpoint metadata to distinguish intentionally
+        // public read-only routes from protected medical-data routes.
+        app.UseRouting();
+
         // CORS
         app.UseCors(app.Environment.IsDevelopment() ? "Development" : "PIYAPolicy");
 
