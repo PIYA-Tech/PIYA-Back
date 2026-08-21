@@ -37,6 +37,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDoctorProfileService, DoctorProfileService>();
         services.AddScoped<IPharmacistLicenseService, PharmacistLicenseService>();
         services.AddScoped<IHospitalService, HospitalService>();
+        services.AddScoped<IFacilityDirectoryService, FacilityDirectoryService>();
+        services.AddScoped<IFacilityDirectorySyncService, FacilityDirectorySyncService>();
 
         // Referral & Medical Tests
         services.AddScoped<IReferralService, ReferralService>();
@@ -60,6 +62,11 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IHmsIntegrationService, HmsIntegrationService>();
         services.AddHttpClient<IEhrIntegrationService, EhrIntegrationService>();
         services.AddHttpClient("FirebaseCloudMessaging");
+        services.AddHttpClient("FacilityDirectory", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(3);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("PIYA-Facility-Directory/1.0 (+https://piya.life)");
+        });
 
         services.AddOptions<FirebaseOptions>()
             .Bind(config.GetSection(FirebaseOptions.SectionName))
@@ -120,6 +127,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<PIYA_API.Middleware.QrTokenCleanupService>();
         services.AddHostedService<PIYA_API.Middleware.PrescriptionExpiryService>();
         services.AddHostedService<PIYA_API.Middleware.WebhookDeliveryWorker>();
+        services.AddHostedService<FacilityDirectorySyncWorker>();
 
         return services;
     }

@@ -28,6 +28,17 @@ public static class InfrastructureExtensions
             config.GetSection(RateLimitingOptions.SectionName));
         services.Configure<CachingOptions>(
             config.GetSection(CachingOptions.SectionName));
+        services.AddOptions<FacilityDirectoryOptions>()
+            .Bind(config.GetSection(FacilityDirectoryOptions.SectionName))
+            .Validate(options => options.StartupDelaySeconds is >= 0 and <= 3600,
+                "FacilityDirectory:StartupDelaySeconds must be between 0 and 3600.")
+            .Validate(options => options.SyncIntervalHours is >= 1 and <= 720,
+                "FacilityDirectory:SyncIntervalHours must be between 1 and 720.")
+            .Validate(options => IsAbsoluteHttpUrl(options.CkanPackageApiUrl),
+                "FacilityDirectory:CkanPackageApiUrl must be an absolute HTTP(S) URL.")
+            .Validate(options => IsAbsoluteHttpUrl(options.OverpassApiUrl),
+                "FacilityDirectory:OverpassApiUrl must be an absolute HTTP(S) URL.")
+            .ValidateOnStart();
 
         services.AddOptions<EmailServiceOptions>()
             .Bind(config.GetSection(EmailServiceOptions.SectionName))

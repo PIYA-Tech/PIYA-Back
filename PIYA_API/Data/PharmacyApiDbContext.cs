@@ -74,6 +74,11 @@ namespace PIYA_API.Data
         public DbSet<WebhookDelivery> WebhookDeliveries { get; set; }
         public DbSet<UserConsent> UserConsents { get; set; }
         public DbSet<IntegrationSyncState> IntegrationSyncStates { get; set; }
+        public DbSet<DirectoryFacility> DirectoryFacilities { get; set; }
+        public DbSet<FacilitySourceRecord> FacilitySourceRecords { get; set; }
+        public DbSet<FacilityClaim> FacilityClaims { get; set; }
+        public DbSet<FacilityImportRun> FacilityImportRuns { get; set; }
+        public DbSet<FacilityDuplicateCandidate> FacilityDuplicateCandidates { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -137,6 +142,80 @@ namespace PIYA_API.Data
             modelBuilder.Entity<UserConsent>().Property(item => item.UserAgent).HasMaxLength(1024);
             modelBuilder.Entity<IntegrationSyncState>().HasKey(item => item.Key);
             modelBuilder.Entity<IntegrationSyncState>().Property(item => item.Key).HasMaxLength(200);
+
+            // Public facility directory. Imported listings are kept separate from
+            // operational Hospital/Pharmacy entities so a listing cannot grant
+            // access to PIYA clinical workflows.
+            modelBuilder.Entity<DirectoryFacility>().HasIndex(item => item.NormalizedName);
+            modelBuilder.Entity<DirectoryFacility>().HasIndex(item => item.NormalizedAddress);
+            modelBuilder.Entity<DirectoryFacility>().HasIndex(item => new
+            {
+                item.City,
+                item.Kind,
+                item.IsPublished,
+                item.IsActive
+            });
+            modelBuilder.Entity<DirectoryFacility>().HasIndex(item => item.VerificationStatus);
+            modelBuilder.Entity<DirectoryFacility>()
+                .HasOne(item => item.ParentFacility)
+                .WithMany(item => item.ChildFacilities)
+                .HasForeignKey(item => item.ParentFacilityId)
+                .OnDelete(DeleteBehavior.SetNull);
+            modelBuilder.Entity<DirectoryFacility>()
+                .HasOne(item => item.OperationalHospital)
+                .WithMany()
+                .HasForeignKey(item => item.OperationalHospitalId)
+                .OnDelete(DeleteBehavior.SetNull);
+            modelBuilder.Entity<DirectoryFacility>()
+                .HasOne(item => item.OperationalPharmacy)
+                .WithMany()
+                .HasForeignKey(item => item.OperationalPharmacyId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<FacilitySourceRecord>()
+                .HasIndex(item => new { item.SourceName, item.ExternalId })
+                .IsUnique();
+            modelBuilder.Entity<FacilitySourceRecord>().HasIndex(item => item.FacilityId);
+            modelBuilder.Entity<FacilitySourceRecord>().Property(item => item.SourceUrl).HasMaxLength(2048);
+            modelBuilder.Entity<FacilitySourceRecord>().Property(item => item.RawPayload).HasColumnType("text");
+            modelBuilder.Entity<FacilitySourceRecord>()
+                .HasOne(item => item.Facility)
+                .WithMany(item => item.Sources)
+                .HasForeignKey(item => item.FacilityId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<FacilityClaim>().HasIndex(item => new { item.FacilityId, item.Status });
+            modelBuilder.Entity<FacilityClaim>()
+                .HasOne(item => item.Facility)
+                .WithMany(item => item.Claims)
+                .HasForeignKey(item => item.FacilityId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<FacilityClaim>()
+                .HasOne(item => item.ClaimedByUser)
+                .WithMany()
+                .HasForeignKey(item => item.ClaimedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<FacilityClaim>()
+                .HasOne(item => item.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(item => item.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<FacilityImportRun>().HasIndex(item => new { item.SourceName, item.StartedAt });
+            modelBuilder.Entity<FacilityDuplicateCandidate>()
+                .HasIndex(item => new { item.FacilityId, item.PossibleDuplicateId })
+                .IsUnique();
+            modelBuilder.Entity<FacilityDuplicateCandidate>().HasIndex(item => item.Status);
+            modelBuilder.Entity<FacilityDuplicateCandidate>()
+                .HasOne(item => item.Facility)
+                .WithMany()
+                .HasForeignKey(item => item.FacilityId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<FacilityDuplicateCandidate>()
+                .HasOne(item => item.PossibleDuplicate)
+                .WithMany()
+                .HasForeignKey(item => item.PossibleDuplicateId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             // Token.Family — index for fast family-revocation queries
             modelBuilder.Entity<Token>()

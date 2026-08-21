@@ -14,6 +14,19 @@ public sealed class FrontendOptions
     public string BaseUrl { get; set; } = "https://piya.life";
 }
 
+public sealed class FacilityDirectoryOptions
+{
+    public const string SectionName = "FacilityDirectory";
+    public bool Enabled { get; set; } = true;
+    public bool RunOnStartup { get; set; } = true;
+    public int StartupDelaySeconds { get; set; } = 20;
+    public int SyncIntervalHours { get; set; } = 24;
+    public string CkanPackageApiUrl { get; set; } =
+        "https://admin.opendata.az/api/3/action/package_show";
+    public string OverpassApiUrl { get; set; } =
+        "https://overpass-api.de/api/interpreter";
+}
+
 /// <summary>
 /// Private S3-compatible object storage configuration.
 /// </summary>
