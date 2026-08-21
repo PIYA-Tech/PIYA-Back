@@ -1,4 +1,10 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
+using PIYA_API.Configuration;
+using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Class;
 using Xunit;
@@ -60,5 +66,40 @@ public sealed class FacilityDirectoryImportTests
         // Branch identity is finalized by the importer's coordinate guard.
         FacilityDirectorySyncService.ApplyDistanceGuard(100, 500)
             .Should().BeLessThan(92);
+    }
+
+    [Fact]
+    public async Task Operational_source_reads_connected_hospitals_and_pharmacies()
+    {
+        var databaseOptions = new DbContextOptionsBuilder<PharmacyApiDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        await using var context = new PharmacyApiDbContext(databaseOptions);
+        var company = new PharmacyCompany { Id = Guid.NewGuid(), Name = "PIYA Pharmacy Network" };
+        context.Hospitals.Add(new Hospital
+        {
+            Id = Guid.NewGuid(), Name = "Connected Hospital", Address = "Bakı",
+            City = "Bakı", Country = "Azerbaijan", PhoneNumber = "+994121234567"
+        });
+        context.Pharmacies.Add(new Pharmacy
+        {
+            Id = Guid.NewGuid(), Name = "Connected Pharmacy", Address = "Bakı",
+            City = "Bakı", Country = "Azerbaijan", Company = company,
+            Coordinates = new Coordinates { Id = Guid.NewGuid(), Latitude = 40.4, Longitude = 49.9 }
+        });
+        await context.SaveChangesAsync();
+
+        var service = new FacilityDirectorySyncService(
+            context,
+            Mock.Of<IHttpClientFactory>(),
+            Options.Create(new FacilityDirectoryOptions()),
+            NullLogger<FacilityDirectorySyncService>.Instance);
+
+        var result = await service.SyncAsync(true, [FacilityDirectorySources.PiyaOperational]);
+
+        result.Should().ContainSingle();
+        result[0].Status.Should().Be(FacilityImportStatus.Succeeded);
+        result[0].RecordsRead.Should().Be(2);
+        result[0].Error.Should().BeNull();
     }
 }

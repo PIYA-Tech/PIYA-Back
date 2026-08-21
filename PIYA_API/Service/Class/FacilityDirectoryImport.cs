@@ -273,9 +273,9 @@ public sealed class FacilityDirectorySyncService(
     {
         var result = new List<FacilityImportCandidate>();
         var hospitals = await _context.Hospitals.AsNoTracking().Include(item => item.Coordinates)
-            .Where(item => item.IsActive && item.City.ToLower() == "baku")
+            .Where(item => item.IsActive)
             .ToListAsync(cancellationToken);
-        foreach (var hospital in hospitals)
+        foreach (var hospital in hospitals.Where(item => IsBakuLocation(item.City, item.Address)))
         {
             result.Add(new FacilityImportCandidate(
                 FacilityDirectorySources.PiyaOperational,
@@ -301,9 +301,9 @@ public sealed class FacilityDirectorySyncService(
         }
 
         var pharmacies = await _context.Pharmacies.AsNoTracking().Include(item => item.Coordinates)
-            .Where(item => item.IsActive && (item.City == null || item.City.ToLower() == "baku"))
+            .Where(item => item.IsActive)
             .ToListAsync(cancellationToken);
-        foreach (var pharmacy in pharmacies)
+        foreach (var pharmacy in pharmacies.Where(item => IsBakuLocation(item.City, item.Address)))
         {
             result.Add(new FacilityImportCandidate(
                 FacilityDirectorySources.PiyaOperational,
@@ -318,8 +318,8 @@ public sealed class FacilityDirectorySyncService(
                 pharmacy.Email,
                 pharmacy.Website,
                 pharmacy.OperatingHours,
-                pharmacy.Coordinates.Latitude,
-                pharmacy.Coordinates.Longitude,
+                pharmacy.Coordinates?.Latitude,
+                pharmacy.Coordinates?.Longitude,
                 FacilityOwnershipType.Unknown,
                 FacilityVerificationStatus.Onboarded,
                 null,
@@ -729,6 +729,15 @@ public sealed class FacilityDirectorySyncService(
 
     private static bool ContainsBaku(string? value) =>
         FacilityDirectoryNormalizer.NormalizeNullable(value)?.Contains("baki") == true;
+    private static bool IsBakuLocation(string? city, string? address)
+    {
+        var normalizedCity = FacilityDirectoryNormalizer.NormalizeNullable(city);
+        return normalizedCity == null ||
+               normalizedCity == "baki" || normalizedCity.StartsWith("baki ") ||
+               normalizedCity == "baku" || normalizedCity.StartsWith("baku ") ||
+               ContainsBaku(address) ||
+               FacilityDirectoryNormalizer.NormalizeNullable(address)?.Contains("baku") == true;
+    }
     private static string? ExtractDistrict(string? address)
     {
         if (string.IsNullOrWhiteSpace(address)) return null;
