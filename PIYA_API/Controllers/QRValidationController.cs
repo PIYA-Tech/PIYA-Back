@@ -14,12 +14,14 @@ namespace PIYA_API.Controllers;
 public class QRValidationController(
     IQRService qrService,
     IPrescriptionService prescriptionService,
+    IInventoryService inventoryService,
     IPharmacyStaffService pharmacyStaffService,
     IOptions<SecurityOptions> securityOptions,
     ILogger<QRValidationController> logger) : ControllerBase
 {
     private readonly IQRService _qrService = qrService;
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IInventoryService _inventoryService = inventoryService;
     private readonly IPharmacyStaffService _pharmacyStaffService = pharmacyStaffService;
     private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<QRValidationController> _logger = logger;
@@ -93,6 +95,81 @@ public class QRValidationController(
         {
             _logger.LogError(ex, "Error generating QR for prescription {PrescriptionId}", prescriptionId);
             return StatusCode(500, new { error = "Failed to generate QR code" });
+        }
+    }
+
+    /// <summary>
+    /// Preview a prescription and stock impact without consuming the one-time QR.
+    /// The pharmacist must explicitly confirm the separate scan action to dispense.
+    /// </summary>
+    [HttpPost("prescription/preview")]
+    [Authorize(Roles = "Pharmacist,PharmacyManager,SuperAdmin")]
+    public async Task<ActionResult<PrescriptionPreviewResponse>> PreviewPrescriptionQR(
+        [FromBody] ScanQRRequest request)
+    {
+        try
+        {
+            var pharmacistId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var (isValid, prescriptionId, entityType, expiresAt, validationError) =
+                await _qrService.ValidateQrTokenAsync(request.QrToken);
+            if (!isValid) return BadRequest(new { error = validationError });
+            if (!string.Equals(entityType, "Prescription", StringComparison.Ordinal)) return Forbid();
+
+            Guid pharmacyId;
+            if (User.IsInRole("SuperAdmin"))
+            {
+                if (!request.PharmacyId.HasValue)
+                    return BadRequest(new { error = "pharmacyId is required for SuperAdmin preview." });
+                pharmacyId = request.PharmacyId.Value;
+            }
+            else
+            {
+                var assignments = await _pharmacyStaffService.GetUserPharmaciesAsync(pharmacistId, activeOnly: true);
+                var allowed = assignments.Select(a => a.PharmacyId).Distinct().ToList();
+                pharmacyId = request.PharmacyId ?? (allowed.Count == 1 ? allowed[0] : Guid.Empty);
+                if (pharmacyId == Guid.Empty)
+                    return BadRequest(new { error = "Select a pharmacy before previewing this prescription." });
+                if (!allowed.Contains(pharmacyId)) return Forbid();
+            }
+
+            var prescription = await _prescriptionService.GetByIdAsync(prescriptionId);
+            if (prescription == null) return NotFound(new { error = "Prescription not found." });
+            if (prescription.Status is not PrescriptionStatus.Active and not PrescriptionStatus.PartiallyFulfilled)
+                return BadRequest(new { error = $"Cannot dispense a prescription with status '{prescription.Status}'." });
+
+            var medications = new List<PrescriptionPreviewMedication>();
+            foreach (var item in prescription.Items?.Where(i => !i.IsFulfilled) ?? [])
+            {
+                var available = await _inventoryService.GetAvailableStockAsync(pharmacyId, item.MedicationId);
+                medications.Add(new PrescriptionPreviewMedication
+                {
+                    MedicationName = item.Medication?.BrandName ?? "Unknown medication",
+                    GenericName = item.Medication?.GenericName,
+                    QuantityRequired = item.Quantity,
+                    QuantityAvailable = available,
+                    Dosage = item.Dosage,
+                    Frequency = item.Frequency
+                });
+            }
+
+            return Ok(new PrescriptionPreviewResponse
+            {
+                PrescriptionId = prescription.Id,
+                PatientName = string.Join(" ", new[] { prescription.Patient?.FirstName, prescription.Patient?.LastName }
+                    .Where(value => !string.IsNullOrWhiteSpace(value))),
+                Diagnosis = prescription.Diagnosis,
+                Instructions = prescription.Instructions,
+                ExpiresAt = prescription.ExpiresAt,
+                TokenExpiresAt = expiresAt,
+                PharmacyId = pharmacyId,
+                CanFulfill = medications.Count > 0 && medications.All(item => item.QuantityAvailable >= item.QuantityRequired),
+                Medications = medications
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error previewing prescription QR");
+            return BadRequest(new { error = "Unable to preview this prescription." });
         }
     }
 
@@ -450,6 +527,29 @@ public class PrescriptionScanResponse
     public DateTime IssuedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public string Message { get; set; } = string.Empty;
+}
+
+public class PrescriptionPreviewResponse
+{
+    public Guid PrescriptionId { get; set; }
+    public string PatientName { get; set; } = string.Empty;
+    public string? Diagnosis { get; set; }
+    public string? Instructions { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime TokenExpiresAt { get; set; }
+    public Guid PharmacyId { get; set; }
+    public bool CanFulfill { get; set; }
+    public List<PrescriptionPreviewMedication> Medications { get; set; } = [];
+}
+
+public class PrescriptionPreviewMedication
+{
+    public string MedicationName { get; set; } = string.Empty;
+    public string? GenericName { get; set; }
+    public int QuantityRequired { get; set; }
+    public int QuantityAvailable { get; set; }
+    public string? Dosage { get; set; }
+    public string? Frequency { get; set; }
 }
 
 public class MedicationItemDto

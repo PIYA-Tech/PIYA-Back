@@ -60,6 +60,21 @@ public sealed class FirebaseOptions
 }
 
 /// <summary>
+/// Apple Push Notification service token-authentication configuration. The iOS
+/// app registers a native APNs device token, so it must not be sent to FCM.
+/// </summary>
+public sealed class ApplePushOptions
+{
+    public const string SectionName = "ApplePush";
+    public bool Enabled { get; set; }
+    public string TeamId { get; set; } = string.Empty;
+    public string KeyId { get; set; } = string.Empty;
+    public string BundleId { get; set; } = "com.piya.life";
+    public string PrivateKeyPath { get; set; } = string.Empty;
+    public bool UseSandbox { get; set; }
+}
+
+/// <summary>
 /// Security configuration options
 /// </summary>
 public class SecurityOptions

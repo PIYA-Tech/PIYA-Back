@@ -30,7 +30,7 @@ public interface IFcmService
     /// <summary>
     /// Unregister a device token
     /// </summary>
-    Task<bool> UnregisterDeviceTokenAsync(string token);
+    Task<bool> UnregisterDeviceTokenAsync(Guid userId, string token);
     
     /// <summary>
     /// Get all active device tokens (raw strings) for a user
@@ -59,4 +59,8 @@ public interface IFcmService
     /// Called after a successful login so the active-devices list shows the correct time.
     /// </summary>
     Task UpdateDeviceLastLoginAsync(Guid userId, string fcmToken);
+
+    Task<bool> UpdateNotificationPreferencesAsync(
+        Guid userId, string token, bool appointments, bool prescriptions,
+        bool medicationReminders, bool news);
 }

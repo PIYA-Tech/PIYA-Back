@@ -68,4 +68,10 @@ public class DeviceToken
     /// requiring TOTP / SMS on the next login.
     /// </summary>
     public bool IsTrusted2FADevice { get; set; } = false;
+
+    /// <summary>Per-device delivery preferences. Security and emergency alerts bypass these switches.</summary>
+    public bool AppointmentNotificationsEnabled { get; set; } = true;
+    public bool PrescriptionNotificationsEnabled { get; set; } = true;
+    public bool MedicationReminderNotificationsEnabled { get; set; } = true;
+    public bool NewsNotificationsEnabled { get; set; } = false;
 }

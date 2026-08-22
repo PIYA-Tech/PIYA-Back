@@ -388,6 +388,8 @@ secrets.json
 **/secrets.json
 firebase-credentials.json
 **/firebase-credentials.json
+AuthKey_*.p8
+**/AuthKey_*.p8
 
 # Environment files with secrets
 *.env

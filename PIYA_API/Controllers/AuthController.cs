@@ -18,6 +18,7 @@ public class AuthController(
     ITwoFactorAuthService twoFactorService,
     ISecurityHardeningService securityHardeningService,
     IFcmService fcmService,
+    IGdprComplianceService gdprComplianceService,
     IOptions<SecurityOptions> securityOptions,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -28,6 +29,7 @@ public class AuthController(
     private readonly ITwoFactorAuthService _twoFactorService = twoFactorService;
     private readonly ISecurityHardeningService _securityHardeningService = securityHardeningService;
     private readonly IFcmService _fcmService = fcmService;
+    private readonly IGdprComplianceService _gdprComplianceService = gdprComplianceService;
     private readonly SecurityOptions _securityOptions = securityOptions.Value;
     private readonly ILogger<AuthController> _logger = logger;
 
@@ -80,6 +82,15 @@ public class AuthController(
             };
 
             var createdUser = await _userService.Create(user, request.Password);
+
+            // Native clients can submit explicit, versioned consent during registration.
+            // The fields remain optional for backward compatibility with existing web clients.
+            if (request.TermsAccepted == true)
+                await _gdprComplianceService.RecordConsentAsync(
+                    createdUser.Id, $"terms:{request.PrivacyPolicyVersion ?? "current"}", true, ipAddress);
+            if (request.HealthDataConsentAccepted == true)
+                await _gdprComplianceService.RecordConsentAsync(
+                    createdUser.Id, $"health-data:{request.PrivacyPolicyVersion ?? "current"}", true, ipAddress);
 
             // Log registration
             await _auditService.LogSecurityEventAsync(
@@ -727,6 +738,9 @@ public class RegisterRequest
     public required string PhoneNumber { get; set; }
     public string? DateOfBirth { get; set; }
     public string? DeviceInfo { get; set; }
+    public bool? TermsAccepted { get; set; }
+    public bool? HealthDataConsentAccepted { get; set; }
+    public string? PrivacyPolicyVersion { get; set; }
     // Accept role as string from clients/tests (e.g. "Patient") and parse below.
     public string? Role { get; set; }
 }

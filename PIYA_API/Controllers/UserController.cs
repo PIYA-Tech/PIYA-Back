@@ -9,9 +9,13 @@ namespace PIYA_API.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-public class UserController(IUserService userService, ILogger<UserController> logger) : ControllerBase
+public class UserController(
+    IUserService userService,
+    IGdprComplianceService gdprComplianceService,
+    ILogger<UserController> logger) : ControllerBase
 {
     private readonly IUserService _userService = userService;
+    private readonly IGdprComplianceService _gdprComplianceService = gdprComplianceService;
     private readonly ILogger<UserController> _logger = logger;
 
     private bool IsAdminOrSuperAdmin() =>
@@ -235,8 +239,22 @@ public class UserController(IUserService userService, ILogger<UserController> lo
             var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
             if (callerId != id && !IsAdminOrSuperAdmin())
                 return Forbid();
+            if (callerId == id)
+            {
+                // In-app account deletion immediately removes credentials and direct
+                // identifiers. Medical records that must be retained remain anonymized.
+                var result = await _gdprComplianceService.AnonymizeUserDataAsync(
+                    id, "User requested account deletion in the PIYA app");
+                return Ok(new
+                {
+                    message = "Account deleted and retained medical records anonymized",
+                    result.AnonymizedAt,
+                    result.RecordsAnonymized
+                });
+            }
+
             await _userService.Delete(id);
-            return Ok(new { message = "User deleted successfully" });
+            return Ok(new { message = "User deactivated successfully" });
         }
         catch (KeyNotFoundException ex)
         {

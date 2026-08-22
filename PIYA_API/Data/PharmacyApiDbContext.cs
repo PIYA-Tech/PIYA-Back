@@ -38,6 +38,8 @@ namespace PIYA_API.Data
         public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
         public DbSet<MedicalDocument> MedicalDocuments { get; set; }
         public DbSet<DeviceToken> DeviceTokens { get; set; }
+        public DbSet<EmergencyHealthProfile> EmergencyHealthProfiles { get; set; }
+        public DbSet<EmergencyAccessGrant> EmergencyAccessGrants { get; set; }
         
         // Healthcare entities
         public DbSet<Hospital> Hospitals { get; set; }
@@ -142,6 +144,36 @@ namespace PIYA_API.Data
             modelBuilder.Entity<UserConsent>().Property(item => item.UserAgent).HasMaxLength(1024);
             modelBuilder.Entity<IntegrationSyncState>().HasKey(item => item.Key);
             modelBuilder.Entity<IntegrationSyncState>().Property(item => item.Key).HasMaxLength(200);
+
+            modelBuilder.Entity<EmergencyHealthProfile>()
+                .HasIndex(item => item.PatientId)
+                .IsUnique();
+            modelBuilder.Entity<EmergencyHealthProfile>()
+                .HasIndex(item => item.ShareTokenHash)
+                .IsUnique();
+            modelBuilder.Entity<EmergencyHealthProfile>()
+                .HasOne(item => item.Patient)
+                .WithMany()
+                .HasForeignKey(item => item.PatientId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<EmergencyHealthProfile>().Property(item => item.ShareTokenHash).HasMaxLength(64);
+            modelBuilder.Entity<EmergencyHealthProfile>().Property(item => item.BloodType).HasMaxLength(16);
+
+            modelBuilder.Entity<EmergencyAccessGrant>().HasIndex(item => item.PatientId);
+            modelBuilder.Entity<EmergencyAccessGrant>().HasIndex(item => item.RequesterId);
+            modelBuilder.Entity<EmergencyAccessGrant>().HasIndex(item => item.ExpiresAt);
+            modelBuilder.Entity<EmergencyAccessGrant>()
+                .HasOne(item => item.Patient)
+                .WithMany()
+                .HasForeignKey(item => item.PatientId)
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<EmergencyAccessGrant>()
+                .HasOne(item => item.Requester)
+                .WithMany()
+                .HasForeignKey(item => item.RequesterId)
+                .OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<EmergencyAccessGrant>().Property(item => item.Reason).HasMaxLength(500);
+            modelBuilder.Entity<EmergencyAccessGrant>().Property(item => item.FacilityName).HasMaxLength(300);
 
             // Public facility directory. Imported listings are kept separate from
             // operational Hospital/Pharmacy entities so a listing cannot grant

@@ -20,21 +20,52 @@ public class FcmService(
     PharmacyApiDbContext context,
     IHttpClientFactory httpClientFactory,
     IOptions<FirebaseOptions> options,
+    IOptions<ApplePushOptions> applePushOptions,
     ILogger<FcmService> logger) : IFcmService
 {
     private readonly PharmacyApiDbContext _context = context;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly FirebaseOptions _options = options.Value;
+    private readonly ApplePushOptions _applePushOptions = applePushOptions.Value;
     private readonly ILogger<FcmService> _logger = logger;
     private static readonly SemaphoreSlim AccessTokenGate = new(1, 1);
+    private static readonly SemaphoreSlim AppleProviderTokenGate = new(1, 1);
     private static string? _cachedAccessToken;
     private static DateTimeOffset _cachedAccessTokenExpiresAt;
+    private static string? _cachedAppleProviderToken;
+    private static DateTimeOffset _cachedAppleProviderTokenExpiresAt;
 
     public async Task<bool> SendNotificationAsync(
         string deviceToken,
         string title,
         string body,
         Dictionary<string, string>? data = null)
+    {
+        var platform = await _context.DeviceTokens.AsNoTracking()
+            .Where(item => item.Token == deviceToken)
+            .Select(item => item.Platform)
+            .FirstOrDefaultAsync();
+        return await SendForPlatformAsync(platform, deviceToken, title, body, data);
+    }
+
+    private async Task<bool> SendForPlatformAsync(
+        string? platform,
+        string deviceToken,
+        string title,
+        string body,
+        Dictionary<string, string>? data)
+    {
+        if (string.Equals(platform, "ios", StringComparison.OrdinalIgnoreCase))
+            return await SendAppleNotificationAsync(deviceToken, title, body, data);
+
+        return await SendFirebaseNotificationAsync(deviceToken, title, body, data);
+    }
+
+    private async Task<bool> SendFirebaseNotificationAsync(
+        string deviceToken,
+        string title,
+        string body,
+        Dictionary<string, string>? data)
     {
         if (!_options.Enabled)
         {
@@ -97,8 +128,133 @@ public class FcmService(
 
     public async Task<int> SendToUserAsync(Guid userId, string title, string body, Dictionary<string, string>? data = null)
     {
-        var tokens = await GetUserDeviceTokensAsync(userId);
-        return await SendToMultipleAsync(tokens, title, body, data);
+        var devices = await _context.DeviceTokens
+            .Where(item => item.UserId == userId && item.IsActive)
+            .ToListAsync();
+        var type = data?.GetValueOrDefault("type")?.ToLowerInvariant();
+        var delivered = 0;
+        foreach (var device in devices.Where(item => PreferenceAllows(item, type)))
+        {
+            if (await SendForPlatformAsync(device.Platform, device.Token, title, body, data))
+                delivered++;
+        }
+        return delivered;
+    }
+
+    private static bool PreferenceAllows(DeviceToken device, string? type) => type switch
+    {
+        "appointment_reminder" or "appointment_update" => device.AppointmentNotificationsEnabled,
+        "prescription_ready" or "prescription_update" => device.PrescriptionNotificationsEnabled,
+        "medication_reminder" => device.MedicationReminderNotificationsEnabled,
+        "news" or "announcement" => device.NewsNotificationsEnabled,
+        _ => true,
+    };
+
+    private async Task<bool> SendAppleNotificationAsync(
+        string deviceToken,
+        string title,
+        string body,
+        Dictionary<string, string>? data)
+    {
+        if (!_applePushOptions.Enabled)
+        {
+            _logger.LogWarning("Apple push notification '{Title}' was not sent because APNs is disabled", title);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(deviceToken) || !deviceToken.All(Uri.IsHexDigit))
+        {
+            _logger.LogWarning("An invalid APNs device-token format was rejected");
+            return false;
+        }
+
+        var providerToken = await GetAppleProviderTokenAsync();
+        var host = _applePushOptions.UseSandbox
+            ? "https://api.sandbox.push.apple.com"
+            : "https://api.push.apple.com";
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, $"{host}/3/device/{Uri.EscapeDataString(deviceToken)}")
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("bearer", providerToken);
+        request.Headers.TryAddWithoutValidation("apns-topic", _applePushOptions.BundleId);
+        request.Headers.TryAddWithoutValidation("apns-push-type", "alert");
+        request.Headers.TryAddWithoutValidation("apns-priority", "10");
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["aps"] = new
+            {
+                alert = new { title, body },
+                sound = "default"
+            }
+        };
+        if (data is not null)
+        {
+            foreach (var item in data.Where(item => item.Key != "aps"))
+                payload[item.Key] = item.Value;
+        }
+        request.Content = JsonContent.Create(payload);
+
+        var client = _httpClientFactory.CreateClient("ApplePushNotifications");
+        using var response = await client.SendAsync(request);
+        if (response.IsSuccessStatusCode) return true;
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogWarning("APNs rejected a push notification with status {StatusCode}",
+            (int)response.StatusCode);
+        if ((response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Gone) &&
+            (responseBody.Contains("BadDeviceToken", StringComparison.OrdinalIgnoreCase) ||
+             responseBody.Contains("Unregistered", StringComparison.OrdinalIgnoreCase)))
+        {
+            await DeactivateTokenAsync(deviceToken);
+        }
+        return false;
+    }
+
+    private async Task<string> GetAppleProviderTokenAsync()
+    {
+        if (_cachedAppleProviderToken is not null &&
+            _cachedAppleProviderTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
+            return _cachedAppleProviderToken;
+
+        await AppleProviderTokenGate.WaitAsync();
+        try
+        {
+            if (_cachedAppleProviderToken is not null &&
+                _cachedAppleProviderTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(2))
+                return _cachedAppleProviderToken;
+
+            var now = DateTimeOffset.UtcNow;
+            var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(
+                new { alg = "ES256", kid = _applePushOptions.KeyId }));
+            var claims = Base64Url(JsonSerializer.SerializeToUtf8Bytes(
+                new { iss = _applePushOptions.TeamId, iat = now.ToUnixTimeSeconds() }));
+            var unsigned = $"{header}.{claims}";
+            var privateKey = await File.ReadAllTextAsync(_applePushOptions.PrivateKeyPath);
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportFromPem(privateKey);
+            var signature = ecdsa.SignData(
+                Encoding.ASCII.GetBytes(unsigned), HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+            _cachedAppleProviderToken = $"{unsigned}.{Base64Url(signature)}";
+            _cachedAppleProviderTokenExpiresAt = now.AddMinutes(50);
+            return _cachedAppleProviderToken;
+        }
+        finally
+        {
+            AppleProviderTokenGate.Release();
+        }
+    }
+
+    private async Task DeactivateTokenAsync(string deviceToken)
+    {
+        var storedToken = await _context.DeviceTokens.FirstOrDefaultAsync(item => item.Token == deviceToken);
+        if (storedToken is null) return;
+        storedToken.IsActive = false;
+        await _context.SaveChangesAsync();
     }
 
     private async Task<string> GetGoogleAccessTokenAsync()
@@ -211,9 +367,10 @@ public class FcmService(
         return true;
     }
 
-    public async Task<bool> UnregisterDeviceTokenAsync(string token)
+    public async Task<bool> UnregisterDeviceTokenAsync(Guid userId, string token)
     {
-        var deviceToken = await _context.DeviceTokens.FirstOrDefaultAsync(dt => dt.Token == token);
+        var deviceToken = await _context.DeviceTokens
+            .FirstOrDefaultAsync(dt => dt.UserId == userId && dt.Token == token);
         if (deviceToken == null) return false;
 
         deviceToken.IsActive = false;
@@ -270,6 +427,22 @@ public class FcmService(
             device.LastUsedAt  = DateTime.UtcNow;
             await _context.SaveChangesAsync();
         }
+    }
+
+    public async Task<bool> UpdateNotificationPreferencesAsync(
+        Guid userId, string token, bool appointments, bool prescriptions,
+        bool medicationReminders, bool news)
+    {
+        var device = await _context.DeviceTokens
+            .FirstOrDefaultAsync(item => item.UserId == userId && item.Token == token && item.IsActive);
+        if (device is null) return false;
+        device.AppointmentNotificationsEnabled = appointments;
+        device.PrescriptionNotificationsEnabled = prescriptions;
+        device.MedicationReminderNotificationsEnabled = medicationReminders;
+        device.NewsNotificationsEnabled = news;
+        device.LastUsedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return true;
     }
 }
 

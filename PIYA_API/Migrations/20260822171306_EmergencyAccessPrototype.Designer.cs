@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PIYA_API.Data;
@@ -12,9 +13,11 @@ using PIYA_API.Data;
 namespace PIYA_API.Migrations
 {
     [DbContext(typeof(PharmacyApiDbContext))]
-    partial class PharmacyApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260822171306_EmergencyAccessPrototype")]
+    partial class EmergencyAccessPrototype
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -232,9 +235,6 @@ namespace PIYA_API.Migrations
                     b.Property<string>("AppVersion")
                         .HasColumnType("text");
 
-                    b.Property<bool>("AppointmentNotificationsEnabled")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -256,18 +256,9 @@ namespace PIYA_API.Migrations
                     b.Property<DateTime?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<bool>("MedicationReminderNotificationsEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("NewsNotificationsEnabled")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("Platform")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<bool>("PrescriptionNotificationsEnabled")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("Token")
                         .IsRequired()

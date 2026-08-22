@@ -186,13 +186,65 @@ public class QrAuthorizationControllerTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task PrescriptionPreview_DoesNotConsumeTokenOrMutatePrescription()
+    {
+        var pharmacistId = Guid.NewGuid();
+        var pharmacyId = Guid.NewGuid();
+        var medicationId = Guid.NewGuid();
+        var prescriptionId = Guid.NewGuid();
+        var qr = new Mock<IQRService>();
+        qr.Setup(service => service.ValidateQrTokenAsync("token"))
+            .ReturnsAsync((true, prescriptionId, "Prescription", DateTime.UtcNow.AddMinutes(5), ""));
+        var prescription = MakePrescription(prescriptionId, Guid.NewGuid(), Guid.NewGuid());
+        prescription.Patient = new User
+        {
+            Id = prescription.PatientId, Username = "patient", PasswordHash = "hash",
+            FirstName = "Demo", LastName = "Patient", Email = "patient@example.com",
+            PhoneNumber = "+994501234567"
+        };
+        prescription.Items.Add(new PrescriptionItem
+        {
+            Id = Guid.NewGuid(), PrescriptionId = prescriptionId, MedicationId = medicationId,
+            Medication = new Medication
+            {
+                Id = medicationId, BrandName = "DemoMed", GenericName = "Demo Generic",
+                Form = "Tablet", Strength = "10mg"
+            },
+            Dosage = "10mg", Frequency = "Daily", Duration = "7 days", Quantity = 2
+        });
+        var prescriptions = new Mock<IPrescriptionService>();
+        prescriptions.Setup(service => service.GetByIdAsync(prescriptionId)).ReturnsAsync(prescription);
+        var inventory = new Mock<IInventoryService>();
+        inventory.Setup(service => service.GetAvailableStockAsync(pharmacyId, medicationId)).ReturnsAsync(5);
+        var staff = new Mock<IPharmacyStaffService>();
+        staff.Setup(service => service.GetUserPharmaciesAsync(pharmacistId, true)).ReturnsAsync(
+        [
+            new PharmacyStaff { PharmacyId = pharmacyId, UserId = pharmacistId, IsActive = true }
+        ]);
+        var controller = CreateQrController(qr, prescriptions, staff, inventory);
+        SetUser(controller, pharmacistId, "Pharmacist");
+
+        var result = await controller.PreviewPrescriptionQR(new ScanQRRequest { QrToken = "token" });
+
+        var ok = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        ok.Value.Should().BeOfType<PrescriptionPreviewResponse>().Which.CanFulfill.Should().BeTrue();
+        prescriptions.Verify(service => service.FulfillPrescriptionByQrAsync(
+            It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>()),
+            Times.Never);
+        qr.Verify(service => service.MarkTokenAsUsedAsync(
+            It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+    }
+
     private static QRValidationController CreateQrController(
         Mock<IQRService> qr,
         Mock<IPrescriptionService> prescriptions,
-        Mock<IPharmacyStaffService>? staff = null) =>
+        Mock<IPharmacyStaffService>? staff = null,
+        Mock<IInventoryService>? inventory = null) =>
         new(
             qr.Object,
             prescriptions.Object,
+            inventory?.Object ?? Mock.Of<IInventoryService>(),
             staff?.Object ?? Mock.Of<IPharmacyStaffService>(),
             Options.Create(new SecurityOptions()),
             Mock.Of<ILogger<QRValidationController>>());

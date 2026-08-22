@@ -136,6 +136,7 @@ public class AuthControllerSecurityTests
             Mock.Of<ITwoFactorAuthService>(),
             Mock.Of<ISecurityHardeningService>(),
             Mock.Of<IFcmService>(),
+            Mock.Of<IGdprComplianceService>(),
             Options.Create(new SecurityOptions()),
             Mock.Of<ILogger<AuthController>>());
 

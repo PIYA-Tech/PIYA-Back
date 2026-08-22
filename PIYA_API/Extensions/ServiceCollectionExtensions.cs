@@ -1,3 +1,4 @@
+using System.Net;
 using PIYA_API.Configuration;
 using PIYA_API.Service.Class;
 using PIYA_API.Service.Interface;
@@ -62,6 +63,12 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IHmsIntegrationService, HmsIntegrationService>();
         services.AddHttpClient<IEhrIntegrationService, EhrIntegrationService>();
         services.AddHttpClient("FirebaseCloudMessaging");
+        services.AddHttpClient("ApplePushNotifications", client =>
+        {
+            client.DefaultRequestVersion = HttpVersion.Version20;
+            client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
         services.AddHttpClient("FacilityDirectory", client =>
         {
             client.Timeout = TimeSpan.FromMinutes(3);
@@ -77,6 +84,19 @@ public static class ServiceCollectionExtensions
                 "Firebase:ProjectId and Firebase:CredentialsPath are required when Firebase is enabled.")
             .Validate(options => !options.Enabled || File.Exists(options.CredentialsPath),
                 "Firebase:CredentialsPath must reference a readable service-account file when Firebase is enabled.")
+            .ValidateOnStart();
+
+        services.AddOptions<ApplePushOptions>()
+            .Bind(config.GetSection(ApplePushOptions.SectionName))
+            .Validate(options =>
+                !options.Enabled ||
+                (!string.IsNullOrWhiteSpace(options.TeamId) &&
+                 !string.IsNullOrWhiteSpace(options.KeyId) &&
+                 !string.IsNullOrWhiteSpace(options.BundleId) &&
+                 !string.IsNullOrWhiteSpace(options.PrivateKeyPath)),
+                "ApplePush:TeamId, KeyId, BundleId, and PrivateKeyPath are required when Apple push is enabled.")
+            .Validate(options => !options.Enabled || File.Exists(options.PrivateKeyPath),
+                "ApplePush:PrivateKeyPath must reference a readable APNs .p8 private key when enabled.")
             .ValidateOnStart();
 
         services.AddPiyaFileStorage(config);

@@ -47,10 +47,24 @@ public class PushNotificationController(IFcmService fcmService) : ControllerBase
     [HttpPost("unregister-device")]
     public async Task<IActionResult> UnregisterDevice([FromBody] UnregisterDeviceRequest request)
     {
-        var success = await _fcmService.UnregisterDeviceTokenAsync(request.DeviceToken);
+        var userId = CurrentUserId();
+        if (userId == null) return Unauthorized();
+        var success = await _fcmService.UnregisterDeviceTokenAsync(userId.Value, request.DeviceToken);
         return success
             ? Ok(new { message = "Device unregistered successfully" })
             : NotFound(new { message = "Device token not found" });
+    }
+
+    /// <summary>Persist notification categories for the caller's specific device.</summary>
+    [HttpPut("preferences")]
+    public async Task<IActionResult> UpdatePreferences([FromBody] NotificationPreferencesRequest request)
+    {
+        var userId = CurrentUserId();
+        if (userId == null) return Unauthorized();
+        var updated = await _fcmService.UpdateNotificationPreferencesAsync(
+            userId.Value, request.DeviceToken, request.Appointments,
+            request.Prescriptions, request.MedicationReminders, request.News);
+        return updated ? NoContent() : NotFound(new { message = "Active device token not found" });
     }
 
     /// <summary>
@@ -145,3 +159,6 @@ public record RegisterDeviceRequest(
     string? DeviceName = null);
 
 public record UnregisterDeviceRequest(string DeviceToken);
+public record NotificationPreferencesRequest(
+    string DeviceToken, bool Appointments, bool Prescriptions,
+    bool MedicationReminders, bool News);
