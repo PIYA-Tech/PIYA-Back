@@ -77,18 +77,18 @@ public static class InfrastructureExtensions
 
         services.AddOptions<EmailServiceOptions>()
             .Bind(config.GetSection(EmailServiceOptions.SectionName))
-            .Validate(
-                options =>
+            .Validate(options => !options.Enabled || !string.IsNullOrWhiteSpace(options.SmtpHost),
+                "ExternalApis:EmailService:SmtpHost is missing while email is enabled.")
+            .Validate(options => !options.Enabled || options.SmtpPort is > 0 and <= 65535,
+                "ExternalApis:EmailService:SmtpPort must be between 1 and 65535 while email is enabled.")
+            .Validate(options => !options.Enabled || IsConfiguredSecret(options.SmtpUsername),
+                "ExternalApis:EmailService:SmtpUsername is missing or still a placeholder while email is enabled.")
+            .Validate(options => !options.Enabled || IsConfiguredSecret(options.SmtpPassword),
+                "ExternalApis:EmailService:SmtpPassword is missing or still a placeholder while email is enabled.")
+            .Validate(options =>
                     !options.Enabled ||
-                    (!string.IsNullOrWhiteSpace(options.SmtpHost) &&
-                     options.SmtpPort is > 0 and <= 65535 &&
-                     IsConfiguredSecret(options.SmtpUsername) &&
-                     IsConfiguredSecret(options.SmtpPassword) &&
-                     System.Net.Mail.MailAddress.TryCreate(
-                         options.FromEmail,
-                         out _)),
-                "When ExternalApis:EmailService:Enabled is true, SmtpHost, a valid SmtpPort, " +
-                "SmtpUsername, SmtpPassword, and a valid FromEmail are required and cannot be placeholders.")
+                    System.Net.Mail.MailAddress.TryCreate(options.FromEmail, out _),
+                "ExternalApis:EmailService:FromEmail must be a valid email address while email is enabled.")
             .ValidateOnStart();
 
         services.AddOptions<SmsServiceOptions>()

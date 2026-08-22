@@ -182,11 +182,36 @@ public class HealthController(
         var checks = new Dictionary<string, string>();
         var ready = true;
 
-        // Check database connectivity
+        // Check database connectivity and verify that the deployed schema matches
+        // the application. A successful connection alone is not enough: endpoints
+        // can still fail at runtime when a migration has not been applied.
         try
         {
-            await _context.Database.CanConnectAsync();
-            checks["database"] = "ok";
+            var canConnect = await _context.Database.CanConnectAsync();
+            if (!canConnect)
+            {
+                checks["database"] = "failed";
+                ready = false;
+            }
+            else
+            {
+                checks["database"] = "ok";
+
+                var pendingMigrations = (await _context.Database.GetPendingMigrationsAsync()).ToArray();
+                if (pendingMigrations.Length == 0)
+                {
+                    checks["migrations"] = "ok";
+                }
+                else
+                {
+                    checks["migrations"] = $"pending:{pendingMigrations.Length}";
+                    ready = false;
+                    _logger.LogError(
+                        "Readiness: {MigrationCount} database migration(s) are pending: {PendingMigrations}",
+                        pendingMigrations.Length,
+                        string.Join(", ", pendingMigrations));
+                }
+            }
         }
         catch (Exception ex)
         {
