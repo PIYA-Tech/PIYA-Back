@@ -41,6 +41,7 @@ try
     Log.Information("Starting PIYA Healthcare API");
 
     var builder = WebApplication.CreateBuilder(args);
+    builder.Configuration.ApplyDeploymentEnvironmentAliases();
 
     // Use Serilog for logging
     builder.Host.UseSerilog();

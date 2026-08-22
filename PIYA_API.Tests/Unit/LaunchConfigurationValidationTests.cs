@@ -23,6 +23,30 @@ public class LaunchConfigurationValidationTests
         "CONFIGURATION_TEST_ONLY_QR_SIGNING_KEY_64_CHARACTERS_LONG_123456";
 
     [Fact]
+    public void CoolifyShortSmtpVariables_AreMappedToAspNetConfigurationKeys()
+    {
+        var configuration = new ConfigurationManager();
+        var variables = new Dictionary<string, string?>
+        {
+            ["SMTP_ENABLED"] = "true",
+            ["SMTP_HOST"] = "smtp.example.test",
+            ["SMTP_PORT"] = "587",
+            ["SMTP_USERNAME"] = "mailer@example.test",
+            ["SMTP_PASSWORD"] = "test-only-password",
+            ["SMTP_FROM_EMAIL"] = "noreply@example.test",
+            ["SMTP_ENABLE_SSL"] = "true"
+        };
+
+        configuration.ApplyDeploymentEnvironmentAliases(
+            name => variables.GetValueOrDefault(name));
+
+        configuration["ExternalApis:EmailService:Enabled"].Should().Be("true");
+        configuration["ExternalApis:EmailService:SmtpHost"].Should().Be("smtp.example.test");
+        configuration["ExternalApis:EmailService:SmtpUsername"].Should().Be("mailer@example.test");
+        configuration["ExternalApis:EmailService:SmtpPassword"].Should().Be("test-only-password");
+    }
+
+    [Fact]
     public async Task S3Provider_WithWhitespaceRequiredSettings_FailsHostStartup()
     {
         var builder = Host.CreateApplicationBuilder();

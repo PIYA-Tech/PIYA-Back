@@ -14,6 +14,41 @@ namespace PIYA_API.Extensions;
 /// </summary>
 public static class InfrastructureExtensions
 {
+    /// <summary>
+    /// Coolify can deploy either the root Compose application or the Backend
+    /// Dockerfile directly. Compose translates the short SMTP_* variables into
+    /// ASP.NET's nested keys; a direct Dockerfile deployment does not. Apply the
+    /// same aliases in-process so both deployment modes behave identically.
+    /// </summary>
+    public static IConfigurationManager ApplyDeploymentEnvironmentAliases(
+        this IConfigurationManager configuration,
+        Func<string, string?>? readEnvironmentVariable = null)
+    {
+        readEnvironmentVariable ??= Environment.GetEnvironmentVariable;
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["SMTP_PROVIDER"] = "ExternalApis:EmailService:Provider",
+            ["SMTP_HOST"] = "ExternalApis:EmailService:SmtpHost",
+            ["SMTP_PORT"] = "ExternalApis:EmailService:SmtpPort",
+            ["SMTP_USERNAME"] = "ExternalApis:EmailService:SmtpUsername",
+            ["SMTP_PASSWORD"] = "ExternalApis:EmailService:SmtpPassword",
+            ["SMTP_FROM_EMAIL"] = "ExternalApis:EmailService:FromEmail",
+            ["SMTP_FROM_NAME"] = "ExternalApis:EmailService:FromName",
+            ["SMTP_REPLY_TO_EMAIL"] = "ExternalApis:EmailService:ReplyToEmail",
+            ["SMTP_ENABLE_SSL"] = "ExternalApis:EmailService:EnableSsl",
+            ["SMTP_ENABLED"] = "ExternalApis:EmailService:Enabled"
+        };
+
+        foreach (var (environmentName, configurationKey) in aliases)
+        {
+            var value = readEnvironmentVariable(environmentName);
+            if (value is not null)
+                configuration[configurationKey] = value;
+        }
+
+        return configuration;
+    }
+
     /// <summary>Register configuration option objects and validate critical settings.</summary>
     public static IServiceCollection AddPiyaConfiguration(
         this IServiceCollection services,
