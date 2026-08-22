@@ -18,8 +18,11 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         if (string.IsNullOrWhiteSpace(password))
             throw new ArgumentException("Password is required");
 
+        var normalizedIdentifier = username.Trim();
+        var normalizedEmail = normalizedIdentifier.ToLowerInvariant();
         var user = await _dbContext.Users
-            .SingleOrDefaultAsync(x => x.Username == username || x.Email == username);
+            .SingleOrDefaultAsync(x =>
+                x.Username == normalizedIdentifier || x.Email.ToLower() == normalizedEmail);
 
         // User not found — return null (same as wrong password to avoid user enumeration)
         if (user == null)
@@ -59,12 +62,15 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         if (string.IsNullOrWhiteSpace(user.Email))
             throw new ArgumentException("Email is required");
 
+        user.Username = user.Username.Trim();
+        user.Email = user.Email.Trim().ToLowerInvariant();
+
         // Check if username already exists
         if (await _dbContext.Users.AnyAsync(x => x.Username == user.Username))
             throw new InvalidOperationException($"Username '{user.Username}' is already taken");
 
         // Check if email already exists
-        if (await _dbContext.Users.AnyAsync(x => x.Email == user.Email))
+        if (await _dbContext.Users.AnyAsync(x => x.Email.ToLower() == user.Email))
             throw new InvalidOperationException($"Email '{user.Email}' is already registered");
 
         // Hash password
@@ -112,10 +118,12 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         // Update email if changed and not already taken
         if (!string.IsNullOrWhiteSpace(user.Email) && user.Email != existingUser.Email)
         {
-            if (await _dbContext.Users.AnyAsync(x => x.Email == user.Email))
+            var normalizedEmail = user.Email.Trim().ToLowerInvariant();
+            if (await _dbContext.Users.AnyAsync(x =>
+                    x.Id != user.Id && x.Email.ToLower() == normalizedEmail))
                 throw new InvalidOperationException($"Email '{user.Email}' is already registered");
 
-            existingUser.Email = user.Email;
+            existingUser.Email = normalizedEmail;
         }
 
         // Update password if provided

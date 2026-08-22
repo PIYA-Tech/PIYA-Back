@@ -39,7 +39,13 @@ public class PasswordResetService : IPasswordResetService
 
     public async Task<PasswordResetToken> GenerateResetTokenAsync(string email, string ipAddress, string userAgent)
     {
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        // Email addresses are case-insensitive in practice. Normalize the input
+        // and compare against existing rows case-insensitively so an address
+        // typed with capitals or pasted with whitespace does not silently fall
+        // into the anti-enumeration "account not found" response.
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
         if (user == null)
         {
             // Don't reveal that user doesn't exist for security reasons

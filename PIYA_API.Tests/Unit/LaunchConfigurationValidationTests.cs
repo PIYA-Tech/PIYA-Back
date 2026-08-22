@@ -148,7 +148,7 @@ public class LaunchConfigurationValidationTests
     }
 
     [Fact]
-    public async Task PasswordReset_DefaultFrontendUrl_IsValidHttpsUrl()
+    public async Task PasswordReset_NormalizesEmailAndUsesValidDefaultFrontendUrl()
     {
         await using var context = CreateContext();
         var user = new User
@@ -185,7 +185,7 @@ public class LaunchConfigurationValidationTests
             Mock.Of<ILogger<PasswordResetService>>());
 
         await service.GenerateResetTokenAsync(
-            user.Email,
+            "  RESET-USER@EXAMPLE.TEST  ",
             "127.0.0.1",
             "test-agent");
 
