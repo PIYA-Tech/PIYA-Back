@@ -238,17 +238,8 @@ public class AuthController(
             {
                 // Issue a server-side challenge token — the client must present it when calling /login/complete-2fa.
                 var challengeToken = await _twoFactorService.IssueChallenge(user.Id);
-
-                // If the user has a trusted mobile 2FA device, send the OTP via push notification.
-                // Otherwise fall back to TOTP / SMS / Email depending on their configured method.
-                var hasTrustedDevice = await _twoFactorService.HasTrusted2FADeviceAsync(user.Id);
-                string twoFADelivery = "totp";
-                if (hasTrustedDevice)
-                {
-                    var pushSent = await _twoFactorService.SendPush2FACodeAsync(user.Id);
-                    if (pushSent)
-                        twoFADelivery = "push";
-                }
+                var (twoFADelivery, deliveryMessage) =
+                    await PrepareTwoFactorDeliveryAsync(user.Id);
 
                 await _auditService.LogSecurityEventAsync(
                     "LoginPending2FA", user.Id, ipAddress, userAgent, true,
@@ -259,10 +250,8 @@ public class AuthController(
                     requires2FA = true,
                     userId = user.Id,
                     challengeToken,
-                    twoFADelivery, // "push" | "totp" — lets the client show the right UI
-                    message = twoFADelivery == "push"
-                        ? "A verification code has been sent to your trusted device."
-                        : "Please provide your authenticator code."
+                    twoFADelivery,
+                    message = deliveryMessage
                 });
             }
 
@@ -345,9 +334,10 @@ public class AuthController(
         var userAgent = Request.Headers.UserAgent.ToString();
         try
         {
-            // Validate challenge token (consumed one-time)
+            // Validate first so a mistyped code does not destroy the challenge.
+            // The challenge is consumed only after the factor succeeds.
             if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                !await _twoFactorService.ValidateChallenge(request.UserId, request.ChallengeToken))
             {
                 return Unauthorized(new { message = "Invalid or expired challenge token. Please log in again." });
             }
@@ -360,6 +350,11 @@ public class AuthController(
                     "Login2FAFailed", request.UserId, ipAddress, userAgent, false, "Invalid 2FA code");
                 return Unauthorized(new { message = "Invalid or expired code" });
             }
+
+            // Close the replay window. If another concurrent request already
+            // consumed this challenge, do not mint a second session.
+            if (!await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                return Unauthorized(new { message = "This verification challenge was already used. Please log in again." });
 
             // Fetch user and issue tokens
             var user = await _userService.GetByIdAsync(request.UserId);
@@ -413,9 +408,9 @@ public class AuthController(
         var userAgent = Request.Headers.UserAgent.ToString();
         try
         {
-            // Validate and consume the one-time challenge token
+            // Validate first so an accidental backup-code typo can be retried.
             if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                !await _twoFactorService.ValidateChallenge(request.UserId, request.ChallengeToken))
             {
                 return Unauthorized(new { message = "Invalid or expired challenge token. Please log in again." });
             }
@@ -428,6 +423,9 @@ public class AuthController(
                     "Login2FABackupFailed", request.UserId, ipAddress, userAgent, false, "Invalid backup code");
                 return Unauthorized(new { message = "Invalid backup code" });
             }
+
+            if (!await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                return Unauthorized(new { message = "This verification challenge was already used. Please log in again." });
 
             // Fetch user and issue tokens
             var user = await _userService.GetByIdAsync(request.UserId);
@@ -656,6 +654,54 @@ public class AuthController(
         {
             _logger.LogError(ex, "Error during logout");
             return StatusCode(500, new { message = "An error occurred during logout" });
+        }
+    }
+
+    private async Task<(string Delivery, string Message)> PrepareTwoFactorDeliveryAsync(Guid userId)
+    {
+        var twoFactor = await _twoFactorService.GetTwoFactorStatusAsync(userId);
+        var method = twoFactor?.Method ?? TwoFactorMethod.TOTP;
+
+        try
+        {
+            return method switch
+            {
+                TwoFactorMethod.SMS =>
+                    await DeliveryResultAsync(
+                        "sms",
+                        () => _twoFactorService.SendSmsCodeAsync(userId),
+                        "A verification code has been sent by SMS."),
+                TwoFactorMethod.Email =>
+                    await DeliveryResultAsync(
+                        "email",
+                        () => _twoFactorService.SendEmailCodeAsync(userId),
+                        "A verification code has been sent to your email."),
+                TwoFactorMethod.PushNotification =>
+                    await DeliveryResultAsync(
+                        "push",
+                        () => _twoFactorService.SendPush2FACodeAsync(userId),
+                        "A verification code has been sent to your trusted device."),
+                _ => ("totp", "Please provide your authenticator code.")
+            };
+        }
+        catch (Exception ex)
+        {
+            // Correct credentials should still produce a challenge so the user
+            // can recover with a backup code when a delivery provider is down.
+            _logger.LogWarning(ex, "Could not deliver {Method} 2FA code for user {UserId}", method, userId);
+            return (method.ToString().ToLowerInvariant(),
+                "The verification code could not be delivered. Try again shortly or use a backup code.");
+        }
+
+        async Task<(string Delivery, string Message)> DeliveryResultAsync(
+            string delivery,
+            Func<Task<bool>> send,
+            string successMessage)
+        {
+            var sent = await send();
+            return sent
+                ? (delivery, successMessage)
+                : (delivery, "Use the latest verification code sent to you, or use a backup code.");
         }
     }
 

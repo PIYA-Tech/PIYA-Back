@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Moq;
 using PIYA_API.Configuration;
 using PIYA_API.Controllers;
+using PIYA_API.Model;
 using PIYA_API.Security;
 using PIYA_API.Service.Interface;
 using Xunit;
@@ -127,18 +128,122 @@ public class AuthControllerSecurityTests
         controller.Response.Headers.SetCookie.ToString().Should().NotContain("expires=");
     }
 
-    private static AuthController MakeController(Mock<IJwtService> jwt) =>
+    [Fact]
+    public async Task CompleteTwoFactor_InvalidCode_DoesNotConsumeLoginChallenge()
+    {
+        var userId = Guid.NewGuid();
+        var twoFactor = new Mock<ITwoFactorAuthService>();
+        twoFactor.Setup(x => x.ValidateChallenge(userId, "challenge")).ReturnsAsync(true);
+        twoFactor.Setup(x => x.VerifyCodeAsync(userId, "000000")).ReturnsAsync(false);
+        var controller = MakeController(new Mock<IJwtService>(), twoFactor: twoFactor.Object);
+        controller.ControllerContext = new ControllerContext { HttpContext = MakeHttpContext() };
+
+        var result = await controller.CompleteLogin2FA(new Complete2FARequest
+        {
+            UserId = userId,
+            ChallengeToken = "challenge",
+            Code = "000000"
+        });
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+        twoFactor.Verify(x => x.ConsumeChallenge(It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CompleteTwoFactor_ValidCode_ConsumesChallengeBeforeIssuingSession()
+    {
+        var user = MakeUser();
+        var users = new Mock<IUserService>();
+        users.Setup(x => x.GetByIdAsync(user.Id)).ReturnsAsync(user);
+        var twoFactor = new Mock<ITwoFactorAuthService>();
+        twoFactor.Setup(x => x.ValidateChallenge(user.Id, "challenge")).ReturnsAsync(true);
+        twoFactor.Setup(x => x.VerifyCodeAsync(user.Id, "123456")).ReturnsAsync(true);
+        twoFactor.Setup(x => x.ConsumeChallenge(user.Id, "challenge")).ReturnsAsync(true);
+        var jwt = new Mock<IJwtService>();
+        jwt.Setup(x => x.GenerateSecurityToken(user.Username, "iOS"))
+            .ReturnsAsync(new TokenResponse
+            {
+                AccessToken = "access",
+                RefreshToken = "refresh",
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+            });
+        var controller = MakeController(jwt, users.Object, twoFactor.Object);
+        controller.ControllerContext = new ControllerContext { HttpContext = MakeHttpContext() };
+        controller.Request.Headers[RefreshTokenTransportPolicy.ClientHeaderName] = "iOS";
+
+        var result = await controller.CompleteLogin2FA(new Complete2FARequest
+        {
+            UserId = user.Id,
+            ChallengeToken = "challenge",
+            Code = "123456"
+        });
+
+        result.Should().BeOfType<OkObjectResult>();
+        twoFactor.Verify(x => x.ConsumeChallenge(user.Id, "challenge"), Times.Once);
+        jwt.Verify(x => x.GenerateSecurityToken(user.Username, "iOS"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Login_DeliversCodeUsingConfiguredTwoFactorMethod()
+    {
+        var user = MakeUser();
+        var users = new Mock<IUserService>();
+        users.Setup(x => x.Authenticate(user.Email, "password")).ReturnsAsync(user);
+        var twoFactor = new Mock<ITwoFactorAuthService>();
+        twoFactor.Setup(x => x.IsTwoFactorEnabledAsync(user.Id)).ReturnsAsync(true);
+        twoFactor.Setup(x => x.IssueChallenge(user.Id)).ReturnsAsync("challenge");
+        twoFactor.Setup(x => x.GetTwoFactorStatusAsync(user.Id)).ReturnsAsync(new TwoFactorAuth
+        {
+            UserId = user.Id,
+            IsEnabled = true,
+            Method = TwoFactorMethod.Email
+        });
+        twoFactor.Setup(x => x.SendEmailCodeAsync(user.Id)).ReturnsAsync(true);
+        var security = new Mock<ISecurityHardeningService>();
+        security.Setup(x => x.GetFailedLoginAttemptsAsync(user.Email, It.IsAny<TimeSpan?>()))
+            .ReturnsAsync([]);
+        var controller = MakeController(
+            new Mock<IJwtService>(), users.Object, twoFactor.Object, security.Object);
+        controller.ControllerContext = new ControllerContext { HttpContext = MakeHttpContext() };
+
+        var result = await controller.Login(new LoginRequest
+        {
+            Identifier = user.Email,
+            Password = "password"
+        });
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        GetProperty(ok.Value!, "twoFADelivery").Should().Be("email");
+        twoFactor.Verify(x => x.SendEmailCodeAsync(user.Id), Times.Once);
+        twoFactor.Verify(x => x.SendPush2FACodeAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    private static AuthController MakeController(
+        Mock<IJwtService> jwt,
+        IUserService? users = null,
+        ITwoFactorAuthService? twoFactor = null,
+        ISecurityHardeningService? security = null) =>
         new(
-            Mock.Of<IUserService>(),
+            users ?? Mock.Of<IUserService>(),
             jwt.Object,
             new ConfigurationBuilder().Build(),
             Mock.Of<IAuditService>(),
-            Mock.Of<ITwoFactorAuthService>(),
-            Mock.Of<ISecurityHardeningService>(),
+            twoFactor ?? Mock.Of<ITwoFactorAuthService>(),
+            security ?? Mock.Of<ISecurityHardeningService>(),
             Mock.Of<IFcmService>(),
             Mock.Of<IGdprComplianceService>(),
             Options.Create(new SecurityOptions()),
             Mock.Of<ILogger<AuthController>>());
+
+    private static User MakeUser() => new()
+    {
+        Id = Guid.NewGuid(),
+        Username = "two-factor-user",
+        FirstName = "Two",
+        LastName = "Factor",
+        Email = "two-factor@example.test",
+        PhoneNumber = "+994501234567"
+    };
 
     private static void SetAuthenticatedRequest(
         ControllerBase controller,

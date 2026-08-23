@@ -106,7 +106,7 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
         {
             // Unauthenticated caller (login 2FA flow): must present a valid challenge token
             if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                !await _twoFactorService.ValidateChallenge(request.UserId, request.ChallengeToken))
             {
                 return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
             }
@@ -125,6 +125,12 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
             isValid,
             isValid ? null : "Invalid 2FA code"
         );
+
+        if (isValid && !isAuthenticated &&
+            !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken!))
+        {
+            return Unauthorized(new { Error = "This verification challenge was already used. Please log in again." });
+        }
 
         if (isValid)
             return Ok(new { Message = "Code verified successfully" });
@@ -148,7 +154,7 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
                 return Forbid();
         }
         else if (string.IsNullOrWhiteSpace(request.ChallengeToken) ||
-                 !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken))
+                 !await _twoFactorService.ValidateChallenge(request.UserId, request.ChallengeToken))
         {
             return Unauthorized(new { Error = "Invalid or expired challenge token. Please log in again." });
         }
@@ -166,6 +172,12 @@ public class TwoFactorAuthController(ITwoFactorAuthService twoFactorService, IAu
             isValid,
             isValid ? null : "Invalid backup code"
         );
+
+        if (isValid && !isAuthenticated &&
+            !await _twoFactorService.ConsumeChallenge(request.UserId, request.ChallengeToken!))
+        {
+            return Unauthorized(new { Error = "This verification challenge was already used. Please log in again." });
+        }
 
         if (isValid)
             return Ok(new { Message = "Backup code verified successfully" });

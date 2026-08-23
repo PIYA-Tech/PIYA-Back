@@ -92,5 +92,14 @@ volumes. S3-compatible document storage is configured with `Storage__S3__*`
 environment variables. Root-level backup scripts capture the database, local
 uploads, and Data Protection keys into encrypted, checksummed artifacts.
 
+For a Coolify deployment built directly from `BackEnd/Dockerfile`, add
+persistent storage with container destination `/app/keys` (for example, a
+named volume `piya_api_keys`) before enabling 2FA. Keep that volume across every
+redeploy and rollback. `DataProtection__KeyPath=/app/keys` chooses the directory;
+the environment variable does not make the directory persistent by itself.
+If the key volume is lost, existing encrypted authenticator secrets cannot be
+recovered: the user must sign in with a saved backup code or have 2FA disabled
+through an audited operator recovery, then enroll a new authenticator secret.
+
 Technical controls in this repository do not constitute regulatory
 certification.
