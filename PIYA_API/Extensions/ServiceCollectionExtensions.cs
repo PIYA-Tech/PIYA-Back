@@ -93,8 +93,9 @@ public static class ServiceCollectionExtensions
                 (!string.IsNullOrWhiteSpace(options.TeamId) &&
                  !string.IsNullOrWhiteSpace(options.KeyId) &&
                  !string.IsNullOrWhiteSpace(options.BundleId) &&
+                 !string.IsNullOrWhiteSpace(options.CareBundleId) &&
                  !string.IsNullOrWhiteSpace(options.PrivateKeyPath)),
-                "ApplePush:TeamId, KeyId, BundleId, and PrivateKeyPath are required when Apple push is enabled.")
+                "ApplePush:TeamId, KeyId, BundleId, CareBundleId, and PrivateKeyPath are required when Apple push is enabled.")
             .Validate(options => !options.Enabled || File.Exists(options.PrivateKeyPath),
                 "ApplePush:PrivateKeyPath must reference a readable APNs .p8 private key when enabled.")
             .ValidateOnStart();

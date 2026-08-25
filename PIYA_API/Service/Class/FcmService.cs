@@ -55,8 +55,13 @@ public class FcmService(
         string body,
         Dictionary<string, string>? data)
     {
-        if (string.Equals(platform, "ios", StringComparison.OrdinalIgnoreCase))
-            return await SendAppleNotificationAsync(deviceToken, title, body, data);
+        if (IsApplePlatform(platform))
+            return await SendAppleNotificationAsync(
+                deviceToken,
+                title,
+                body,
+                data,
+                AppleTopicFor(platform));
 
         return await SendFirebaseNotificationAsync(deviceToken, title, body, data);
     }
@@ -154,7 +159,8 @@ public class FcmService(
         string deviceToken,
         string title,
         string body,
-        Dictionary<string, string>? data)
+        Dictionary<string, string>? data,
+        string topic)
     {
         if (!_applePushOptions.Enabled)
         {
@@ -179,7 +185,7 @@ public class FcmService(
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("bearer", providerToken);
-        request.Headers.TryAddWithoutValidation("apns-topic", _applePushOptions.BundleId);
+        request.Headers.TryAddWithoutValidation("apns-topic", topic);
         request.Headers.TryAddWithoutValidation("apns-push-type", "alert");
         request.Headers.TryAddWithoutValidation("apns-priority", "10");
 
@@ -213,6 +219,15 @@ public class FcmService(
         }
         return false;
     }
+
+    private static bool IsApplePlatform(string? platform) =>
+        string.Equals(platform, "ios", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(platform, "ios-care", StringComparison.OrdinalIgnoreCase);
+
+    private string AppleTopicFor(string? platform) =>
+        string.Equals(platform, "ios-care", StringComparison.OrdinalIgnoreCase)
+            ? _applePushOptions.CareBundleId
+            : _applePushOptions.BundleId;
 
     private async Task<string> GetAppleProviderTokenAsync()
     {

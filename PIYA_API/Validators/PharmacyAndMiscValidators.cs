@@ -115,7 +115,7 @@ public class RegisterDeviceRequestValidator : AbstractValidator<RegisterDeviceRe
 {
     private static readonly HashSet<string> ValidPlatforms = new(StringComparer.OrdinalIgnoreCase)
     {
-        "ios", "android", "web"
+        "ios", "ios-care", "android", "web"
     };
 
     public RegisterDeviceRequestValidator()
@@ -126,7 +126,7 @@ public class RegisterDeviceRequestValidator : AbstractValidator<RegisterDeviceRe
 
         RuleFor(x => x.Platform)
             .NotEmpty().WithMessage("Platform is required.")
-            .Must(p => ValidPlatforms.Contains(p)).WithMessage("Platform must be 'ios', 'android', or 'web'.");
+            .Must(p => ValidPlatforms.Contains(p)).WithMessage("Platform must be 'ios', 'ios-care', 'android', or 'web'.");
     }
 }
 

@@ -70,6 +70,7 @@ public sealed class ApplePushOptions
     public string TeamId { get; set; } = string.Empty;
     public string KeyId { get; set; } = string.Empty;
     public string BundleId { get; set; } = "com.piya.life";
+    public string CareBundleId { get; set; } = "com.piya.care";
     public string PrivateKeyPath { get; set; } = string.Empty;
     public bool UseSandbox { get; set; }
 }

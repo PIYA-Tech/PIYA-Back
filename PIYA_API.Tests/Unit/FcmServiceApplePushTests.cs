@@ -16,8 +16,12 @@ namespace PIYA_API.Tests.Unit;
 
 public class FcmServiceApplePushTests
 {
-    [Fact]
-    public async Task NativeIosToken_IsDeliveredThroughApnsWithRootRoutingData()
+    [Theory]
+    [InlineData("ios", "com.piya.life")]
+    [InlineData("ios-care", "com.piya.care")]
+    public async Task NativeIosToken_UsesTheRegisteredAppsApnsTopic(
+        string platform,
+        string expectedTopic)
     {
         var keyPath = Path.GetTempFileName();
         try
@@ -40,7 +44,7 @@ public class FcmServiceApplePushTests
             db.DeviceTokens.Add(new DeviceToken
             {
                 Id = Guid.NewGuid(), UserId = user.Id, User = user,
-                Token = deviceToken, Platform = "ios", IsActive = true,
+                Token = deviceToken, Platform = platform, IsActive = true,
                 CreatedAt = DateTime.UtcNow
             });
             await db.SaveChangesAsync();
@@ -62,7 +66,8 @@ public class FcmServiceApplePushTests
                 Options.Create(new ApplePushOptions
                 {
                     Enabled = true, TeamId = "TEAM123456", KeyId = "KEY1234567",
-                    BundleId = "com.piya.life", PrivateKeyPath = keyPath, UseSandbox = true
+                    BundleId = "com.piya.life", CareBundleId = "com.piya.care",
+                    PrivateKeyPath = keyPath, UseSandbox = true
                 }),
                 Mock.Of<ILogger<FcmService>>());
 
@@ -74,7 +79,7 @@ public class FcmServiceApplePushTests
             capturedRequest.Should().NotBeNull();
             capturedRequest!.RequestUri!.Host.Should().Be("api.sandbox.push.apple.com");
             capturedRequest.Version.Should().Be(HttpVersion.Version20);
-            capturedRequest.Headers.GetValues("apns-topic").Should().ContainSingle("com.piya.life");
+            capturedRequest.Headers.GetValues("apns-topic").Should().ContainSingle(expectedTopic);
             capturedRequest.Headers.Authorization!.Scheme.Should().Be("bearer");
             using var json = JsonDocument.Parse(capturedBody!);
             json.RootElement.GetProperty("type").GetString().Should().Be("emergencyAccess");
