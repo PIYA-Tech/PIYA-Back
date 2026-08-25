@@ -65,6 +65,7 @@ namespace PIYA_API.Data
         public DbSet<SearchHistory> SearchHistories { get; set; }
         public DbSet<AppointmentReminder> AppointmentReminders { get; set; }
         public DbSet<PrescriptionRefillReminder> PrescriptionRefillReminders { get; set; }
+        public DbSet<PatientRefillRequest> PatientRefillRequests { get; set; }
 
         // Referrals and Medical Tests
         public DbSet<Referral> Referrals { get; set; }
@@ -522,6 +523,55 @@ namespace PIYA_API.Data
             
             modelBuilder.Entity<PrescriptionRefillReminder>()
                 .HasIndex(prr => prr.IsSent);
+
+            // Patient refill requests are tied to one active prescription item and
+            // are visible only to that patient or assigned pharmacy staff.
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasOne(item => item.Patient)
+                .WithMany()
+                .HasForeignKey(item => item.PatientId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasOne(item => item.Prescription)
+                .WithMany()
+                .HasForeignKey(item => item.PrescriptionId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasOne(item => item.PrescriptionItem)
+                .WithMany()
+                .HasForeignKey(item => item.PrescriptionItemId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasOne(item => item.Pharmacy)
+                .WithMany()
+                .HasForeignKey(item => item.PharmacyId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasOne(item => item.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(item => item.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasIndex(item => new { item.PatientId, item.CreatedAt });
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasIndex(item => new { item.PharmacyId, item.Status });
+
+            // A patient cannot have two simultaneously actionable requests for
+            // the same prescribed item at the same pharmacy.
+            modelBuilder.Entity<PatientRefillRequest>()
+                .HasIndex(item => new { item.PrescriptionItemId, item.PharmacyId })
+                .IsUnique()
+                .HasFilter("\"Status\" IN (1, 2, 3)");
+
+            modelBuilder.Entity<PatientRefillRequest>()
+                .Property(item => item.Note)
+                .HasMaxLength(1000);
 
             // ── Referral ─────────────────────────────────────────────────────────────
 
