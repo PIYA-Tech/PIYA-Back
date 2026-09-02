@@ -33,6 +33,6 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -fsS http://localhost:8080/api/health/ready || exit 1
+  CMD curl --fail-with-body --silent --show-error http://localhost:8080/api/health/ready || exit 1
 
 ENTRYPOINT ["dotnet", "PIYA_API.dll"]

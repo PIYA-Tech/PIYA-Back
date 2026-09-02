@@ -94,7 +94,10 @@ try
     if (!isOpenApiGeneration)
     {
         var migrateOnly = app.Configuration.GetValue<bool>("Database:MigrateOnly");
-        var autoMigrate = app.Configuration.GetValue<bool>("Database:AutoMigrate");
+        // Direct Docker/Coolify deployments do not include the ignored local
+        // appsettings files. Default to applying migrations unless an operator
+        // explicitly opts out because a separate migration job owns the schema.
+        var autoMigrate = app.Configuration.GetValue<bool?>("Database:AutoMigrate") ?? true;
         if (migrateOnly || autoMigrate)
         {
             using var migrationScope = app.Services.CreateScope();
