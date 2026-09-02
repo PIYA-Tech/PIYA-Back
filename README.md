@@ -58,15 +58,15 @@ dotnet list PIYA_API.Tests/PIYA_API.Tests.csproj package --vulnerable --include-
 
 ## Database migrations
 
-When the setting is omitted, a direct Docker or Coolify deployment defaults to
-`Database__AutoMigrate=true` and applies pending migrations before the HTTP
-server begins accepting traffic. The readiness probe still verifies that no
-migration is pending, so a failed migration cannot be published as a healthy
-release.
+The Docker entrypoint runs a migration-only process before launching the HTTP
+server. A direct Docker or Coolify deployment therefore applies pending
+migrations before accepting traffic, independently of platform configuration
+precedence. The readiness probe still verifies that no migration is pending,
+so a failed migration cannot be published as a healthy release.
 
 For a deployment that has a separate migration job, set
-`Database__AutoMigrate=false` on the API container and run the same image once
-with `Database__MigrateOnly=true` before rolling out the API. Do not set
+`PIYA_SKIP_CONTAINER_MIGRATION=true` on the API container and run the same image
+once with `Database__MigrateOnly=true` before rolling out the API. Do not set
 `Database__MigrateOnly=true` on the long-running API service because it exits
 after migration by design.
 

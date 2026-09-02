@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 RUN mkdir -p /app/logs /app/uploads /app/keys && chown -R piya:piya /app
 
 COPY --from=build /app/publish .
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 755 /app/docker-entrypoint.sh && chown piya:piya /app/docker-entrypoint.sh
 
 USER piya
 
@@ -40,4 +42,4 @@ ENV ASPNETCORE_URLS=http://+:8080 \
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl --fail-with-body --silent --show-error http://localhost:8080/api/health/ready || exit 1
 
-ENTRYPOINT ["dotnet", "PIYA_API.dll"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
