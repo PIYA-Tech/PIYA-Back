@@ -30,7 +30,12 @@ USER piya
 
 EXPOSE 8080
 
-ENV ASPNETCORE_URLS=http://+:8080
+# A direct container deployment owns its schema migration by default. Runtime
+# environment variables can still override these defaults for installations
+# that use a separate migration job.
+ENV ASPNETCORE_URLS=http://+:8080 \
+    Database__AutoMigrate=true \
+    Database__MigrateOnly=false
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD curl --fail-with-body --silent --show-error http://localhost:8080/api/health/ready || exit 1

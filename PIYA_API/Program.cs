@@ -98,10 +98,19 @@ try
         // appsettings files. Default to applying migrations unless an operator
         // explicitly opts out because a separate migration job owns the schema.
         var autoMigrate = app.Configuration.GetValue<bool?>("Database:AutoMigrate") ?? true;
+        Log.Information(
+            "Database startup mode: AutoMigrate={AutoMigrate}, MigrateOnly={MigrateOnly}",
+            autoMigrate,
+            migrateOnly);
         if (migrateOnly || autoMigrate)
         {
             using var migrationScope = app.Services.CreateScope();
             var db = migrationScope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+            var pendingMigrations = (await db.Database.GetPendingMigrationsAsync()).ToArray();
+            Log.Information(
+                "Applying {MigrationCount} pending database migration(s): {PendingMigrations}",
+                pendingMigrations.Length,
+                pendingMigrations.Length == 0 ? "none" : string.Join(", ", pendingMigrations));
             await db.Database.MigrateAsync();
         }
 
