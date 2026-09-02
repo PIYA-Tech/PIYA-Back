@@ -42,7 +42,12 @@ public sealed class ReferralAvailableDoctorsDto
 /// <summary>Slim projection of a doctor user for referral doctor-picker UI.</summary>
 public sealed class AvailableDoctorDto
 {
+    /// <summary>Legacy alias for DoctorUserId; accepted by assign-doctor.</summary>
     public Guid Id { get; init; }
+    /// <summary>User id used by referral and appointment DoctorId fields.</summary>
+    public Guid DoctorUserId { get; init; }
+    /// <summary>DoctorProfile primary key; not valid as a referral DoctorId.</summary>
+    public Guid ProfileId { get; init; }
     public string FirstName { get; init; } = string.Empty;
     public string LastName { get; init; } = string.Empty;
     public string FullName => $"{FirstName} {LastName}".Trim();

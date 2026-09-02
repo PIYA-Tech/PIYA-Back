@@ -87,6 +87,7 @@ public sealed class PatientMedicationsController(
             UpdatedAt = now
         };
         _db.PatientRefillRequests.Add(refill);
+        AddStatusEvent(refill.Id, PatientRefillRequestStatus.Pending, now);
 
         try
         {
@@ -150,6 +151,7 @@ public sealed class PatientMedicationsController(
 
         request.Status = PatientRefillRequestStatus.Cancelled;
         request.UpdatedAt = DateTime.UtcNow;
+        AddStatusEvent(request.Id, PatientRefillRequestStatus.Cancelled, request.UpdatedAt);
         await _db.SaveChangesAsync();
         await _auditService.LogEntityActionAsync(
             "CancelPatientRefillRequest", nameof(PatientRefillRequest), request.Id.ToString(),
@@ -198,6 +200,10 @@ public sealed class PatientMedicationsController(
         request.ReviewedByUserId = CurrentUserId;
         request.ReviewedAt = DateTime.UtcNow;
         request.UpdatedAt = DateTime.UtcNow;
+        AddStatusEvent(
+            request.Id, update.Status, request.UpdatedAt,
+            string.IsNullOrWhiteSpace(update.Note) ? null : update.Note.Trim(),
+            update.EstimatedReadyAt);
         await _db.SaveChangesAsync();
 
         await _auditService.LogEntityActionAsync(
@@ -227,6 +233,28 @@ public sealed class PatientMedicationsController(
             (PatientRefillRequestStatus.Ready, PatientRefillRequestStatus.Collected) => true,
             _ => false
         };
+
+    private void AddStatusEvent(
+        Guid refillRequestId,
+        PatientRefillRequestStatus status,
+        DateTime occurredAt,
+        string? note = null,
+        DateTime? estimatedReadyAt = null)
+    {
+        // The patient-health model is integrated by the central DbContext migration.
+        // Keeping this guard makes older test/upgrade contexts forward compatible.
+        if (_db.Model.FindEntityType(typeof(PatientRefillStatusEvent)) is null) return;
+        _db.Set<PatientRefillStatusEvent>().Add(new PatientRefillStatusEvent
+        {
+            Id = Guid.NewGuid(),
+            RefillRequestId = refillRequestId,
+            Status = status,
+            ActorUserId = CurrentUserId,
+            Note = note,
+            EstimatedReadyAt = estimatedReadyAt,
+            OccurredAt = occurredAt
+        });
+    }
 
     private async Task NotifyPharmacyStaff(PatientRefillRequest request)
     {

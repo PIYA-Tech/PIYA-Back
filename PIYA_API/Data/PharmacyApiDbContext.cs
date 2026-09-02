@@ -704,6 +704,12 @@ namespace PIYA_API.Data
             modelBuilder.Entity<PharmacyCompany>()
                 .HasIndex(pc => pc.OwnerId);
 
+            // Patient-app prototype domains. Kept in focused configuration extensions so
+            // this central context remains readable and every new entity participates in
+            // the UTC conversion pass below.
+            modelBuilder.ConfigurePatientHealthDomain();
+            modelBuilder.ConfigurePatientExperienceModels();
+
             // ── UTC DateTime converters ───────────────────────────────────────────────
             // Applied last so they don't interfere with property-level configuration above.
             // All DateTime/DateTime? columns become `timestamptz` in PostgreSQL and are always

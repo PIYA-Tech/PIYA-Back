@@ -507,13 +507,19 @@ public class AuthController(
 
             return Ok(new
             {
+                id        = user.Id,
                 userId    = user.Id,
                 username  = user.Username,
                 email     = user.Email,
                 firstName = user.FirstName,
+                middleName = user.MiddleName,
                 lastName  = user.LastName,
+                phoneNumber = user.PhoneNumber,
+                dateOfBirth = user.DateOfBirth,
                 role      = user.Role.ToString(),
+                isActive  = user.IsActive,
                 isEmailVerified = user.IsEmailVerified,
+                isPhoneVerified = user.IsPhoneVerified,
             });
         }
         catch (Exception ex)

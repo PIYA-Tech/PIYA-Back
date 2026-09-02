@@ -28,5 +28,5 @@ public interface IPdfExportService
     /// <summary>
     /// Generate referral letter PDF
     /// </summary>
-    Task<byte[]> GenerateReferralLetterPdfAsync(Guid referralId);
+    Task<byte[]> GenerateReferralLetterPdfAsync(Guid referralId, bool includeClinicalNotes = true);
 }

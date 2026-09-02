@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 
@@ -14,27 +15,16 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     private readonly ILogger<DoctorController> _logger = logger;
 
     /// <summary>
-    /// Strips sensitive license fields from a <see cref="DoctorProfile"/> before returning it
-    /// to unauthenticated / public callers.
-    /// </summary>
-    private static DoctorProfile StripSensitiveFields(DoctorProfile doctor)
-    {
-        doctor.LicenseNumber = string.Empty;
-        doctor.LicenseAuthority = string.Empty;
-        return doctor;
-    }
-
-    /// <summary>
     /// Search doctors by specialization
     /// </summary>
     [HttpGet("search/specialization/{specialization}")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<DoctorProfile>>> SearchBySpecialization(MedicalSpecialization specialization)
+    public async Task<ActionResult<List<PublicDoctorProfileResponseDto>>> SearchBySpecialization(MedicalSpecialization specialization)
     {
         try
         {
             var doctors = await _doctorProfileService.SearchBySpecializationAsync(specialization);
-            return Ok(doctors.Select(StripSensitiveFields).ToList());
+            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -48,12 +38,12 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     /// </summary>
     [HttpGet("available")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<DoctorProfile>>> GetAvailableDoctors([FromQuery] MedicalSpecialization? specialization = null)
+    public async Task<ActionResult<List<PublicDoctorProfileResponseDto>>> GetAvailableDoctors([FromQuery] MedicalSpecialization? specialization = null)
     {
         try
         {
             var doctors = await _doctorProfileService.GetAvailableDoctorsAsync(specialization);
-            return Ok(doctors.Select(StripSensitiveFields).ToList());
+            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -63,11 +53,12 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     }
 
     /// <summary>
-    /// Get doctor profile by ID (public view)
+    /// Get doctor profile by DoctorProfile ID (public view). For appointment
+    /// DoctorId values use GET /api/doctor/by-user/{doctorUserId}.
     /// </summary>
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     [AllowAnonymous]
-    public async Task<ActionResult<DoctorProfile>> GetById(Guid id)
+    public async Task<ActionResult<PublicDoctorProfileResponseDto>> GetById(Guid id)
     {
         try
         {
@@ -77,7 +68,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
                 return NotFound(new { error = "Doctor profile not found" });
             }
 
-            return Ok(StripSensitiveFields(doctor));
+            return Ok(PublicDoctorProfileResponseDto.FromEntity(doctor));
         }
         catch (Exception ex)
         {
@@ -87,16 +78,39 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     }
 
     /// <summary>
+    /// Get a public doctor profile by the doctor User id used in appointment,
+    /// referral and prescription DoctorId fields.
+    /// </summary>
+    [HttpGet("by-user/{doctorUserId:guid}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<PublicDoctorProfileResponseDto>> GetByUserId(Guid doctorUserId)
+    {
+        try
+        {
+            var doctor = await _doctorProfileService.GetByUserIdAsync(doctorUserId);
+            if (doctor == null)
+                return NotFound(new { error = "Doctor profile not found" });
+
+            return Ok(PublicDoctorProfileResponseDto.FromEntity(doctor));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving doctor profile for user {DoctorUserId}", doctorUserId);
+            return StatusCode(500, new { error = "Failed to retrieve doctor profile" });
+        }
+    }
+
+    /// <summary>
     /// Get doctors by hospital
     /// </summary>
     [HttpGet("hospital/{hospitalId}")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<DoctorProfile>>> GetByHospital(Guid hospitalId)
+    public async Task<ActionResult<List<PublicDoctorProfileResponseDto>>> GetByHospital(Guid hospitalId)
     {
         try
         {
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(hospitalId);
-            return Ok(doctors.Select(StripSensitiveFields).ToList());
+            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -106,9 +120,9 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     }
 
     /// <summary>
-    /// Check doctor availability at specific date/time
+    /// Check doctor availability at a specific date/time by DoctorProfile ID.
     /// </summary>
-    [HttpGet("{id}/availability")]
+    [HttpGet("{id:guid}/availability")]
     [AllowAnonymous]
     public async Task<ActionResult<object>> CheckAvailability(Guid id, [FromQuery] DateTime dateTime)
     {
@@ -123,7 +137,9 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
             var isAvailable = await _doctorProfileService.IsAvailableAtAsync(doctor.UserId, dateTime);
             return Ok(new 
             { 
-                doctorId = id, 
+                doctorId = doctor.UserId,
+                doctorUserId = doctor.UserId,
+                profileId = doctor.Id,
                 dateTime, 
                 isAvailable,
                 availabilityStatus = doctor.CurrentStatus
@@ -137,9 +153,9 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
     }
 
     /// <summary>
-    /// Get doctor's working hours
+    /// Get a doctor's working hours by DoctorProfile ID.
     /// </summary>
-    [HttpGet("{id}/working-hours")]
+    [HttpGet("{id:guid}/working-hours")]
     [AllowAnonymous]
     public async Task<ActionResult<List<WorkingHoursSlot>>> GetWorkingHours(Guid id)
     {

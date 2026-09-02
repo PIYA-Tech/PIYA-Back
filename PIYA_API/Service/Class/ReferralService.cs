@@ -292,6 +292,8 @@ public class ReferralService(
             .Select(dp => new AvailableDoctorDto
             {
                 Id             = dp.UserId,
+                DoctorUserId   = dp.UserId,
+                ProfileId      = dp.Id,
                 FirstName      = dp.User.FirstName,
                 LastName       = dp.User.LastName,
                 Specialization = dp.Specialization.ToString()

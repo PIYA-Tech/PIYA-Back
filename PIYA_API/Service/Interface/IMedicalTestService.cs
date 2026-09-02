@@ -24,12 +24,20 @@ public interface IMedicalTestService
     /// <summary>
     /// Update a test's status and optionally record findings
     /// </summary>
-    Task<MedicalTest> UpdateStatusAsync(Guid id, MedicalTestStatus status, string? findings = null);
+    Task<MedicalTest> UpdateStatusAsync(
+        Guid id,
+        MedicalTestStatus status,
+        string? findings = null,
+        Guid? performedByDoctorId = null);
 
     /// <summary>
     /// Attach an uploaded MedicalDocument to a test result
     /// </summary>
-    Task<MedicalTest> AttachDocumentAsync(Guid testId, Guid documentId);
+    Task<MedicalTest> AttachDocumentAsync(
+        Guid testId,
+        Guid documentId,
+        Guid attachingUserId,
+        bool isAdministrator = false);
 
     /// <summary>
     /// All tests for a patient (across all referrals and standalone/emergency tests).

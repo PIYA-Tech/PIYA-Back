@@ -281,12 +281,12 @@ public class HospitalController(
     /// </summary>
     [HttpGet("{id}/doctors")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<DoctorProfile>>> GetDoctors(Guid id)
+    public async Task<ActionResult<List<PublicDoctorProfileResponseDto>>> GetDoctors(Guid id)
     {
         try
         {
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(id);
-            return Ok(doctors.Select(DoctorProfileResponseDto.FromEntity));
+            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity));
         }
         catch (Exception ex)
         {

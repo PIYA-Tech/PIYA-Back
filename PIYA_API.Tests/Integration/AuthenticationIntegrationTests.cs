@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Xunit;
@@ -152,5 +153,72 @@ public class AuthenticationIntegrationTests : IClassFixture<PiyaWebApplicationFa
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
         content.Should().Contain("accessToken");
+    }
+
+    [Fact]
+    public async Task RegisterAndLogin_AccessTokensRehydrateSameFullProfileFromAuthMe()
+    {
+        await _factory.EnsureMigratedAsync();
+        var identity = Guid.NewGuid();
+        var email = $"auth-me-{identity:N}@example.test";
+        var username = $"authme{identity:N}"[..24];
+        var phoneSuffix = Math.Abs(identity.GetHashCode() % 10_000_000).ToString("D7");
+        var phoneNumber = $"+99450{phoneSuffix}";
+        const string password = "Test@Password123";
+        var registerRequest = new
+        {
+            username,
+            email,
+            password,
+            firstName = "Ayla",
+            lastName = "Aliyeva",
+            phoneNumber,
+            dateOfBirth = "1991-06-15",
+            role = "Patient"
+        };
+
+        var registerResponse = await _client.PostAsJsonAsync("/api/auth/register", registerRequest);
+        registerResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var registerDocument = JsonDocument.Parse(await registerResponse.Content.ReadAsStringAsync());
+        var registeredUserId = registerDocument.RootElement.GetProperty("userId").GetGuid();
+        var registrationToken = registerDocument.RootElement.GetProperty("accessToken").GetString();
+        registrationToken.Should().NotBeNullOrWhiteSpace();
+
+        var loginResponse = await _client.PostAsJsonAsync(
+            "/api/auth/login",
+            new { identifier = email, password });
+        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var loginDocument = JsonDocument.Parse(await loginResponse.Content.ReadAsStringAsync());
+        loginDocument.RootElement.GetProperty("userId").GetGuid().Should().Be(registeredUserId);
+        var loginToken = loginDocument.RootElement.GetProperty("accessToken").GetString();
+        loginToken.Should().NotBeNullOrWhiteSpace();
+
+        foreach (var accessToken in new[] { registrationToken!, loginToken! })
+        {
+            var me = await GetAuthMeAsync(accessToken);
+            me.GetProperty("id").GetGuid().Should().Be(registeredUserId);
+            me.GetProperty("userId").GetGuid().Should().Be(registeredUserId);
+            me.GetProperty("username").GetString().Should().Be(username);
+            me.GetProperty("email").GetString().Should().Be(email);
+            me.GetProperty("firstName").GetString().Should().Be("Ayla");
+            me.GetProperty("middleName").ValueKind.Should().Be(JsonValueKind.Null);
+            me.GetProperty("lastName").GetString().Should().Be("Aliyeva");
+            me.GetProperty("phoneNumber").GetString().Should().Be(phoneNumber);
+            me.GetProperty("dateOfBirth").GetDateTime().Date.Should().Be(new DateTime(1991, 6, 15));
+            me.GetProperty("role").GetString().Should().Be("Patient");
+            me.GetProperty("isActive").GetBoolean().Should().BeTrue();
+            me.GetProperty("isEmailVerified").GetBoolean().Should().BeFalse();
+            me.GetProperty("isPhoneVerified").GetBoolean().Should().BeFalse();
+        }
+    }
+
+    private async Task<JsonElement> GetAuthMeAsync(string accessToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using var response = await _client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return document.RootElement.Clone();
     }
 }

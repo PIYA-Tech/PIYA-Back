@@ -24,6 +24,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPharmacyCompanyService, PharmacyCompanyService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<ITwoFactorAuthService, TwoFactorAuthService>();
+        // Safe default: verification remains explicitly NotConnected until a
+        // contracted provider implementation replaces this registration.
+        services.AddSingleton<IVerificationProviderGateway, NotConnectedVerificationProviderGateway>();
 
         // Healthcare
         services.AddScoped<IAppointmentService, AppointmentService>();
@@ -36,6 +39,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICalendarService, CalendarService>();
         services.AddScoped<IAzerbaijanPharmaceuticalRegistryService, AzerbaijanPharmaceuticalRegistryService>();
         services.AddScoped<IDoctorProfileService, DoctorProfileService>();
+        services.AddScoped<ICareLoopService, CareLoopService>();
+        services.AddScoped<ICareCircleAccessService, CareCircleAccessService>();
         services.AddScoped<IPharmacistLicenseService, PharmacistLicenseService>();
         services.AddScoped<IHospitalService, HospitalService>();
         services.AddScoped<IFacilityDirectoryService, FacilityDirectoryService>();
@@ -44,6 +49,11 @@ public static class ServiceCollectionExtensions
         // Referral & Medical Tests
         services.AddScoped<IReferralService, ReferralService>();
         services.AddScoped<IMedicalTestService, MedicalTestService>();
+        services.AddScoped<IPatientMedicationService, PatientMedicationService>();
+        services.AddScoped<IPatientNotificationInboxService, PatientNotificationInboxService>();
+        services.AddScoped<IMedicationReminderProcessor, MedicationReminderProcessor>();
+        services.AddScoped<IPatientPickupService, PatientPickupService>();
+        services.AddScoped<IStructuredLabResultService, StructuredLabResultService>();
 
         // Email & Auth enhancements
         services.AddScoped<IEmailService, EmailService>();

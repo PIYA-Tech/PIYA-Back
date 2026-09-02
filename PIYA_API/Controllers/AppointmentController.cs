@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -20,7 +21,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// </summary>
     [HttpPost("book")]
     [Authorize(Roles = "Patient,Doctor,Admin,SuperAdmin")]
-    public async Task<ActionResult<Appointment>> BookAppointment([FromBody] AppointmentRequest request)
+    public async Task<ActionResult<AppointmentResponseDto>> BookAppointment([FromBody] AppointmentRequest request)
     {
         try
         {
@@ -51,9 +52,27 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
                 }
             }
 
+            Guid patientId;
+            if (userRole == "Patient")
+            {
+                patientId = userId;
+            }
+            else if (request.PatientId is { } requestedPatientId && requestedPatientId != Guid.Empty)
+            {
+                patientId = requestedPatientId;
+            }
+            else if (userRole == "Doctor")
+            {
+                return BadRequest(new { error = "Doctors must specify the patient they are booking for." });
+            }
+            else
+            {
+                patientId = userId;
+            }
+
             var appointment = new Appointment
             {
-                PatientId = userId,
+                PatientId = patientId,
                 DoctorId = request.DoctorId,
                 HospitalId = request.HospitalId,
                 ScheduledAt = request.ScheduledAt,
@@ -63,7 +82,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             };
 
             var created = await _appointmentService.BookAppointmentAsync(appointment);
-            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, AppointmentResponseDto.FromEntity(created));
         }
         catch (ArgumentException ex)
         {
@@ -73,6 +92,10 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
         {
             // Conflict with existing appointment
             return Conflict(new { error = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -85,7 +108,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// Get appointment by ID
     /// </summary>
     [HttpGet("{id}")]
-    public async Task<ActionResult<Appointment>> GetById(Guid id, CancellationToken ct)
+    public async Task<ActionResult<AppointmentResponseDto>> GetById(Guid id, CancellationToken ct)
     {
         try
         {
@@ -104,7 +127,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
                 return Forbid();
             }
 
-            return Ok(appointment);
+            return Ok(AppointmentResponseDto.FromEntity(appointment));
         }
         catch (Exception ex)
         {
@@ -123,7 +146,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// </summary>
     [HttpGet("my-appointments")]
     [Authorize]
-    public async Task<ActionResult<List<Appointment>>> GetMyAppointments([FromQuery] string? status = null, CancellationToken ct = default)
+    public async Task<ActionResult<List<AppointmentResponseDto>>> GetMyAppointments([FromQuery] string? status = null, CancellationToken ct = default)
     {
         try
         {
@@ -151,10 +174,10 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
                     .OrderBy(a => a.ScheduledAt)
                     .ToList();
 
-                return Ok(merged);
+                return Ok(merged.Select(AppointmentResponseDto.FromEntity).ToList());
             }
 
-            return Ok(patientAppointments);
+            return Ok(patientAppointments.Select(AppointmentResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -184,7 +207,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
 
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, null, appointmentStatus);
 
-            return Ok(appointments);
+            return Ok(appointments.Select(AppointmentResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -199,7 +222,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// </summary>
     [HttpGet("all")]
     [Authorize(Roles = "Admin,SuperAdmin")]
-    public async Task<ActionResult<List<Appointment>>> GetAllAppointments(
+    public async Task<ActionResult<List<AppointmentResponseDto>>> GetAllAppointments(
         [FromQuery] Guid? hospitalId = null,
         [FromQuery] Guid? doctorId = null,
         [FromQuery] Guid? patientId = null,
@@ -216,7 +239,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
 
             var appointments = await _appointmentService.GetAllAppointmentsAsync(
                 hospitalId, doctorId, patientId, appointmentStatus, from, to, ct);
-            return Ok(appointments);
+            return Ok(appointments.Select(AppointmentResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -238,10 +261,8 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             // Return only availability-relevant fields — never expose patient details
             var slots = appointments.Select(a => new
             {
-                a.Id,
                 a.ScheduledAt,
-                a.DurationMinutes,
-                a.Status
+                a.DurationMinutes
             }).ToList();
             return Ok(slots);
         }
@@ -288,7 +309,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// Cancel appointment
     /// </summary>
     [HttpPost("{id}/cancel")]
-    public async Task<ActionResult<Appointment>> Cancel(Guid id, [FromBody] CancelAppointmentRequest? request = null)
+    public async Task<ActionResult<AppointmentResponseDto>> Cancel(Guid id, [FromBody] CancelAppointmentRequest? request = null)
     {
         try
         {
@@ -307,7 +328,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             }
 
             var cancelled = await _appointmentService.CancelAppointmentAsync(id, userId, request?.Reason);
-            return Ok(cancelled);
+            return Ok(AppointmentResponseDto.FromEntity(cancelled));
         }
         catch (InvalidOperationException ex)
         {
@@ -324,7 +345,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// Reschedule appointment
     /// </summary>
     [HttpPost("{id}/reschedule")]
-    public async Task<ActionResult<Appointment>> Reschedule(Guid id, [FromBody] RescheduleAppointmentRequest request)
+    public async Task<ActionResult<AppointmentResponseDto>> Reschedule(Guid id, [FromBody] RescheduleAppointmentRequest request)
     {
         try
         {
@@ -343,7 +364,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             }
 
             var rescheduled = await _appointmentService.RescheduleAppointmentAsync(id, request.NewScheduledAt);
-            return Ok(rescheduled);
+            return Ok(AppointmentResponseDto.FromEntity(rescheduled));
         }
         catch (ArgumentException ex)
         {
@@ -365,7 +386,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// </summary>
     [HttpPost("{id}/complete")]
     [Authorize(Roles = "Doctor,Admin,SuperAdmin")]
-    public async Task<ActionResult<Appointment>> Complete(Guid id, [FromBody] CompleteAppointmentRequest request)
+    public async Task<ActionResult<AppointmentResponseDto>> Complete(Guid id, [FromBody] CompleteAppointmentRequest request)
     {
         try
         {
@@ -384,7 +405,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             }
 
             var completed = await _appointmentService.CompleteAppointmentAsync(id, request.Notes);
-            return Ok(completed);
+            return Ok(AppointmentResponseDto.FromEntity(completed));
         }
         catch (InvalidOperationException ex)
         {
@@ -402,12 +423,12 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
     /// </summary>
     [HttpGet("hospital/{hospitalId}")]
     [Authorize(Roles = "Admin,SuperAdmin")]
-    public async Task<ActionResult<List<Appointment>>> GetHospitalAppointments(Guid hospitalId, [FromQuery] DateTime? date = null)
+    public async Task<ActionResult<List<AppointmentResponseDto>>> GetHospitalAppointments(Guid hospitalId, [FromQuery] DateTime? date = null)
     {
         try
         {
             var appointments = await _appointmentService.GetHospitalAppointmentsAsync(hospitalId, date);
-            return Ok(appointments);
+            return Ok(appointments.Select(AppointmentResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {

@@ -195,6 +195,88 @@ public class DoctorProfileResponseDto
     };
 }
 
+/// <summary>
+/// Public doctor directory record. <see cref="Id"/> and <see cref="UserId"/> are
+/// retained for existing clients; the explicit aliases remove the historical
+/// ambiguity between a DoctorProfile primary key and the User id used by booking,
+/// referrals and prescriptions. No license identifiers or User entity are exposed.
+/// </summary>
+public sealed class PublicDoctorProfileResponseDto
+{
+    /// <summary>Legacy alias for <see cref="ProfileId"/>.</summary>
+    public Guid Id { get; init; }
+    /// <summary>DoctorProfile primary key; use only for profile administration.</summary>
+    public Guid ProfileId { get; init; }
+    /// <summary>Legacy alias for <see cref="DoctorUserId"/>.</summary>
+    public Guid UserId { get; init; }
+    /// <summary>User id used as DoctorId in appointments, referrals and prescriptions.</summary>
+    public Guid DoctorUserId { get; init; }
+    public PublicDoctorIdentityDto? User { get; init; }
+    public string? DoctorName { get; init; }
+    public string Specialization { get; init; } = string.Empty;
+    public List<string> AdditionalSpecializations { get; init; } = [];
+    public int YearsOfExperience { get; init; }
+    public List<string> Certifications { get; init; } = [];
+    public List<string> Education { get; init; } = [];
+    public List<string> Languages { get; init; } = [];
+    public string? Biography { get; init; }
+    /// <summary>Compatibility alias for clients that previously used "bio".</summary>
+    public string? Bio => Biography;
+    public decimal? ConsultationFee { get; init; }
+    public bool AcceptingNewPatients { get; init; }
+    /// <summary>Compatibility alias for clients that previously used "isAcceptingPatients".</summary>
+    public bool IsAcceptingPatients => AcceptingNewPatients;
+    public string CurrentStatus { get; init; } = string.Empty;
+    public List<Guid> HospitalIds { get; init; } = [];
+    public int AverageAppointmentDuration { get; init; }
+    public decimal? AverageRating { get; init; }
+    public int TotalRatings { get; init; }
+
+    public static PublicDoctorProfileResponseDto FromEntity(DoctorProfile profile)
+    {
+        var identity = profile.User is null
+            ? null
+            : new PublicDoctorIdentityDto
+            {
+                Id = profile.User.Id,
+                FirstName = profile.User.FirstName,
+                LastName = profile.User.LastName
+            };
+
+        return new PublicDoctorProfileResponseDto
+        {
+            Id = profile.Id,
+            ProfileId = profile.Id,
+            UserId = profile.UserId,
+            DoctorUserId = profile.UserId,
+            User = identity,
+            DoctorName = identity?.FullName,
+            Specialization = profile.Specialization.ToString(),
+            AdditionalSpecializations = profile.AdditionalSpecializations.Select(value => value.ToString()).ToList(),
+            YearsOfExperience = profile.YearsOfExperience,
+            Certifications = [.. profile.Certifications],
+            Education = [.. profile.Education],
+            Languages = [.. profile.Languages],
+            Biography = profile.Biography,
+            ConsultationFee = profile.ConsultationFee,
+            AcceptingNewPatients = profile.AcceptingNewPatients,
+            CurrentStatus = profile.CurrentStatus.ToString(),
+            HospitalIds = [.. profile.HospitalIds],
+            AverageAppointmentDuration = profile.AverageAppointmentDuration,
+            AverageRating = profile.AverageRating,
+            TotalRatings = profile.TotalRatings
+        };
+    }
+}
+
+public sealed class PublicDoctorIdentityDto
+{
+    public Guid Id { get; init; }
+    public string FirstName { get; init; } = string.Empty;
+    public string LastName { get; init; } = string.Empty;
+    public string FullName => $"{FirstName} {LastName}".Trim();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PharmacyInventory Response DTO
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,6 +344,8 @@ public class ReferralResponseDto
     public string Status { get; set; } = string.Empty;
     public string Urgency { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? ClinicalNotes { get; set; }
     public string? ResultNotes { get; set; }
     public bool IsExternal { get; set; }
@@ -271,7 +355,7 @@ public class ReferralResponseDto
     public DateTime UpdatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
 
-    public static ReferralResponseDto FromEntity(Referral r) => new()
+    public static ReferralResponseDto FromEntity(Referral r, bool includeClinicalNotes = true) => new()
     {
         Id = r.Id,
         ReferringDoctorId = r.ReferringDoctorId,
@@ -288,7 +372,7 @@ public class ReferralResponseDto
         Status = r.Status.ToString(),
         Urgency = r.Urgency.ToString(),
         Reason = r.Reason,
-        ClinicalNotes = r.ClinicalNotes,
+        ClinicalNotes = includeClinicalNotes ? r.ClinicalNotes : null,
         ResultNotes = r.ResultNotes,
         IsExternal = r.IsExternal,
         ExternalProviderName = r.ExternalProviderName,
@@ -296,5 +380,89 @@ public class ReferralResponseDto
         CreatedAt = r.CreatedAt,
         UpdatedAt = r.UpdatedAt,
         CompletedAt = r.CompletedAt
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Medical-test Response DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Medical test returned to authorized clients. It intentionally excludes EF
+/// navigation graphs and storage internals such as document paths, object keys,
+/// hashes, uploader accounts and patient account details.
+/// </summary>
+public sealed class MedicalTestResponseDto
+{
+    public Guid Id { get; init; }
+    public Guid PatientId { get; init; }
+    public Guid? ReferralId { get; init; }
+    public bool IsEmergency { get; init; }
+    public Guid? AppointmentId { get; init; }
+    public Guid OrderedByDoctorId { get; init; }
+    public string? OrderedByDoctorName { get; init; }
+    public Guid? PerformedByDoctorId { get; init; }
+    public string? PerformedByDoctorName { get; init; }
+    public string TestType { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public string? Notes { get; init; }
+    public string? Findings { get; init; }
+    public DateTime? PerformedAt { get; init; }
+    public DateTime? ResultsAt { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public DateTime UpdatedAt { get; init; }
+    public List<MedicalTestDocumentResponseDto> Documents { get; init; } = [];
+
+    public static MedicalTestResponseDto FromEntity(MedicalTest test) => new()
+    {
+        Id = test.Id,
+        PatientId = test.PatientId,
+        ReferralId = test.ReferralId,
+        IsEmergency = test.IsEmergency,
+        AppointmentId = test.AppointmentId,
+        OrderedByDoctorId = test.OrderedByDoctorId,
+        OrderedByDoctorName = NameOf(test.OrderedByDoctor),
+        PerformedByDoctorId = test.PerformedByDoctorId,
+        PerformedByDoctorName = NameOf(test.PerformedByDoctor),
+        TestType = test.TestType.ToString(),
+        Status = test.Status.ToString(),
+        Notes = test.Notes,
+        Findings = test.Findings,
+        PerformedAt = test.PerformedAt,
+        ResultsAt = test.ResultsAt,
+        CreatedAt = test.CreatedAt,
+        UpdatedAt = test.UpdatedAt,
+        Documents = test.Documents
+            .Where(document => !document.IsArchived)
+            .Select(MedicalTestDocumentResponseDto.FromEntity)
+            .ToList()
+    };
+
+    private static string? NameOf(User? user) => user is null
+        ? null
+        : $"{user.FirstName} {user.LastName}".Trim();
+}
+
+public sealed class MedicalTestDocumentResponseDto
+{
+    public Guid Id { get; init; }
+    public string DocumentType { get; init; } = string.Empty;
+    public string FileName { get; init; } = string.Empty;
+    public string ContentType { get; init; } = string.Empty;
+    public long FileSizeBytes { get; init; }
+    public string? Title { get; init; }
+    public DateTime UploadedAt { get; init; }
+    public bool IsVerified { get; init; }
+
+    public static MedicalTestDocumentResponseDto FromEntity(MedicalDocument document) => new()
+    {
+        Id = document.Id,
+        DocumentType = document.DocumentType.ToString(),
+        FileName = document.FileName,
+        ContentType = document.ContentType,
+        FileSizeBytes = document.FileSizeBytes,
+        Title = document.Title,
+        UploadedAt = document.UploadedAt,
+        IsVerified = document.IsVerified
     };
 }

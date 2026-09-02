@@ -27,6 +27,8 @@ public class MedicalTestService(
         await _context.MedicalTests
             .Include(t => t.OrderedByDoctor)
             .Include(t => t.PerformedByDoctor)
+            .Include(t => t.Referral)
+            .Include(t => t.Appointment)
             .Include(t => t.Documents)
             .FirstOrDefaultAsync(t => t.Id == id);
 
@@ -42,16 +44,28 @@ public class MedicalTestService(
     public async Task<List<MedicalTest>> GetByAppointmentAsync(Guid appointmentId) =>
         await _context.MedicalTests
             .Include(t => t.OrderedByDoctor)
+            .Include(t => t.PerformedByDoctor)
             .Include(t => t.Documents)
             .Where(t => t.AppointmentId == appointmentId)
             .OrderBy(t => t.CreatedAt)
             .ToListAsync();
 
-    public async Task<MedicalTest> UpdateStatusAsync(Guid id, MedicalTestStatus status, string? findings = null)
+    public async Task<MedicalTest> UpdateStatusAsync(
+        Guid id,
+        MedicalTestStatus status,
+        string? findings = null,
+        Guid? performedByDoctorId = null)
     {
         var test = await RequireAsync(id);
         test.Status = status;
         test.UpdatedAt = DateTime.UtcNow;
+
+        if (performedByDoctorId.HasValue)
+        {
+            if (test.PerformedByDoctorId.HasValue && test.PerformedByDoctorId != performedByDoctorId)
+                throw new UnauthorizedAccessException("This test has already been claimed by another doctor.");
+            test.PerformedByDoctorId ??= performedByDoctorId;
+        }
 
         if (findings is not null)
             test.Findings = findings;
@@ -66,14 +80,33 @@ public class MedicalTestService(
         return test;
     }
 
-    public async Task<MedicalTest> AttachDocumentAsync(Guid testId, Guid documentId)
+    public async Task<MedicalTest> AttachDocumentAsync(
+        Guid testId,
+        Guid documentId,
+        Guid attachingUserId,
+        bool isAdministrator = false)
     {
         var test = await RequireAsync(testId);
 
         var doc = await _context.MedicalDocuments.FindAsync(documentId)
             ?? throw new KeyNotFoundException($"Document {documentId} not found.");
 
+        if (doc.UserId != test.PatientId)
+            throw new InvalidOperationException("Document owner does not match the medical test patient.");
+        if (doc.IsArchived)
+            throw new InvalidOperationException("Archived documents cannot be attached to medical tests.");
+        if (doc.MedicalTestId.HasValue && doc.MedicalTestId != testId)
+            throw new InvalidOperationException("Document is already attached to another medical test.");
+        if (!isAdministrator &&
+            doc.MedicalTestId != testId &&
+            doc.UploadedByUserId != attachingUserId)
+        {
+            throw new UnauthorizedAccessException(
+                "Only the document uploader may attach it to a medical test.");
+        }
+
         doc.MedicalTestId = testId;
+        doc.MedicalTest = test;
         doc.ModifiedAt = DateTime.UtcNow;
         test.UpdatedAt = DateTime.UtcNow;
 
@@ -84,6 +117,7 @@ public class MedicalTestService(
     public async Task<List<MedicalTest>> GetByPatientAsync(Guid patientId) =>
         await _context.MedicalTests
             .Include(t => t.Referral)
+            .Include(t => t.Appointment)
             .Include(t => t.OrderedByDoctor)
             .Include(t => t.PerformedByDoctor)
             .Include(t => t.Documents)

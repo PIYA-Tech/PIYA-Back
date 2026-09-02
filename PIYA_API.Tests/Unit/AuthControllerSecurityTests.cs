@@ -14,12 +14,58 @@ using PIYA_API.Controllers;
 using PIYA_API.Model;
 using PIYA_API.Security;
 using PIYA_API.Service.Interface;
+using System.Text.Json;
 using Xunit;
 
 namespace PIYA_API.Tests.Unit;
 
 public class AuthControllerSecurityTests
 {
+    [Fact]
+    public async Task Me_ReturnsFullMobileProfileWithStableIdAliases()
+    {
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Username = "ayla.patient",
+            Email = "ayla.patient@example.test",
+            FirstName = "Ayla",
+            MiddleName = "Nigar",
+            LastName = "Aliyeva",
+            PhoneNumber = "+994501234567",
+            DateOfBirth = new DateTime(1991, 6, 15, 0, 0, 0, DateTimeKind.Utc),
+            Role = UserRole.Patient,
+            IsActive = true,
+            IsEmailVerified = true,
+            IsPhoneVerified = false
+        };
+        var users = new Mock<IUserService>();
+        users.Setup(service => service.GetByIdAsync(user.Id)).ReturnsAsync(user);
+        var controller = MakeController(new Mock<IJwtService>(), users.Object);
+        SetAuthenticatedRequest(controller, user.Id, "validated-bearer");
+
+        var result = await controller.Me();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var payload = JsonSerializer.SerializeToElement(
+            ok.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        payload.GetProperty("id").GetGuid().Should().Be(user.Id);
+        payload.GetProperty("userId").GetGuid().Should().Be(user.Id);
+        payload.GetProperty("username").GetString().Should().Be(user.Username);
+        payload.GetProperty("email").GetString().Should().Be(user.Email);
+        payload.GetProperty("firstName").GetString().Should().Be(user.FirstName);
+        payload.GetProperty("middleName").GetString().Should().Be(user.MiddleName);
+        payload.GetProperty("lastName").GetString().Should().Be(user.LastName);
+        payload.GetProperty("phoneNumber").GetString().Should().Be(user.PhoneNumber);
+        payload.GetProperty("dateOfBirth").GetDateTime().Should().Be(user.DateOfBirth);
+        payload.GetProperty("role").GetString().Should().Be("Patient");
+        payload.GetProperty("isActive").GetBoolean().Should().BeTrue();
+        payload.GetProperty("isEmailVerified").GetBoolean().Should().BeTrue();
+        payload.GetProperty("isPhoneVerified").GetBoolean().Should().BeFalse();
+        users.Verify(service => service.GetByIdAsync(user.Id), Times.Once);
+    }
+
     [Fact]
     public void ValidateToken_DifferentBodyToken_IsRejectedWithoutRevalidatingIt()
     {

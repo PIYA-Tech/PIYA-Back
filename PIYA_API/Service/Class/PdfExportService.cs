@@ -615,7 +615,9 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
 
     // ── Referral Letter ───────────────────────────────────────────────────────
 
-    public async Task<byte[]> GenerateReferralLetterPdfAsync(Guid referralId)
+    public async Task<byte[]> GenerateReferralLetterPdfAsync(
+        Guid referralId,
+        bool includeClinicalNotes = true)
     {
         var referral = await _context.Referrals
             .Include(r => r.ReferringDoctor)
@@ -726,7 +728,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         }
 
         // Clinical notes — confidential, doctor-only
-        if (!string.IsNullOrWhiteSpace(referral.ClinicalNotes))
+        if (includeClinicalNotes && !string.IsNullOrWhiteSpace(referral.ClinicalNotes))
         {
             DrawSectionHeader(gfx, "Clinical Notes  [CONFIDENTIAL]", headerFont, L, ref y);
             DrawWrappedText(gfx, referral.ClinicalNotes, regularFont, L, ref y, W);

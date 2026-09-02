@@ -37,6 +37,8 @@ public class PatientMedicationsControllerTests
         response.PharmacyName.Should().Be("PIYA Pharmacy");
         response.AutoRefill.Should().BeTrue();
         (await db.PatientRefillRequests.SingleAsync()).PatientId.Should().Be(scenario.Patient.Id);
+        (await db.Set<PatientRefillStatusEvent>().SingleAsync()).Status
+            .Should().Be(PatientRefillRequestStatus.Pending);
         audit.Verify(service => service.LogEntityActionAsync(
             "CreatePatientRefillRequest", nameof(PatientRefillRequest), It.IsAny<string>(),
             scenario.Patient.Id, It.IsAny<string>()), Times.Once);
@@ -93,6 +95,41 @@ public class PatientMedicationsControllerTests
             .Should().Be(PatientRefillRequestStatus.Pending);
     }
 
+    [Fact]
+    public async Task PharmacyStaff_ControlledTransition_AppendsTimelineEvent()
+    {
+        await using var db = CreateContext();
+        var scenario = await SeedScenario(db);
+        var refill = new PatientRefillRequest
+        {
+            Id = Guid.NewGuid(), PatientId = scenario.Patient.Id,
+            PrescriptionId = scenario.Prescription.Id, PrescriptionItemId = scenario.Item.Id,
+            PharmacyId = scenario.Pharmacy.Id, Status = PatientRefillRequestStatus.Pending
+        };
+        db.PatientRefillRequests.Add(refill);
+        await db.SaveChangesAsync();
+        var staff = new Mock<IPharmacyStaffService>();
+        staff.Setup(service => service.IsStaffAtPharmacyAsync(
+                scenario.Pharmacy.Id, scenario.Pharmacist.Id))
+            .ReturnsAsync(true);
+        var controller = CreateController(
+            db, staff, new Mock<IAuditService>(), new Mock<INotificationService>(),
+            scenario.Pharmacist.Id, "Pharmacist");
+
+        var result = await controller.UpdateRefillRequestStatus(
+            refill.Id,
+            new UpdatePatientRefillStatusRequest(
+                PatientRefillRequestStatus.Accepted,
+                DateTime.UtcNow.AddHours(1),
+                "Preparing now"));
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+        var timeline = await db.Set<PatientRefillStatusEvent>().SingleAsync();
+        timeline.Status.Should().Be(PatientRefillRequestStatus.Accepted);
+        timeline.Note.Should().Be("Preparing now");
+        timeline.EstimatedReadyAt.Should().NotBeNull();
+    }
+
     private static PatientMedicationsController CreateController(
         PharmacyApiDbContext db,
         Mock<IPharmacyStaffService> staff,
@@ -118,9 +155,19 @@ public class PatientMedicationsControllerTests
         return controller;
     }
 
-    private static PharmacyApiDbContext CreateContext() => new(
+    private static PharmacyApiDbContext CreateContext() => new PatientMedicationTestDbContext(
         new DbContextOptionsBuilder<PharmacyApiDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private sealed class PatientMedicationTestDbContext(DbContextOptions<PharmacyApiDbContext> options)
+        : PharmacyApiDbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.ConfigurePatientHealthDomain();
+        }
+    }
 
     private static async Task<Scenario> SeedScenario(PharmacyApiDbContext db)
     {

@@ -52,6 +52,7 @@ public class DoctorProfileService(PharmacyApiDbContext context, ILogger<DoctorPr
         try
         {
             return await _context.DoctorProfiles
+                .Include(dp => dp.User)
                 .FirstOrDefaultAsync(dp => dp.UserId == userId);
         }
         catch (Exception ex)

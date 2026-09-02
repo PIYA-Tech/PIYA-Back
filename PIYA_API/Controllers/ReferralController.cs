@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
@@ -12,10 +13,12 @@ namespace PIYA_API.Controllers;
 public class ReferralController(
     IReferralService referralService,
     IPdfExportService pdfExportService,
+    IAppointmentService appointmentService,
     ILogger<ReferralController> logger) : ControllerBase
 {
     private readonly IReferralService _referralService = referralService;
     private readonly IPdfExportService _pdfExportService = pdfExportService;
+    private readonly IAppointmentService _appointmentService = appointmentService;
     private readonly ILogger<ReferralController> _logger = logger;
 
     // ── Create ───────────────────────────────────────────────────────────────
@@ -30,6 +33,22 @@ public class ReferralController(
         try
         {
             var doctorId = GetUserId();
+            var role = GetRole();
+
+            if (req.SourceAppointmentId.HasValue)
+            {
+                var appointment = await _appointmentService.GetByIdAsync(req.SourceAppointmentId.Value);
+                if (appointment is null) return BadRequest(new { error = "Source appointment not found" });
+                if (appointment.PatientId != req.PatientId)
+                    return BadRequest(new { error = "Source appointment does not belong to the patient" });
+                if (!IsAdministrator(role) && appointment.DoctorId != doctorId)
+                    return Forbid();
+            }
+            else if (!IsAdministrator(role) &&
+                     !await _appointmentService.HasDoctorPatientRelationshipAsync(doctorId, req.PatientId))
+            {
+                return Forbid();
+            }
 
             var referral = new Referral
             {
@@ -48,7 +67,10 @@ public class ReferralController(
             };
 
             var created = await _referralService.CreateAsync(referral, req.OrderedTests ?? []);
-            return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+            return CreatedAtAction(
+                nameof(GetById),
+                new { id = created.Id },
+                ReferralResponseDto.FromEntity(created));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)
@@ -74,15 +96,14 @@ public class ReferralController(
             var userId = GetUserId();
             var role = GetRole();
 
-            if (role is not ("Admin" or "SuperAdmin") &&
-                referral.PatientId != userId &&
-                referral.ReferringDoctorId != userId &&
-                referral.ReferredToDoctorId != userId)
+            if (!IsReferralParty(referral, userId, role))
             {
                 return Forbid();
             }
 
-            return Ok(referral);
+            return Ok(ReferralResponseDto.FromEntity(
+                referral,
+                includeClinicalNotes: referral.PatientId != userId));
         }
         catch (Exception ex)
         {
@@ -101,7 +122,8 @@ public class ReferralController(
         try
         {
             var list = await _referralService.GetByPatientAsync(GetUserId());
-            return Ok(list);
+            return Ok(list.Select(referral =>
+                ReferralResponseDto.FromEntity(referral, includeClinicalNotes: false)).ToList());
         }
         catch (Exception ex)
         {
@@ -120,7 +142,7 @@ public class ReferralController(
         try
         {
             var list = await _referralService.GetByReferringDoctorAsync(GetUserId());
-            return Ok(list);
+            return Ok(list.Select(referral => ReferralResponseDto.FromEntity(referral)).ToList());
         }
         catch (Exception ex)
         {
@@ -139,7 +161,7 @@ public class ReferralController(
         try
         {
             var list = await _referralService.GetByReferredDoctorAsync(GetUserId());
-            return Ok(list);
+            return Ok(list.Select(referral => ReferralResponseDto.FromEntity(referral)).ToList());
         }
         catch (Exception ex)
         {
@@ -149,7 +171,8 @@ public class ReferralController(
     }
 
     /// <summary>
-    /// List doctors available for a referral's specialty (for patient to choose from).
+    /// List doctors available for a referral's specialty. Only the patient,
+    /// referring doctor, referred doctor or an administrator may query it.
     /// Response distinguishes between "specialty not registered on platform" and
     /// "all doctors at capacity" so the UI can show a helpful message.
     /// </summary>
@@ -158,6 +181,10 @@ public class ReferralController(
     {
         try
         {
+            var referral = await _referralService.GetByIdAsync(id);
+            if (referral is null) return NotFound(new { error = "Referral not found" });
+            if (!IsReferralParty(referral, GetUserId(), GetRole())) return Forbid();
+
             var result = await _referralService.GetAvailableDoctorsAsync(id);
             return Ok(result);
         }
@@ -182,10 +209,10 @@ public class ReferralController(
         {
             var referral = await _referralService.GetByIdAsync(id);
             if (referral is null) return NotFound(new { error = "Referral not found" });
-            if (referral.PatientId != GetUserId()) return Forbid();
+            if (!IsAdministrator(GetRole()) && referral.PatientId != GetUserId()) return Forbid();
 
             var updated = await _referralService.AssignDoctorAsync(id, req.DoctorId);
-            return Ok(updated);
+            return Ok(ReferralResponseDto.FromEntity(updated, includeClinicalNotes: false));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
@@ -208,10 +235,10 @@ public class ReferralController(
             var doctorId = GetUserId();
             var referral = await _referralService.GetByIdAsync(id);
             if (referral is null) return NotFound(new { error = "Referral not found" });
-            if (referral.ReferredToDoctorId != doctorId) return Forbid();
+            if (!IsAdministrator(GetRole()) && referral.ReferredToDoctorId != doctorId) return Forbid();
 
             var updated = await _referralService.AcceptAsync(id, doctorId);
-            return Ok(updated);
+            return Ok(ReferralResponseDto.FromEntity(updated));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)
@@ -233,10 +260,10 @@ public class ReferralController(
             var doctorId = GetUserId();
             var referral = await _referralService.GetByIdAsync(id);
             if (referral is null) return NotFound(new { error = "Referral not found" });
-            if (referral.ReferredToDoctorId != doctorId) return Forbid();
+            if (!IsAdministrator(GetRole()) && referral.ReferredToDoctorId != doctorId) return Forbid();
 
             var updated = await _referralService.DeclineAsync(id, req.Reason);
-            return Ok(updated);
+            return Ok(ReferralResponseDto.FromEntity(updated));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)
@@ -258,10 +285,10 @@ public class ReferralController(
             var doctorId = GetUserId();
             var referral = await _referralService.GetByIdAsync(id);
             if (referral is null) return NotFound(new { error = "Referral not found" });
-            if (referral.ReferredToDoctorId != doctorId) return Forbid();
+            if (!IsAdministrator(GetRole()) && referral.ReferredToDoctorId != doctorId) return Forbid();
 
             var updated = await _referralService.CompleteAsync(id, req.ResultNotes);
-            return Ok(updated);
+            return Ok(ReferralResponseDto.FromEntity(updated));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)
@@ -285,7 +312,9 @@ public class ReferralController(
             if (referral.PatientId != userId && referral.ReferringDoctorId != userId) return Forbid();
 
             var updated = await _referralService.CancelAsync(id);
-            return Ok(updated);
+            return Ok(ReferralResponseDto.FromEntity(
+                updated,
+                includeClinicalNotes: updated.PatientId != userId));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (Exception ex)
@@ -309,7 +338,10 @@ public class ReferralController(
         {
             var doctorId = GetUserId();
             var child = await _referralService.ForwardAsync(id, doctorId, req.TargetDoctorId, req.Specialty, req.Reason);
-            return CreatedAtAction(nameof(GetById), new { id = child.Id }, child);
+            return CreatedAtAction(
+                nameof(GetById),
+                new { id = child.Id },
+                ReferralResponseDto.FromEntity(child));
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
         catch (UnauthorizedAccessException) { return Forbid(); }
@@ -334,15 +366,14 @@ public class ReferralController(
             var referral = await _referralService.GetByIdAsync(id);
             if (referral is null) return NotFound(new { error = "Referral not found" });
 
-            if (role is not ("Admin" or "SuperAdmin") &&
-                referral.PatientId != userId &&
-                referral.ReferringDoctorId != userId &&
-                referral.ReferredToDoctorId != userId)
+            if (!IsReferralParty(referral, userId, role))
             {
                 return Forbid();
             }
 
-            var pdf = await _pdfExportService.GenerateReferralLetterPdfAsync(id);
+            var pdf = await _pdfExportService.GenerateReferralLetterPdfAsync(
+                id,
+                includeClinicalNotes: referral.PatientId != userId);
             return File(pdf, "application/pdf", $"referral-{id:N}.pdf");
         }
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
@@ -360,6 +391,14 @@ public class ReferralController(
             ?? throw new UnauthorizedAccessException("User ID claim missing."));
 
     private string? GetRole() => User.FindFirst(ClaimTypes.Role)?.Value;
+
+    private static bool IsAdministrator(string? role) => role is "Admin" or "SuperAdmin";
+
+    private static bool IsReferralParty(Referral referral, Guid callerId, string? role) =>
+        IsAdministrator(role) ||
+        referral.PatientId == callerId ||
+        referral.ReferringDoctorId == callerId ||
+        referral.ReferredToDoctorId == callerId;
 }
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────

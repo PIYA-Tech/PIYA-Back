@@ -74,6 +74,37 @@ public class MedicalAuthorizationControllerTests
     }
 
     [Fact]
+    public async Task PresignedUrl_TestPerformer_CanAccessTestDocument()
+    {
+        var doctorId = Guid.NewGuid();
+        var patientId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var testId = Guid.NewGuid();
+        var files = new Mock<IFileUploadService>();
+        var document = MakeDocument(documentId, patientId);
+        document.MedicalTestId = testId;
+        files.Setup(x => x.GetDocumentByIdAsync(documentId)).ReturnsAsync(document);
+        files.Setup(x => x.GetPresignedUrlAsync(documentId, It.IsAny<int>()))
+            .ReturnsAsync("https://files.example/test-result");
+        var tests = new Mock<IMedicalTestService>();
+        tests.Setup(x => x.GetByIdAsync(testId)).ReturnsAsync(new MedicalTest
+        {
+            Id = testId,
+            PatientId = patientId,
+            OrderedByDoctorId = Guid.NewGuid(),
+            PerformedByDoctorId = doctorId,
+            TestType = MedicalTestType.MRI
+        });
+        var controller = MakeFileController(files, new Mock<IAppointmentService>(), tests);
+        SetUser(controller, doctorId, "Doctor");
+
+        var result = await controller.GetPresignedUrl(documentId);
+
+        result.Should().BeOfType<OkObjectResult>();
+        files.Verify(x => x.GetPresignedUrlAsync(documentId, It.IsAny<int>()), Times.Once);
+    }
+
+    [Fact]
     public async Task GetPrescription_ActiveButUnassigned_PharmacistIsForbidden()
     {
         var pharmacistId = Guid.NewGuid();
@@ -131,12 +162,14 @@ public class MedicalAuthorizationControllerTests
 
     private static FileUploadController MakeFileController(
         Mock<IFileUploadService> files,
-        Mock<IAppointmentService> appointments) =>
+        Mock<IAppointmentService> appointments,
+        Mock<IMedicalTestService>? medicalTests = null) =>
         new(
             files.Object,
             Mock.Of<IFileStorageService>(),
             appointments.Object,
             Mock.Of<IPrescriptionService>(),
+            medicalTests?.Object ?? Mock.Of<IMedicalTestService>(),
             Mock.Of<ILogger<FileUploadController>>());
 
     private static PrescriptionController MakePrescriptionController(

@@ -15,12 +15,14 @@ public class FileUploadController(
     IFileStorageService fileStorageService,
     IAppointmentService appointmentService,
     IPrescriptionService prescriptionService,
+    IMedicalTestService medicalTestService,
     ILogger<FileUploadController> logger) : ControllerBase
 {
     private readonly IFileUploadService _fileUploadService = fileUploadService;
     private readonly IFileStorageService _fileStorageService = fileStorageService;
     private readonly IAppointmentService _appointmentService = appointmentService;
     private readonly IPrescriptionService _prescriptionService = prescriptionService;
+    private readonly IMedicalTestService _medicalTestService = medicalTestService;
     private readonly ILogger<FileUploadController> _logger = logger;
 
     /// <summary>
@@ -409,6 +411,19 @@ public class FileUploadController(
 
         if (callerRole != "Doctor")
             return false;
+
+        if (document.MedicalTestId.HasValue)
+        {
+            var test = await _medicalTestService.GetByIdAsync(document.MedicalTestId.Value);
+            if (test is null || test.PatientId != document.UserId)
+                return false;
+
+            return test.OrderedByDoctorId == callerId ||
+                test.PerformedByDoctorId == callerId ||
+                test.Appointment?.DoctorId == callerId ||
+                test.Referral?.ReferringDoctorId == callerId ||
+                test.Referral?.ReferredToDoctorId == callerId;
+        }
 
         // Prefer an explicit document link when present.
         if (document.AppointmentId.HasValue)
