@@ -116,14 +116,20 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         }
 
         // Update email if changed and not already taken
-        if (!string.IsNullOrWhiteSpace(user.Email) && user.Email != existingUser.Email)
+        if (!string.IsNullOrWhiteSpace(user.Email))
         {
             var normalizedEmail = user.Email.Trim().ToLowerInvariant();
-            if (await _dbContext.Users.AnyAsync(x =>
-                    x.Id != user.Id && x.Email.ToLower() == normalizedEmail))
-                throw new InvalidOperationException($"Email '{user.Email}' is already registered");
+            if (!string.Equals(normalizedEmail, existingUser.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                if (await _dbContext.Users.AnyAsync(x =>
+                        x.Id != user.Id && x.Email.ToLower() == normalizedEmail))
+                    throw new InvalidOperationException($"Email '{user.Email}' is already registered");
 
-            existingUser.Email = normalizedEmail;
+                existingUser.Email = normalizedEmail;
+                // Verification belongs to the address, not just the account. A new
+                // address must prove ownership before it can be trusted again.
+                existingUser.IsEmailVerified = false;
+            }
         }
 
         // Update password if provided
@@ -148,8 +154,21 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         if (!string.IsNullOrWhiteSpace(user.LastName))
             existingUser.LastName = user.LastName;
 
+        existingUser.MiddleName = string.IsNullOrWhiteSpace(user.MiddleName)
+            ? null
+            : user.MiddleName.Trim();
+
         if (!string.IsNullOrWhiteSpace(user.PhoneNumber))
             existingUser.PhoneNumber = user.PhoneNumber;
+
+        if (user.DateOfBirth.HasValue)
+        {
+            var dateOfBirth = user.DateOfBirth.Value.Date;
+            if (dateOfBirth > DateTime.UtcNow.Date.AddYears(-18))
+                throw new ArgumentException("You must be at least 18 years old.");
+
+            existingUser.DateOfBirth = DateTime.SpecifyKind(dateOfBirth, DateTimeKind.Utc);
+        }
 
         existingUser.UpdatedAt = DateTime.UtcNow;
 

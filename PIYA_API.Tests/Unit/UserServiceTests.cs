@@ -172,6 +172,108 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Update_Profile_PersistsDateOfBirthAndMiddleName()
+    {
+        var original = new User
+        {
+            Email = "profile@example.com",
+            Username = "profile-user",
+            FirstName = "Profile",
+            LastName = "Patient",
+            PasswordHash = "hash",
+            Role = UserRole.Patient,
+            PhoneNumber = "+994501234567",
+            TokensInfo = new Token()
+        };
+        await _context.Users.AddAsync(original);
+        await _context.SaveChangesAsync();
+        _context.Entry(original).State = EntityState.Detached;
+
+        var dateOfBirth = new DateTime(1994, 7, 12, 0, 0, 0, DateTimeKind.Utc);
+        await _userService.Update(new User
+        {
+            Id = original.Id,
+            Email = original.Email,
+            Username = original.Username,
+            FirstName = original.FirstName,
+            MiddleName = "Nigar",
+            LastName = original.LastName,
+            PhoneNumber = original.PhoneNumber,
+            DateOfBirth = dateOfBirth
+        });
+
+        var updated = await _context.Users.FindAsync(original.Id);
+        updated!.DateOfBirth.Should().Be(dateOfBirth);
+        updated.MiddleName.Should().Be("Nigar");
+    }
+
+    [Fact]
+    public async Task Update_EmailChange_RequiresVerificationAgain()
+    {
+        var original = new User
+        {
+            Email = "verified@example.com",
+            Username = "verified-user",
+            FirstName = "Verified",
+            LastName = "Patient",
+            PasswordHash = "hash",
+            Role = UserRole.Patient,
+            PhoneNumber = "+994501234567",
+            IsEmailVerified = true,
+            TokensInfo = new Token()
+        };
+        await _context.Users.AddAsync(original);
+        await _context.SaveChangesAsync();
+        _context.Entry(original).State = EntityState.Detached;
+
+        await _userService.Update(new User
+        {
+            Id = original.Id,
+            Email = "NEW@example.com",
+            Username = original.Username,
+            FirstName = original.FirstName,
+            LastName = original.LastName,
+            PhoneNumber = original.PhoneNumber
+        });
+
+        var updated = await _context.Users.FindAsync(original.Id);
+        updated!.Email.Should().Be("new@example.com");
+        updated.IsEmailVerified.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Update_UnderageDateOfBirth_IsRejected()
+    {
+        var original = new User
+        {
+            Email = "adult@example.com",
+            Username = "adult-user",
+            FirstName = "Adult",
+            LastName = "Patient",
+            PasswordHash = "hash",
+            Role = UserRole.Patient,
+            PhoneNumber = "+994501234567",
+            TokensInfo = new Token()
+        };
+        await _context.Users.AddAsync(original);
+        await _context.SaveChangesAsync();
+        _context.Entry(original).State = EntityState.Detached;
+
+        var update = new User
+        {
+            Id = original.Id,
+            Email = original.Email,
+            Username = original.Username,
+            FirstName = original.FirstName,
+            LastName = original.LastName,
+            PhoneNumber = original.PhoneNumber,
+            DateOfBirth = DateTime.UtcNow.AddYears(-10)
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _userService.Update(update));
+    }
+
+    [Fact]
     public async Task Delete_ExistingUser_DeletesSuccessfully()
     {
         // Arrange

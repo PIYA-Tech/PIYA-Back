@@ -12,10 +12,12 @@ namespace PIYA_API.Controllers;
 public class UserController(
     IUserService userService,
     IGdprComplianceService gdprComplianceService,
+    IEmailVerificationService emailVerificationService,
     ILogger<UserController> logger) : ControllerBase
 {
     private readonly IUserService _userService = userService;
     private readonly IGdprComplianceService _gdprComplianceService = gdprComplianceService;
+    private readonly IEmailVerificationService _emailVerificationService = emailVerificationService;
     private readonly ILogger<UserController> _logger = logger;
 
     private bool IsAdminOrSuperAdmin() =>
@@ -196,6 +198,9 @@ public class UserController(
             var callerId = Guid.Parse(User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
             if (callerId != id && !IsAdminOrSuperAdmin())
                 return Forbid();
+            var existingUser = await _userService.GetById(id);
+            var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+            var emailChanged = !string.Equals(existingUser.Email, normalizedEmail, StringComparison.OrdinalIgnoreCase);
             var user = new User
             {
                 Id = id,
@@ -210,7 +215,30 @@ public class UserController(
 
             await _userService.Update(user, request.Password);
 
-            return Ok(new { message = "User updated successfully" });
+            if (emailChanged)
+            {
+                try
+                {
+                    await _emailVerificationService.GenerateVerificationTokenAsync(
+                        id,
+                        HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty,
+                        Request.Headers.UserAgent.ToString());
+                }
+                catch (Exception ex)
+                {
+                    // The profile update is already durable and the address is
+                    // unverified. A resend can recover from delivery/provider issues.
+                    _logger.LogWarning(ex, "Could not start email verification after profile update for {UserId}", id);
+                }
+            }
+
+            return Ok(new
+            {
+                message = emailChanged
+                    ? "User updated. Verify the new email address to restore verified status."
+                    : "User updated successfully",
+                requiresEmailVerification = emailChanged
+            });
         }
         catch (KeyNotFoundException ex)
         {
