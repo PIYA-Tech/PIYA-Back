@@ -58,8 +58,12 @@ public class MedicationService(
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var q = search.ToLower();
+            var exactBarcode = search.Trim();
+            var q = exactBarcode.ToLower();
             query = query.Where(m =>
+                // Barcodes are identifiers, not numbers or fuzzy name fragments.
+                // Preserve leading zeros and accept only a complete trimmed match.
+                (m.Barcode != null && m.Barcode.Trim() == exactBarcode) ||
                 m.BrandName.ToLower().Contains(q) ||
                 m.GenericName.ToLower().Contains(q) ||
                 m.Form.ToLower().Contains(q) ||

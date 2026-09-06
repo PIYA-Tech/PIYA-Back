@@ -259,7 +259,14 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
         {
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(doctorId, date ?? DateTime.UtcNow);
             // Return only availability-relevant fields — never expose patient details
-            var slots = appointments.Select(a => new
+            // Match IsDoctorAvailableAsync: cancelled/completed/no-show rows are
+            // history, not reserved time. Never make a cancelled slot unselectable
+            // in a client while the availability endpoint says it can be booked.
+            var slots = appointments
+                .Where(a => a.Status == AppointmentStatus.Scheduled
+                         || a.Status == AppointmentStatus.Confirmed
+                         || a.Status == AppointmentStatus.Rescheduled)
+                .Select(a => new
             {
                 a.ScheduledAt,
                 a.DurationMinutes
