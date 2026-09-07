@@ -32,6 +32,7 @@ public sealed class PatientVerification
     public Guid Id { get; set; }
     public Guid PatientId { get; set; }
     public PatientVerificationKind Kind { get; set; }
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
     public PatientVerificationStatus Status { get; set; } = PatientVerificationStatus.NotConnected;
     public string? ProviderName { get; set; }
     public string? ProviderReference { get; set; }

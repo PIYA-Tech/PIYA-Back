@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Globalization;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -68,6 +70,12 @@ public sealed class PatientVerificationController(
     {
         var validationError = Validate(kind, request);
         if (validationError is not null) return BadRequest(new { error = validationError });
+        if (kind == PatientVerificationKind.Identity && _provider.GetCapability(kind) is { IsConnected: true, ProviderName: "Veriff" })
+        {
+            var patient = await _db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == CurrentUserId, cancellationToken);
+            if (patient?.DateOfBirth is null)
+                return BadRequest(new { error = "Add your legal name and date of birth in Personal Information before verifying your identity." });
+        }
 
         var now = DateTime.UtcNow;
         var latest = await _db.Set<PatientVerification>()
@@ -89,6 +97,7 @@ public sealed class PatientVerificationController(
                 Clean(request.DocumentType), Clean(request.InsuranceIssuer),
                 Clean(request.PolicyReferenceLastFour)), cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception)
         {
             _logger.LogWarning(exception,
@@ -103,6 +112,7 @@ public sealed class PatientVerificationController(
             ? latest
             : new PatientVerification { Id = Guid.NewGuid(), PatientId = CurrentUserId, Kind = kind };
         if (record.Id == Guid.Empty) record.Id = Guid.NewGuid();
+        providerResult = await MatchVerifiedIdentity(providerResult, cancellationToken);
         ApplyProviderResult(record, providerResult, now);
         record.CountryCode = Clean(request.CountryCode)?.ToUpperInvariant();
         record.DocumentType = kind == PatientVerificationKind.Identity ? Clean(request.DocumentType) : null;
@@ -149,6 +159,7 @@ public sealed class PatientVerificationController(
                 result = await _provider.RefreshAsync(
                     record.Kind, record.ProviderReference, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception)
             {
                 _logger.LogWarning(exception, "Verification provider refresh failed for case {CaseId}", id);
@@ -157,8 +168,14 @@ public sealed class PatientVerificationController(
             }
         }
 
+        // The patient may cancel while the provider request is in flight.
+        await _db.Entry(record).ReloadAsync(cancellationToken);
+        if (record.Status is PatientVerificationStatus.Cancelled or PatientVerificationStatus.Rejected || record.StatusReasonCode == "profile_changed")
+            return Conflict(new { error = "This verification is no longer active." });
+        result = await MatchVerifiedIdentity(result, cancellationToken);
         ApplyProviderResult(record, result, DateTime.UtcNow);
-        await _db.SaveChangesAsync(cancellationToken);
+        try { await _db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { return Conflict(new { error = "Verification changed. Reload its status before continuing." }); }
         await _auditService.LogEntityActionAsync(
             "RefreshPatientVerification", nameof(PatientVerification), record.Id.ToString(),
             CurrentUserId, $"Patient refreshed verification; provider status is {record.Status}");
@@ -179,7 +196,8 @@ public sealed class PatientVerificationController(
         record.CancelledAt = DateTime.UtcNow;
         record.ActionUrl = null;
         record.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(cancellationToken);
+        try { await _db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { return Conflict(new { error = "Verification changed. Reload its status before continuing." }); }
         await _auditService.LogEntityActionAsync(
             "CancelPatientVerification", nameof(PatientVerification), record.Id.ToString(),
             CurrentUserId, "Patient cancelled a verification attempt");
@@ -224,8 +242,9 @@ public sealed class PatientVerificationController(
             : PatientVerificationStatus.NotConnected;
         record.ProviderName = validProviderResult ? providerName : null;
         record.ProviderReference = validProviderResult ? providerReference : null;
-        record.ActionUrl = validProviderResult && IsSafeActionUrl(result.ActionUrl) && result.ActionUrl!.Length <= 2000
-            ? result.ActionUrl
+        record.ActionUrl = record.Status is PatientVerificationStatus.Pending or PatientVerificationStatus.RequiresAction
+            ? (validProviderResult && IsSafeActionUrl(result.ActionUrl) && result.ActionUrl!.Length <= 2000
+                ? result.ActionUrl : result.ActionUrl is null && validProviderResult ? record.ActionUrl : null)
             : null;
         record.StatusReasonCode = validProviderResult
             ? CleanMax(result.StatusReasonCode, 120)
@@ -241,6 +260,23 @@ public sealed class PatientVerificationController(
 
     private static bool IsSafeActionUrl(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+
+    private async Task<VerificationProviderResult> MatchVerifiedIdentity(VerificationProviderResult result, CancellationToken cancellationToken)
+    {
+        if (result.ProviderName != "Veriff" || result.Status != PatientVerificationStatus.Verified) return result;
+        var patient = await _db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == CurrentUserId, cancellationToken);
+        var identity = result.Identity;
+        if (patient?.DateOfBirth is null || identity is null || identity.SubjectId != CurrentUserId ||
+            NormalizeName(identity.FirstName) != NormalizeName(patient.FirstName) ||
+            NormalizeName(identity.LastName) != NormalizeName(patient.LastName) ||
+            identity.DateOfBirth != DateOnly.FromDateTime(patient.DateOfBirth.Value))
+            return result with { Status = PatientVerificationStatus.Rejected, StatusReasonCode = "identity_profile_mismatch", Identity = null };
+        return result with { Identity = null };
+    }
+
+    private static string NormalizeName(string value) => string.Concat(value.Normalize(NormalizationForm.FormD)
+        .Where(character => CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark && char.IsLetterOrDigit(character)))
+        .ToUpperInvariant();
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

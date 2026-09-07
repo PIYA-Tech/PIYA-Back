@@ -40,4 +40,9 @@ public sealed record VerificationProviderResult(
     string? ProviderReference = null,
     string? ActionUrl = null,
     string? StatusReasonCode = null,
-    DateTime? ExpiresAt = null);
+    DateTime? ExpiresAt = null,
+    VerifiedIdentity? Identity = null);
+
+// Transient decision data used only to match the account. Never returned to the
+// app or persisted as a second copy of the provider's document/person payload.
+public sealed record VerifiedIdentity(Guid SubjectId, string FirstName, string LastName, DateOnly DateOfBirth);

@@ -24,9 +24,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPharmacyCompanyService, PharmacyCompanyService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<ITwoFactorAuthService, TwoFactorAuthService>();
-        // Safe default: verification remains explicitly NotConnected until a
-        // contracted provider implementation replaces this registration.
-        services.AddSingleton<IVerificationProviderGateway, NotConnectedVerificationProviderGateway>();
+        services.Configure<VeriffOptions>(config.GetSection(VeriffOptions.Section));
+        services.AddHttpClient<IVerificationProviderGateway, VeriffVerificationProviderGateway>(client => {
+            client.Timeout = TimeSpan.FromSeconds(25);
+            client.MaxResponseContentBufferSize = 1_048_576;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+          .RemoveAllLoggers();
 
         // Healthcare
         services.AddScoped<IAppointmentService, AppointmentService>();

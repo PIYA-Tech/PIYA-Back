@@ -147,6 +147,9 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
             existingUser.PasswordHash = _passwordHasher.HashPassword(password);
         }
 
+        var previousFirstName = existingUser.FirstName;
+        var previousLastName = existingUser.LastName;
+        var previousBirth = existingUser.DateOfBirth;
         // Update other fields
         if (!string.IsNullOrWhiteSpace(user.FirstName))
             existingUser.FirstName = user.FirstName;
@@ -171,6 +174,22 @@ public class UserService(PharmacyApiDbContext dbContext, IPasswordHasher passwor
         }
 
         existingUser.UpdatedAt = DateTime.UtcNow;
+
+        if (previousFirstName != existingUser.FirstName || previousLastName != existingUser.LastName || previousBirth != existingUser.DateOfBirth)
+        {
+            // A badge applies to the checked identity, not an editable profile.
+            var verifications = await _dbContext.Set<PatientVerification>()
+                .Where(item => item.PatientId == existingUser.Id && item.Kind == PatientVerificationKind.Identity &&
+                    (item.Status == PatientVerificationStatus.Pending || item.Status == PatientVerificationStatus.RequiresAction || item.Status == PatientVerificationStatus.Verified))
+                .ToListAsync();
+            foreach (var verification in verifications) {
+                verification.Status = PatientVerificationStatus.Expired;
+                verification.StatusReasonCode = "profile_changed";
+                verification.ExpiresAt = DateTime.UtcNow;
+                verification.UpdatedAt = DateTime.UtcNow;
+                verification.ActionUrl = null;
+            }
+        }
 
         _dbContext.Users.Update(existingUser);
         await _dbContext.SaveChangesAsync();
