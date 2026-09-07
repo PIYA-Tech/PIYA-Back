@@ -17,6 +17,93 @@ namespace PIYA_API.Tests.Unit;
 
 public sealed class PatientExperienceControllerTests
 {
+    [Fact] public async Task CancellationWhileProviderIsRespondingCannotBecomeVerified()
+    {
+        var options = new DbContextOptionsBuilder<PharmacyApiDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new TestDbContext(options);
+        var patient = MakeUser(UserRole.Patient); patient.DateOfBirth = new DateTime(1992, 1, 12, 0, 0, 0, DateTimeKind.Utc); db.Users.Add(patient);
+        var record = new PatientVerification { Id = Guid.NewGuid(), PatientId = patient.Id, Kind = PatientVerificationKind.Identity,
+            Status = PatientVerificationStatus.Pending, ProviderName = "Veriff", ProviderReference = Guid.NewGuid().ToString() };
+        db.Set<PatientVerification>().Add(record); await db.SaveChangesAsync();
+        var provider = new Mock<IVerificationProviderGateway>();
+        provider.Setup(service => service.RefreshAsync(PatientVerificationKind.Identity, record.ProviderReference, It.IsAny<CancellationToken>()))
+            .Returns(async () => {
+                await using var cancelDb = new TestDbContext(options);
+                var cancelled = await cancelDb.Set<PatientVerification>().SingleAsync();
+                cancelled.Status = PatientVerificationStatus.Cancelled;
+                await cancelDb.SaveChangesAsync();
+                return new VerificationProviderResult(PatientVerificationStatus.Verified, "Veriff", record.ProviderReference,
+                    Identity: new VerifiedIdentity(patient.Id, patient.FirstName, patient.LastName, new DateOnly(1992, 1, 12)));
+            });
+        var controller = WithUser(new PatientVerificationController(db, provider.Object, Mock.Of<IAuditService>(), Mock.Of<ILogger<PatientVerificationController>>()), patient);
+        var response = await controller.Refresh(record.Id, CancellationToken.None);
+        response.Result.Should().BeOfType<ConflictObjectResult>();
+        record.Status.Should().Be(PatientVerificationStatus.Cancelled);
+    }
+
+    [Fact] public async Task ConcurrentStatusMutationIsRejectedByPersistence()
+    {
+        var options = new DbContextOptionsBuilder<PharmacyApiDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new TestDbContext(options); await using var other = new TestDbContext(options);
+        var record = new PatientVerification { Id = Guid.NewGuid(), PatientId = Guid.NewGuid(), Status = PatientVerificationStatus.Pending };
+        db.Set<PatientVerification>().Add(record); await db.SaveChangesAsync();
+        var stale = await other.Set<PatientVerification>().SingleAsync();
+        record.Status = PatientVerificationStatus.Cancelled; await db.SaveChangesAsync();
+        stale.Status = PatientVerificationStatus.Verified;
+        var save = () => other.SaveChangesAsync();
+        await save.Should().ThrowAsync<DbUpdateConcurrencyException>();
+    }
+
+    [Theory]
+    [InlineData(true, true, true, PatientVerificationStatus.Verified)]
+    [InlineData(false, true, true, PatientVerificationStatus.Rejected)]
+    [InlineData(true, false, true, PatientVerificationStatus.Rejected)]
+    [InlineData(true, true, false, PatientVerificationStatus.Rejected)]
+    public async Task VeriffDecisionMustMatchPatientAccount(bool subjectMatches, bool nameMatches, bool birthMatches, PatientVerificationStatus expected)
+    {
+        await using var db = CreateContext();
+        var patient = MakeUser(UserRole.Patient); patient.DateOfBirth = new DateTime(1992, 1, 12, 0, 0, 0, DateTimeKind.Utc);
+        db.Users.Add(patient);
+        var record = new PatientVerification { Id = Guid.NewGuid(), PatientId = patient.Id, Kind = PatientVerificationKind.Identity,
+            Status = PatientVerificationStatus.Pending, ProviderName = "Veriff", ProviderReference = Guid.NewGuid().ToString(), ActionUrl = "https://magic.veriff.me/v/test" };
+        db.Set<PatientVerification>().Add(record); await db.SaveChangesAsync();
+        var provider = new Mock<IVerificationProviderGateway>();
+        provider.Setup(service => service.RefreshAsync(PatientVerificationKind.Identity, record.ProviderReference, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerificationProviderResult(PatientVerificationStatus.Verified, "Veriff", record.ProviderReference,
+                Identity: new VerifiedIdentity(subjectMatches ? patient.Id : Guid.NewGuid(), nameMatches ? patient.FirstName : "Different", patient.LastName,
+                    birthMatches ? new DateOnly(1992, 1, 12) : new DateOnly(1993, 1, 12))));
+        var controller = WithUser(new PatientVerificationController(db, provider.Object, Mock.Of<IAuditService>(), Mock.Of<ILogger<PatientVerificationController>>()), patient);
+        var result = await controller.Refresh(record.Id, CancellationToken.None);
+        ((OkObjectResult)result.Result!).Value.Should().BeOfType<PatientVerificationResponse>().Which.Status.Should().Be(expected);
+        record.ActionUrl.Should().BeNull();
+    }
+
+    [Fact] public async Task PendingPollKeepsHostedUrlForResume()
+    {
+        await using var db = CreateContext(); var patient = MakeUser(UserRole.Patient); db.Users.Add(patient);
+        var record = new PatientVerification { Id = Guid.NewGuid(), PatientId = patient.Id, Kind = PatientVerificationKind.Identity,
+            Status = PatientVerificationStatus.RequiresAction, ProviderName = "Veriff", ProviderReference = Guid.NewGuid().ToString(), ActionUrl = "https://magic.veriff.me/v/test" };
+        db.Set<PatientVerification>().Add(record); await db.SaveChangesAsync();
+        var provider = new Mock<IVerificationProviderGateway>();
+        provider.Setup(service => service.RefreshAsync(PatientVerificationKind.Identity, record.ProviderReference, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerificationProviderResult(PatientVerificationStatus.Pending, "Veriff", record.ProviderReference));
+        var controller = WithUser(new PatientVerificationController(db, provider.Object, Mock.Of<IAuditService>(), Mock.Of<ILogger<PatientVerificationController>>()), patient);
+        await controller.Refresh(record.Id, CancellationToken.None);
+        record.ActionUrl.Should().Be("https://magic.veriff.me/v/test");
+    }
+
+    [Fact] public async Task EditingIdentityExpiresExistingBadge()
+    {
+        await using var db = CreateContext(); var patient = MakeUser(UserRole.Patient); db.Users.Add(patient);
+        var record = new PatientVerification { Id = Guid.NewGuid(), PatientId = patient.Id, Kind = PatientVerificationKind.Identity,
+            Status = PatientVerificationStatus.Verified, ProviderName = "Veriff", ProviderReference = Guid.NewGuid().ToString() };
+        db.Set<PatientVerification>().Add(record); await db.SaveChangesAsync();
+        var update = MakeUser(UserRole.Patient); update.Id = patient.Id; update.Username = patient.Username; update.Email = patient.Email; update.FirstName = "New Name";
+        await new UserService(db, Mock.Of<IPasswordHasher>()).Update(update);
+        record.Status.Should().Be(PatientVerificationStatus.Expired);
+        record.StatusReasonCode.Should().Be("profile_changed");
+    }
+
     [Fact]
     public async Task UnconfiguredProvider_NeverClaimsPatientIsVerified()
     {
