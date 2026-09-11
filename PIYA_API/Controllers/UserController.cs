@@ -270,12 +270,13 @@ public class UserController(
             if (callerId == id)
             {
                 // In-app account deletion immediately removes credentials and direct
-                // identifiers. Medical records that must be retained remain anonymized.
+                // identifiers and shared access. Clinician-authored records may be
+                // retained; closing an account is not a claim of full erasure.
                 var result = await _gdprComplianceService.AnonymizeUserDataAsync(
                     id, "User requested account deletion in the PIYA app");
                 return Ok(new
                 {
-                    message = "Account deleted and retained medical records anonymized",
+                    message = "Account closed, sign-in credentials removed and shared access revoked. Some medical and audit records may be retained under PIYA's retention policy.",
                     result.AnonymizedAt,
                     result.RecordsAnonymized
                 });

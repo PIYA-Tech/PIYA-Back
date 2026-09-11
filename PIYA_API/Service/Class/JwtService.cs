@@ -58,7 +58,7 @@ public class JwtService(
         return (secret, issuer, audience, expiry);
     }
 
-    private string BuildAccessToken(User user, string secret, string issuer, string audience, int expiryMinutes)
+    private string BuildAccessToken(User user, Guid family, string secret, string issuer, string audience, int expiryMinutes)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -72,6 +72,8 @@ public class JwtService(
             new Claim("firstName", user.FirstName),
             new Claim("lastName", user.LastName),
             new Claim("role", user.Role.ToString()),
+            new Claim("piya_session", family.ToString()),
+            new Claim("piya_security_stamp", user.SecurityStamp.ToString()),
         };
         var descriptor = new JwtSecurityToken(issuer, audience, claims,
             expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
@@ -86,10 +88,11 @@ public class JwtService(
     public async Task<TokenResponse?> GenerateSecurityToken(string username, string deviceInfo = "Unknown")
     {
         var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Username == username);
-        if (user == null) return null;
+        if (user == null || !user.IsActive) return null;
 
         var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
-        var jwtToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
+        var family = Guid.NewGuid();
+        var jwtToken = BuildAccessToken(user, family, secret, issuer, audience, expiryMinutes);
         var refreshToken = GenerateRefreshToken();
         var refreshTokenHash = HashToken(refreshToken);
 
@@ -122,24 +125,19 @@ public class JwtService(
                         user.Id, oldest.Family);
                 }
             }
-            else
-            {
-                // Legacy behaviour: remove all prior sessions
-                var existing = await _dbContext.Tokens.Where(t => t.UserId == user.Id).ToListAsync();
-                if (existing.Count > 0) _dbContext.Tokens.RemoveRange(existing);
-            }
 
             var tokenEntity = new Token
             {
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
+                SecurityStamp = user.SecurityStamp,
                 // Do NOT store the raw JWT — it is a bearer secret and should never be
                 // persisted to the database. Revocation is handled via the jti blocklist
                 // in the distributed cache (RevokeAccessTokenAsync / IsTokenRevokedAsync).
                 AccessToken = string.Empty,
                 // Store SHA-256 hash — raw token never persisted to DB
                 RefreshToken = refreshTokenHash,
-                Family = Guid.NewGuid(),        // each new login starts a fresh family
+                Family = family,               // each new login starts a fresh family
                 ExpiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes),
                 CreationTime = DateTime.UtcNow,
                 DeviceInfo = deviceInfo,
@@ -238,7 +236,7 @@ public class JwtService(
             }
 
             var user = await _dbContext.Users.FindAsync(tokenEntity.UserId);
-            if (user is null || !user.IsActive)
+            if (user is null || !user.IsActive || tokenEntity.SecurityStamp == Guid.Empty || tokenEntity.SecurityStamp != user.SecurityStamp)
             {
                 _dbContext.Tokens.Remove(tokenEntity);
                 await _dbContext.SaveChangesAsync();
@@ -247,7 +245,7 @@ public class JwtService(
             }
 
             var (secret, issuer, audience, expiryMinutes) = GetJwtConfig();
-            var newAccessToken = BuildAccessToken(user, secret, issuer, audience, expiryMinutes);
+            var newAccessToken = BuildAccessToken(user, tokenEntity.Family, secret, issuer, audience, expiryMinutes);
             var newRefreshToken = GenerateRefreshToken();
             var newRefreshHash = HashToken(newRefreshToken);
             var newExpiry = now.AddMinutes(expiryMinutes);
@@ -293,6 +291,13 @@ public class JwtService(
         _dbContext.Tokens.Remove(tokenEntity);
         await _dbContext.SaveChangesAsync();
         return true;
+    }
+
+    public async Task RevokeSessionAsync(Guid userId, Guid family)
+    {
+        var sessions = await _dbContext.Tokens.Where(t => t.UserId == userId && t.Family == family).ToListAsync();
+        _dbContext.Tokens.RemoveRange(sessions);
+        await _dbContext.SaveChangesAsync();
     }
 
     public async Task RevokeAccessTokenAsync(string accessToken)
@@ -357,6 +362,28 @@ public class JwtService(
     // Validation
     // ─────────────────────────────────────────────────────────────────────────
 
+    private IQueryable<Token> CurrentSessionQuery(ClaimsPrincipal principal)
+    {
+        // Legacy tokens without a session/stamp are intentionally rejected. The
+        // deployment handoff requires signing in again after this security upgrade.
+        if (!Guid.TryParse(principal.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId) ||
+            !Guid.TryParse(principal.FindFirst("piya_session")?.Value, out var family) ||
+            !Guid.TryParse(principal.FindFirst("piya_security_stamp")?.Value, out var stamp) || stamp == Guid.Empty)
+            return _dbContext.Tokens.Where(_ => false);
+        var role = principal.FindFirst(ClaimTypes.Role)?.Value;
+        if (!Enum.TryParse<UserRole>(role, out var parsedRole))
+            return _dbContext.Tokens.Where(_ => false);
+        var oldest = DateTime.UtcNow.AddDays(-7);
+        return from session in _dbContext.Tokens.AsNoTracking()
+               join user in _dbContext.Users.AsNoTracking() on session.UserId equals user.Id
+               where user.Id == userId && user.IsActive && user.Role == parsedRole &&
+                     user.SecurityStamp == stamp && session.SecurityStamp == stamp &&
+                     session.Family == family && session.CreationTime > oldest
+               select session;
+    }
+
+    public Task<bool> IsSessionCurrentAsync(ClaimsPrincipal principal) => CurrentSessionQuery(principal).AnyAsync();
+
     public string? ValidateToken(string token)
     {
         try
@@ -385,6 +412,8 @@ public class JwtService(
                 if (revoked) throw new UnauthorizedAccessException("Token has been revoked");
             }
 
+            if (!CurrentSessionQuery(principal).Any())
+                throw new UnauthorizedAccessException("This session has ended. Sign in again.");
             return principal.FindFirst(ClaimTypes.Name)?.Value;
         }
         catch (SecurityTokenExpiredException)

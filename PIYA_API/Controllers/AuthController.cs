@@ -630,20 +630,12 @@ public class AuthController(
             if (!Guid.TryParse(userIdClaim, out var userId))
                 return Unauthorized(new { message = "Invalid authenticated principal" });
 
-            var refreshToken = RefreshTokenTransportPolicy.UsesResponseBody(Request)
-                ? request.RefreshToken
-                : Request.Cookies["piya_refresh_token"];
-
-            if (!string.IsNullOrWhiteSpace(refreshToken))
-            {
-                var revoked = await _jwtService.RevokeRefreshTokenAsync(refreshToken, userId);
-                if (!revoked)
-                {
-                    _logger.LogWarning(
-                        "Logout for user {UserId} supplied an unknown or non-owned refresh token; current access token will still be revoked",
-                        userId);
-                }
-            }
+            if (!Guid.TryParse(User.FindFirst("piya_session")?.Value, out var family))
+                return Unauthorized(new { message = "Invalid authenticated session" });
+            // The bearer identifies this tab/device's session. A browser cookie
+            // may already belong to a different login in another tab; never use
+            // that cookie (or an arbitrary body value) as the revocation target.
+            await _jwtService.RevokeSessionAsync(userId, family);
 
             DeleteRefreshTokenCookie();
 

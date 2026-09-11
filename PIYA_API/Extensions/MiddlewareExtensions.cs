@@ -57,9 +57,9 @@ public static class MiddlewareExtensions
         app.MapControllers();
 
         // SignalR hubs
-        app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub");
-        app.MapHub<PIYA_API.Hubs.PharmacyHub>("/hubs/pharmacy");
-        app.MapHub<PIYA_API.Hubs.InventoryHub>("/hubs/inventory");
+        app.MapHub<PIYA_API.Hubs.NotificationHub>("/notificationHub", options => options.CloseOnAuthenticationExpiration = true);
+        app.MapHub<PIYA_API.Hubs.PharmacyHub>("/hubs/pharmacy", options => options.CloseOnAuthenticationExpiration = true);
+        app.MapHub<PIYA_API.Hubs.InventoryHub>("/hubs/inventory", options => options.CloseOnAuthenticationExpiration = true);
 
         return app;
     }

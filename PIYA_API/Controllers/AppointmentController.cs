@@ -38,10 +38,6 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             if (userId == Guid.Empty)
                 return BadRequest(new { error = "Authenticated user ID is invalid." });
             
-            // Doctors cannot book appointments for themselves as patients
-            if (userId == request.DoctorId)
-                return BadRequest(new { error = "Doctors cannot book appointments for themselves as patients. Please specify a valid PatientId." });
-
             // Role-based validation
             if (userRole == "Patient")
             {
@@ -69,6 +65,9 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             {
                 patientId = userId;
             }
+
+            if (patientId == request.DoctorId)
+                return BadRequest(new { error = "The patient and treating doctor must be different people." });
 
             var appointment = new Appointment
             {

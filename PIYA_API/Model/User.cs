@@ -20,6 +20,10 @@ public class User
     /// Must be at least 18 years in the past when supplied.
     /// </summary>
     public DateTime? DateOfBirth { get; set; }
+    // Legacy compatibility property, not a one-to-one EF navigation. One user
+    // may have multiple independently revocable device sessions.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    [System.Text.Json.Serialization.JsonIgnore]
     public Token? TokensInfo { get; set; }
     public string? SigningKey { get; set; }
     
@@ -37,6 +41,11 @@ public class User
     /// Whether the user account is active
     /// </summary>
     public bool IsActive { get; set; } = true;
+
+    /// <summary>Rotated atomically with credential, role or account-status changes.
+    /// Sessions issued against a previous version must never be accepted.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Guid SecurityStamp { get; set; } = Guid.NewGuid();
     
     /// <summary>
     /// Whether the email is verified

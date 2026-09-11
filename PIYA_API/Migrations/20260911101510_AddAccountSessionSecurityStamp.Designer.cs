@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PIYA_API.Data;
@@ -12,9 +13,11 @@ using PIYA_API.Data;
 namespace PIYA_API.Migrations
 {
     [DbContext(typeof(PharmacyApiDbContext))]
-    partial class PharmacyApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260911101510_AddAccountSessionSecurityStamp")]
+    partial class AddAccountSessionSecurityStamp
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3185,7 +3188,8 @@ namespace PIYA_API.Migrations
 
                     b.HasIndex("RefreshToken");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
                     b.HasIndex("UserId", "Family");
 
@@ -4570,8 +4574,8 @@ namespace PIYA_API.Migrations
             modelBuilder.Entity("PIYA_API.Model.Token", b =>
                 {
                     b.HasOne("PIYA_API.Model.User", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
+                        .WithOne("TokensInfo")
+                        .HasForeignKey("PIYA_API.Model.Token", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -4705,6 +4709,8 @@ namespace PIYA_API.Migrations
 
             modelBuilder.Entity("PIYA_API.Model.User", b =>
                 {
+                    b.Navigation("TokensInfo");
+
                     b.Navigation("TwoFactorAuth");
                 });
 #pragma warning restore 612, 618

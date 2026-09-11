@@ -8,6 +8,8 @@ using PIYA_API.Data;
 using PIYA_API.Service.Interface;
 using PIYA_API.Service.Class;
 using PIYA_API.Model;
+using Npgsql;
+using System.Text.RegularExpressions;
 
 namespace PIYA_API.Tests;
 
@@ -27,8 +29,20 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
     public const string IntegrationAdminUsername = "piya_integration_admin";
     public const string IntegrationAdminPassword = "IntegrationAdmin@123";
 
-    private readonly SemaphoreSlim _databaseSetupGate = new(1, 1);
+    private static readonly SemaphoreSlim DatabaseSetupGate = new(1, 1);
+    private readonly string _testConnection = ValidateTestConnection(
+        Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection"));
     private bool _databaseReady;
+
+    public static string ValidateTestConnection(string? connection)
+    {
+        if (string.IsNullOrWhiteSpace(connection))
+            throw new InvalidOperationException("Tests require an explicit ConnectionStrings__DefaultConnection pointing to a disposable *_test or *_audit database. No application database fallback is allowed.");
+        var parsed = new NpgsqlConnectionStringBuilder(connection);
+        if (parsed.Database is null || !Regex.IsMatch(parsed.Database, @"(?:^|_)(?:test|tests|audit)(?:_|$)", RegexOptions.IgnoreCase))
+            throw new InvalidOperationException("Refusing to run tests: the explicit database name must contain a separate test, tests or audit segment. Never point tests at the PIYA application database.");
+        return connection;
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -43,6 +57,9 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Cors__AllowedOrigins__0", "http://localhost");
         Environment.SetEnvironmentVariable("ENABLE_DEMO_SEEDING", "false");
         Environment.SetEnvironmentVariable("TestHarness__SkipProductionSeeding", "true");
+        Environment.SetEnvironmentVariable("FacilityDirectory__Enabled", "false");
+        Environment.SetEnvironmentVariable("Firebase__Enabled", "false");
+        Environment.SetEnvironmentVariable("ApplePush__Enabled", "false");
         Environment.SetEnvironmentVariable(
             "DataProtection__KeyPath",
             Path.Combine(Path.GetTempPath(), "piya-test-data-protection"));
@@ -59,12 +76,7 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
             // Layer our test overrides on top — do NOT clear existing sources.
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                // Point at the developer's local Postgres DB (same DB the API uses).
-                // CI overrides this via the ConnectionStrings__DefaultConnection env-var.
-                ["ConnectionStrings:DefaultConnection"] =
-                    GetEnvOrDefault(
-                        "ConnectionStrings__DefaultConnection",
-                        "Host=localhost;Database=piya_db;Username=mahammadbbyv;Pooling=true;MaxPoolSize=10;Timeout=10"),
+                ["ConnectionStrings:DefaultConnection"] = _testConnection,
 
                 // Disable features that depend on external services or slow things down.
                 ["Features:EnableAuditLogging"]       = "false",
@@ -128,7 +140,7 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
     /// </summary>
     public async Task EnsureMigratedAsync()
     {
-        await _databaseSetupGate.WaitAsync();
+        await DatabaseSetupGate.WaitAsync();
         try
         {
             if (_databaseReady)
@@ -165,14 +177,17 @@ public class PiyaWebApplicationFactory : WebApplicationFactory<Program>
 
             admin.Role = UserRole.Admin;
             admin.IsActive = true;
-            admin.PasswordHash = passwordHasher.HashPassword(IntegrationAdminPassword);
+            // Multiple factories share the test admin. Rehashing on every
+            // fixture would invalidate sessions still in use by another test.
+            if (string.IsNullOrEmpty(admin.PasswordHash) || !passwordHasher.VerifyPassword(IntegrationAdminPassword, admin.PasswordHash))
+                admin.PasswordHash = passwordHasher.HashPassword(IntegrationAdminPassword);
             admin.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
             _databaseReady = true;
         }
         finally
         {
-            _databaseSetupGate.Release();
+            DatabaseSetupGate.Release();
         }
     }
 

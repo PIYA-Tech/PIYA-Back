@@ -80,14 +80,14 @@ public class AuthControllerSecurityTests
     }
 
     [Fact]
-    public async Task Logout_RevokesOnlyAuthenticatedBearerAndOwnedRefreshToken()
+    public async Task Logout_RevokesOnlyAuthenticatedBearerSession()
     {
         var userId = Guid.NewGuid();
         var jwt = new Mock<IJwtService>();
-        jwt.Setup(x => x.RevokeRefreshTokenAsync("native-refresh", userId))
-            .ReturnsAsync(false);
         var controller = MakeController(jwt);
         SetAuthenticatedRequest(controller, userId, "validated-bearer");
+        var family = Guid.NewGuid();
+        ((ClaimsIdentity)controller.User.Identity!).AddClaim(new Claim("piya_session", family.ToString()));
         controller.Request.Headers[RefreshTokenTransportPolicy.ClientHeaderName] = "iOS";
 
         var result = await controller.Logout(new LogoutRequest
@@ -97,7 +97,8 @@ public class AuthControllerSecurityTests
         });
 
         result.Should().BeOfType<OkObjectResult>();
-        jwt.Verify(x => x.RevokeRefreshTokenAsync("native-refresh", userId), Times.Once);
+        jwt.Verify(x => x.RevokeSessionAsync(userId, family), Times.Once);
+        jwt.Verify(x => x.RevokeRefreshTokenAsync(It.IsAny<string>(), It.IsAny<Guid>()), Times.Never);
         jwt.Verify(x => x.RevokeAccessTokenAsync("validated-bearer"), Times.Once);
         jwt.Verify(x => x.RevokeAccessTokenAsync("forged-body-token"), Times.Never);
     }

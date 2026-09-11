@@ -75,6 +75,8 @@ public class TwoFactorAuthServiceSecurityTests : IDisposable
             .Returns(Task.CompletedTask);
         var service = MakeService(Mock.Of<IPasswordHasher>(), cache.Object);
         var userId = Guid.NewGuid();
+        _context.Users.Add(new User { Id = userId, Username = "challenge-test", Email = "challenge@example.test", FirstName = "Test", LastName = "Account", PhoneNumber = "", IsActive = true });
+        await _context.SaveChangesAsync();
 
         var rawChallenge = await service.IssueChallenge(userId);
 
@@ -82,6 +84,12 @@ public class TwoFactorAuthServiceSecurityTests : IDisposable
         (await service.ValidateChallenge(userId, rawChallenge)).Should().BeTrue();
         (await service.ConsumeChallenge(userId, rawChallenge)).Should().BeTrue();
         (await service.ConsumeChallenge(userId, rawChallenge)).Should().BeFalse();
+
+        var staleChallenge = await service.IssueChallenge(userId);
+        var user = await _context.Users.SingleAsync(u => u.Id == userId);
+        user.PasswordHash = "replaced-password-hash";
+        await _context.SaveChangesAsync();
+        (await service.ValidateChallenge(userId, staleChallenge)).Should().BeFalse();
     }
 
     [Fact]

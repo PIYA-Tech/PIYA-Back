@@ -193,6 +193,11 @@ public class GdprComplianceService(
             _context.PasswordResetTokens.RemoveRange(
                 await _context.PasswordResetTokens.Where(item => item.UserId == userId).ToListAsync());
 
+            // Closing an account must close consent-based sharing in the same
+            // SaveChanges transaction. Retained clinician-authored records are
+            // not falsely described as fully anonymized or silently destroyed.
+            await CloseSharingAsync(userId, anonymizationDate);
+
             // Save changes
             await _context.SaveChangesAsync();
 
@@ -225,6 +230,69 @@ public class GdprComplianceService(
         {
             _logger.LogError(ex, "Error anonymizing data for user {UserId}", userId);
             throw;
+        }
+    }
+
+    private async Task CloseSharingAsync(Guid userId, DateTime now)
+    {
+        var emergency = await _context.EmergencyHealthProfiles.SingleOrDefaultAsync(p => p.PatientId == userId);
+        if (emergency is not null)
+        {
+            emergency.IsSharingEnabled = false;
+            emergency.ShareTokenHash = null;
+            emergency.ShareTokenExpiresAt = null;
+            emergency.EmergencyContacts = null;
+            emergency.AdditionalNotes = null;
+            emergency.BloodType = null;
+            emergency.Allergies = null;
+            emergency.CurrentMedications = null;
+            emergency.ChronicConditions = null;
+            emergency.UpdatedAt = now;
+        }
+        var grants = await _context.EmergencyAccessGrants.Where(g =>
+            (g.PatientId == userId || g.RequesterId == userId) && g.RevokedAt == null).ToListAsync();
+        foreach (var grant in grants)
+        {
+            grant.RevokedAt = now;
+            grant.RevokedByUserId = userId;
+        }
+        var invitations = await _context.Set<CareCircleInvitation>()
+            .Where(i => i.PatientId == userId && i.Status == CareCircleInvitationStatus.Pending).ToListAsync();
+        foreach (var invitation in invitations)
+        {
+            invitation.Status = CareCircleInvitationStatus.Revoked;
+            invitation.RevokedAt = now;
+            invitation.UpdatedAt = now;
+        }
+        var memberships = await _context.Set<CareCircleMember>().Where(m =>
+            (m.PatientId == userId || m.MemberUserId == userId) && m.Status == CareCircleMemberStatus.Active).ToListAsync();
+        var memberIds = memberships.Select(m => m.Id).ToArray();
+        foreach (var member in memberships)
+        {
+            member.Status = CareCircleMemberStatus.Revoked;
+            member.RevokedAt = now;
+            member.RevokedByUserId = userId;
+            member.UpdatedAt = now;
+        }
+        var consents = await _context.Set<CareCircleConsent>().Where(c =>
+            (c.PatientId == userId || memberIds.Contains(c.MemberId)) && c.Status == CareCircleConsentStatus.Active).ToListAsync();
+        foreach (var consent in consents)
+        {
+            consent.Status = CareCircleConsentStatus.Revoked;
+            consent.RevokedAt = now;
+            consent.RevokedByUserId = userId;
+            consent.RevocationReason = "Account closed";
+        }
+        foreach (var consent in await _context.UserConsents.Where(c => c.UserId == userId && c.RevokedAt == null).ToListAsync())
+            consent.RevokedAt = now;
+        var verifications = await _context.Set<PatientVerification>().Where(v => v.PatientId == userId).ToListAsync();
+        foreach (var verification in verifications)
+        {
+            verification.Status = PatientVerificationStatus.Cancelled;
+            verification.ActionUrl = null;
+            verification.StatusReasonCode = "account_closed";
+            verification.ExpiresAt = now;
+            verification.UpdatedAt = now;
         }
     }
 

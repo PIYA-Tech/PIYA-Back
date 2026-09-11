@@ -31,6 +31,9 @@ var bootstrapConfig = new ConfigurationBuilder()
 
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(bootstrapConfig)
+    // Hosting's information-level request logs include the query string.
+    // SignalR browsers send JWTs there; never write these credentials to logs.
+    .MinimumLevel.Override("Microsoft.AspNetCore.Hosting.Diagnostics", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.File("logs/piya-api-.log", rollingInterval: RollingInterval.Day)
@@ -149,6 +152,7 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+    throw; // Migration/startup failures must fail the container process.
 }
 finally
 {

@@ -4,6 +4,10 @@ using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.IdentityModel.Tokens.Jwt;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using PIYA_API.Data;
+using PIYA_API.Model;
 using Xunit;
 using FluentAssertions;
 
@@ -73,23 +77,9 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         //         and create one so the FK constraint is satisfied.
         var hospitalId = await GetOrCreateHospitalId();
 
-        // Step 5: Create doctor profile (optional — service auto-creates missing doctors)
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", doctorData["accessToken"]);
-
-        var doctorProfile = new
-        {
-            specialization = "Cardiology",
-            licenseNumber = $"DOC-{Guid.NewGuid().ToString()[..8]}",
-            hospitalIds = new[] { hospitalId },
-            consultationFee = 100,
-            workingHours = new[]
-            {
-                new { dayOfWeek = 1, startTime = "09:00", endTime = "17:00" }
-            }
-        };
-        // Best-effort — ignore failures (profile endpoint may not exist yet)
-        await _client.PostAsJsonAsync("/api/doctor/profile", doctorProfile);
+        // A bookable doctor must have a real affiliation/profile. Do not ignore
+        // failed setup calls or silently rely on booking to create a doctor.
+        await SetDoctorAffiliation(Guid.Parse(doctorData["userId"]), hospitalId);
 
         // Step 6: Book appointment as patient using the elevated doctor's userId.
         _client.DefaultRequestHeaders.Authorization =
@@ -161,6 +151,8 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
         doctorData["accessToken"] = await ParseAccessToken(reloginResponse);
 
         var hospitalId = await GetOrCreateHospitalId();
+
+        await SetDoctorAffiliation(Guid.Parse(doctorData["userId"]), hospitalId);
 
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", patientData["accessToken"]);
@@ -239,23 +231,8 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
     /// </summary>
     private async Task<Guid> GetOrCreateHospitalId()
     {
-        // Clear any auth header for the GET (it is [AllowAnonymous])
-        _client.DefaultRequestHeaders.Authorization = null;
-
-        var listResponse = await _client.GetAsync("/api/hospital");
-        if (listResponse.IsSuccessStatusCode)
-        {
-            var json = await listResponse.Content.ReadAsStringAsync();
-            var hospitals = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            if (hospitals?.Count > 0)
-                return Guid.Parse(hospitals[0]["id"].GetString()!);
-        }
-
-        // No hospitals yet — log in as the seeded admin_piya demo user (Role=Admin)
-        // and create one.  We cannot self-register an Admin because /api/auth/register
-        // always assigns the Patient role regardless of the 'role' field in the body.
+        // Every test gets its own active facility, not another test's potentially
+        // inactive/unrelated hospital or a production/demo fixture.
         var adminToken = await LoginSeededAdmin();
 
         _client.DefaultRequestHeaders.Authorization =
@@ -263,7 +240,7 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
 
         var hospitalPayload = new
         {
-            name        = "Integration Test Hospital",
+            name        = "Integration Test Hospital " + Guid.NewGuid().ToString("N"),
             address     = "123 Test Avenue",
             city        = "Baku",
             country     = "Azerbaijan",
@@ -279,6 +256,20 @@ public class AppointmentIntegrationTests : IClassFixture<PiyaWebApplicationFacto
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
         return Guid.Parse(created["id"].GetString()!);
+    }
+
+    private async Task SetDoctorAffiliation(Guid doctorId, Guid hospitalId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PharmacyApiDbContext>();
+        var profile = await db.DoctorProfiles.SingleOrDefaultAsync(p => p.UserId == doctorId);
+        if (profile is null) {
+            profile = new DoctorProfile { Id = Guid.NewGuid(), UserId = doctorId, LicenseNumber = "TEST-LICENSE", Specialization = MedicalSpecialization.GeneralPractice };
+            db.DoctorProfiles.Add(profile);
+        }
+        profile.HospitalIds = [hospitalId];
+        profile.LicenseExpiryDate = DateTime.UtcNow.AddYears(1);
+        await db.SaveChangesAsync();
     }
 
     private async Task<string> LoginSeededAdmin()

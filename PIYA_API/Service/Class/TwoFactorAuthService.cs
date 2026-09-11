@@ -422,10 +422,12 @@ public class TwoFactorAuthService(
     /// <inheritdoc/>
     public async Task<string> IssueChallenge(Guid userId)
     {
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsActive)
+            ?? throw new InvalidOperationException("The account is unavailable.");
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         // Store a SHA-256 hash so the raw token never lives in the cache as plaintext
         var hashed = HashEphemeralToken(raw);
-        await _cache.SetStringAsync(ChallengeKey(userId), hashed, TimeSpan.FromMinutes(5));
+        await _cache.SetStringAsync(ChallengeKey(userId), $"{user.SecurityStamp:D}:{hashed}", TimeSpan.FromMinutes(5));
         return raw;
     }
 
@@ -449,8 +451,11 @@ public class TwoFactorAuthService(
         var storedHash = await _cache.GetStringAsync(ChallengeKey(userId));
         if (storedHash == null)
             return false;
-
-        return FixedTimeTokenEquals(HashEphemeralToken(challengeToken), storedHash);
+        var parts = storedHash.Split(':', 2);
+        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var stamp)) return false;
+        if (!await _context.Users.AsNoTracking().AnyAsync(u => u.Id == userId && u.IsActive && u.SecurityStamp == stamp))
+            return false;
+        return FixedTimeTokenEquals(HashEphemeralToken(challengeToken), parts[1]);
     }
 
     /// <inheritdoc/>

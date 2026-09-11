@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 
 namespace PIYA_API.Data;
@@ -47,12 +46,6 @@ public class PharmacyApiDbContextFactory : IDesignTimeDbContextFactory<PharmacyA
         // Build DbContext options
         var optionsBuilder = new DbContextOptionsBuilder<PharmacyApiDbContext>();
         optionsBuilder.UseNpgsql(connectionString);
-
-        // Design-time EF command path: always ignore PendingModelChangesWarning here
-        // so CI `dotnet ef database update` is not blocked by model drift warnings.
-        // (Runtime behavior is still controlled independently in Program.cs.)
-        optionsBuilder.ConfigureWarnings(w =>
-            w.Ignore(RelationalEventId.PendingModelChangesWarning));
 
         return new PharmacyApiDbContext(optionsBuilder.Options);
     }

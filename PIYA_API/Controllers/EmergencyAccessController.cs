@@ -149,7 +149,8 @@ public class EmergencyAccessController(
         var now = DateTime.UtcNow;
         var profile = await _db.EmergencyHealthProfiles
             .SingleOrDefaultAsync(item => item.ShareTokenHash == hash);
-        if (profile is null || !profile.IsSharingEnabled || profile.ShareTokenExpiresAt <= now)
+        if (profile is null || !profile.IsSharingEnabled || profile.ShareTokenExpiresAt is null || profile.ShareTokenExpiresAt <= now ||
+            !await _db.Users.AsNoTracking().AnyAsync(u => u.Id == profile.PatientId && u.IsActive))
         {
             await AuditAccessAsync(CurrentUserId, null, false, "Invalid or expired emergency token");
             return Unauthorized(new { error = "This emergency share token is invalid, expired, or revoked" });
@@ -180,6 +181,9 @@ public class EmergencyAccessController(
             .SingleOrDefaultAsync(item => item.Id == grantId);
         if (grant is null) return NotFound(new { error = "Access grant not found" });
         if (grant.PatientId != CurrentUserId && grant.RequesterId != CurrentUserId) return Forbid();
+        if (!await _db.Users.AsNoTracking().AnyAsync(u => u.Id == grant.PatientId && u.IsActive) ||
+            !await _db.Users.AsNoTracking().AnyAsync(u => u.Id == grant.RequesterId && u.IsActive && u.Role == UserRole.Doctor))
+            return StatusCode(StatusCodes.Status410Gone, new { error = "This emergency access window has ended" });
         if (grant.RevokedAt != null || grant.ExpiresAt <= DateTime.UtcNow)
             return StatusCode(StatusCodes.Status410Gone, new { error = "This emergency access window has ended" });
 

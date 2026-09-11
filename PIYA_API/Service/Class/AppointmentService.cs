@@ -29,23 +29,6 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         if (appointment.ScheduledAt < DateTime.UtcNow.AddMinutes(-1))
             throw new ArgumentException("Appointment cannot be scheduled in the past.");
 
-        // Validate that the referenced hospital and doctor exist BEFORE running the
-        // conflict check, so we never query availability for a non-existent entity.
-        if (appointment.HospitalId != Guid.Empty)
-        {
-            var hospitalExists = await _context.Set<PIYA_API.Model.Hospital>().AnyAsync(h => h.Id == appointment.HospitalId);
-            if (!hospitalExists)
-                throw new KeyNotFoundException($"Hospital {appointment.HospitalId} not found.");
-        }
-
-        if (appointment.DoctorId != Guid.Empty)
-        {
-            var doctorExists = await _context.Set<PIYA_API.Model.User>()
-                .AnyAsync(u => u.Id == appointment.DoctorId && u.Role == PIYA_API.Model.UserRole.Doctor);
-            if (!doctorExists)
-                throw new KeyNotFoundException($"Doctor {appointment.DoctorId} not found.");
-        }
-
         // Wrap the availability check and INSERT in a serializable transaction so that
         // two concurrent booking requests for the same slot cannot both pass the check
         // before either has committed — eliminating the TOCTOU double-booking race.
@@ -56,6 +39,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
                 System.Data.IsolationLevel.Serializable);
             try
             {
+                await ValidateBookingParticipantsAsync(appointment);
                 var isAvailable = await IsDoctorAvailableAsync(
                     appointment.DoctorId,
                     appointment.ScheduledAt,
@@ -92,6 +76,31 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
             return appointment;
         });
+    }
+
+    private async Task ValidateBookingParticipantsAsync(Appointment appointment)
+    {
+        if (appointment.PatientId == Guid.Empty || appointment.DoctorId == Guid.Empty || appointment.HospitalId == Guid.Empty)
+            throw new ArgumentException("Patient, doctor and hospital are required.");
+        if (appointment.PatientId == appointment.DoctorId)
+            throw new ArgumentException("The patient and treating doctor must be different people.");
+        if (appointment.DurationMinutes < 5 || appointment.DurationMinutes > 240)
+            throw new ArgumentException("Appointment duration must be between 5 and 240 minutes.");
+        if (!await _context.Users.AnyAsync(u => u.Id == appointment.PatientId && u.IsActive))
+            throw new KeyNotFoundException("The patient account is unavailable.");
+        if (!await _context.Set<Hospital>().AnyAsync(h => h.Id == appointment.HospitalId && h.IsActive))
+            throw new KeyNotFoundException("This hospital is not currently accepting appointments.");
+        var profile = await _context.DoctorProfiles.AsNoTracking()
+            .Include(p => p.User).FirstOrDefaultAsync(p => p.UserId == appointment.DoctorId);
+        if (profile is null || !profile.User.IsActive || profile.User.Role != UserRole.Doctor)
+            throw new KeyNotFoundException("The doctor is unavailable.");
+        if (!profile.HospitalIds.Contains(appointment.HospitalId))
+            throw new ArgumentException("The doctor is not affiliated with the selected hospital.");
+        if (string.IsNullOrWhiteSpace(profile.LicenseNumber) || profile.LicenseExpiryDate < appointment.ScheduledAt)
+            throw new ArgumentException("The doctor's registration does not cover the appointment date.");
+        if (!profile.AcceptingNewPatients && !await _context.Appointments.AnyAsync(a =>
+                a.DoctorId == appointment.DoctorId && a.PatientId == appointment.PatientId && a.Status == AppointmentStatus.Completed))
+            throw new InvalidOperationException("The doctor is not accepting new patients.");
     }
 
     public async Task<Appointment?> GetByIdAsync(Guid id, CancellationToken ct = default)

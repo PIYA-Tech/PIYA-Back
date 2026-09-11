@@ -83,9 +83,41 @@ namespace PIYA_API.Data
         public DbSet<FacilityImportRun> FacilityImportRuns { get; set; }
         public DbSet<FacilityDuplicateCandidate> FacilityDuplicateCandidates { get; set; }
 
+        // Centralize invalidation so password reset, account administration and
+        // self-deletion cannot forget it. Never use UpdatedAt: ordinary profile
+        // edits must not unexpectedly invalidate authentication.
+        private void RotateChangedSecurityStamps()
+        {
+            ChangeTracker.DetectChanges();
+            foreach (var entry in ChangeTracker.Entries<User>().Where(e => e.State == EntityState.Modified))
+            {
+                var changed = new[] { nameof(User.PasswordHash), nameof(User.Role), nameof(User.IsActive) }
+                    .Any(name => !Equals(entry.Property(name).OriginalValue, entry.Property(name).CurrentValue));
+                if (changed && entry.Entity.SecurityStamp == entry.Property(u => u.SecurityStamp).OriginalValue)
+                    entry.Entity.SecurityStamp = Guid.NewGuid();
+            }
+        }
+
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            RotateChangedSecurityStamps();
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            RotateChangedSecurityStamps();
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<User>().Property(u => u.SecurityStamp).IsConcurrencyToken();
+            modelBuilder.Entity<Token>().HasIndex(t => new { t.UserId, t.Family });
+            modelBuilder.Entity<Token>().HasOne<User>().WithMany()
+                .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
 
             // User - TwoFactorAuth (One-to-One)
             modelBuilder.Entity<User>()

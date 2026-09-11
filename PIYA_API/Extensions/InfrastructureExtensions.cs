@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.OpenApi.Models;
@@ -309,7 +310,7 @@ public static class InfrastructureExtensions
         this IServiceCollection services, IConfiguration config)
     {
         var signalRRedisConn = config.GetConnectionString("Redis");
-        var signalRBuilder = services.AddSignalR();
+        var signalRBuilder = services.AddSignalR(options => options.AddFilter<PIYA_API.Hubs.CurrentSessionHubFilter>());
         if (!string.IsNullOrWhiteSpace(signalRRedisConn))
         {
             signalRBuilder.AddStackExchangeRedis(signalRRedisConn, options =>

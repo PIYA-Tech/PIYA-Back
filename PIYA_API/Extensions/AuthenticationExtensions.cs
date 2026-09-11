@@ -51,6 +51,19 @@ public static class AuthenticationExtensions
 
             options.Events = new JwtBearerEvents
             {
+                OnMessageReceived = context =>
+                {
+                    var path = context.HttpContext.Request.Path;
+                    // Browsers cannot attach an Authorization header to the
+                    // WebSocket/SSE handshake. Never accept query tokens on APIs.
+                    if (string.IsNullOrEmpty(context.Request.Headers.Authorization) &&
+                        (path.StartsWithSegments("/notificationHub") ||
+                         path.StartsWithSegments("/hubs/pharmacy") ||
+                         path.StartsWithSegments("/hubs/inventory")) &&
+                        context.Request.Query.TryGetValue("access_token", out var token) && token.Count == 1)
+                        context.Token = token[0];
+                    return Task.CompletedTask;
+                },
                 OnAuthenticationFailed = context =>
                 {
                     Log.Debug("JWT Auth Failed: {Message}", context.Exception.Message);
@@ -58,12 +71,16 @@ public static class AuthenticationExtensions
                 },
                 OnTokenValidated = async context =>
                 {
+                    var jwtSvc = context.HttpContext.RequestServices.GetRequiredService<IJwtService>();
+                    if (context.Principal is null || !await jwtSvc.IsSessionCurrentAsync(context.Principal))
+                    {
+                        context.Fail("This session has ended. Sign in again.");
+                        return;
+                    }
                     var jti = context.Principal?.FindFirst(
                         System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti)?.Value;
                     if (!string.IsNullOrWhiteSpace(jti))
                     {
-                        var jwtSvc = context.HttpContext.RequestServices
-                            .GetRequiredService<IJwtService>();
                         var revoked = await jwtSvc.IsJtiRevokedAsync(jti);
                         if (revoked)
                         {

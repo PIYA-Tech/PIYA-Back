@@ -13,7 +13,17 @@ namespace PIYA_API.Tests.Load;
 /// </summary>
 public class LoadTests
 {
-    private const string BaseUrl = "http://localhost:5254";
+    private static readonly string BaseUrl = ValidateLoadTarget();
+
+    private static string ValidateLoadTarget()
+    {
+        var value = Environment.GetEnvironmentVariable("PIYA_LOAD_TEST_BASE_URL");
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || !uri.IsLoopback ||
+            (uri.Scheme != "http" && uri.Scheme != "https"))
+            throw new InvalidOperationException("Load tests require PIYA_LOAD_TEST_BASE_URL pointing to an explicitly started, disposable loopback API.");
+        PiyaWebApplicationFactory.ValidateTestConnection(Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection"));
+        return uri.GetLeftPart(UriPartial.Authority);
+    }
     // Shared, tuned HttpClient used by NBomber load scenarios to avoid
     // creating/disposing many handlers under heavy concurrency which can
     // exhaust sockets and cause connect timeouts. Configured to allow
@@ -46,7 +56,7 @@ public class LoadTests
         LoadTestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd("NBomber-LoadTest");
     }
 
-    [Fact]
+    [OptInLoadTest]
     [Trait("Category", "LoadTest")]
     public async Task LoadTest_LoginEndpoint_HandlesConcurrentUsers()
     {
@@ -160,7 +170,7 @@ public class LoadTests
         }
     }
 
-    [Fact]
+    [OptInLoadTest]
     [Trait("Category", "LoadTest")]
     public void LoadTest_PharmacySearch_HandlesConcurrentSearches()
     {
@@ -194,7 +204,7 @@ public class LoadTests
         Assert.True(scen.Ok.Latency.Percent99 < 2000, "99th percentile latency should be under 2 seconds");
     }
 
-    [Fact]
+    [OptInLoadTest]
     [Trait("Category", "LoadTest")]
     public async Task StressTest_AppointmentBooking_FindBreakingPoint()
     {

@@ -26,6 +26,7 @@ public interface IJwtService
     /// Returns false for an unknown token or an ownership mismatch.
     /// </summary>
     public Task<bool> RevokeRefreshTokenAsync(string refreshToken, Guid expectedUserId);
+    public Task RevokeSessionAsync(Guid userId, Guid family);
 
     /// <summary>
     /// Extracts the jti claim from a raw JWT string and records it in the
@@ -39,6 +40,10 @@ public interface IJwtService
     /// Checks the distributed cache first (Redis), then falls back to the database.
     /// </summary>
     public Task<bool> IsJtiRevokedAsync(string jti);
+
+    /// <summary>Checks current account state and the still-active session family.
+    /// No positive cache is used: reset, deletion and logout take effect immediately.</summary>
+    public Task<bool> IsSessionCurrentAsync(System.Security.Claims.ClaimsPrincipal principal);
 }
 
 public class TokenResponse

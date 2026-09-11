@@ -123,6 +123,8 @@ public sealed class CareCircleController(
             item.TokenHash == tokenHash && item.Status == CareCircleInvitationStatus.Pending,
             cancellationToken);
         if (invitation is null) return NotFound(new { error = "Invitation not found or already used." });
+        if (!await _db.Users.AsNoTracking().AnyAsync(u => u.Id == invitation.PatientId && u.IsActive, cancellationToken))
+            return StatusCode(StatusCodes.Status410Gone, new { error = "This invitation is no longer available." });
 
         var now = DateTime.UtcNow;
         if (invitation.ExpiresAt <= now || invitation.AccessExpiresAt <= now)
