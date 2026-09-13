@@ -23,6 +23,8 @@ public static class ConferenceDoctorScope
             ("Auth", "Me", "GET") => true,
             ("Auth", "Logout", "POST") => true,
             ("Auth", "RefreshToken", "POST") => true,
+            ("EmergencyAccess", "RequestAccess", "POST") => true,
+            ("EmergencyAccess", "GetGrant", "GET") => true,
             ("Medication", "GetAll" or "Search" or "GetById", "GET") => true,
             ("DoctorDashboard", "GetMyProfile" or "GetMyAppointments" or
                 "GetMyPrescriptions" or "GetPatientRecords" or "GetPrescription", "GET") => true,

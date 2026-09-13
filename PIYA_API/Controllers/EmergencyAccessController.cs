@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using PIYA_API.Middleware;
 
 namespace PIYA_API.Controllers;
 
@@ -135,19 +136,25 @@ public class EmergencyAccessController(
             return BadRequest(new { error = "Reason or facility name is too long" });
 
         var requester = await _db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == CurrentUserId);
-        if (requester is null || !requester.IsActive) return Forbid();
+        if (requester is null || !requester.IsActive || requester.Role != UserRole.Doctor) return Forbid();
+        var isDemo = ConferenceDoctorScope.IsDoctor(CurrentUserId);
 
         var doctorProfile = await _db.DoctorProfiles.AsNoTracking()
             .SingleOrDefaultAsync(item => item.UserId == CurrentUserId);
-        if (doctorProfile is null || string.IsNullOrWhiteSpace(doctorProfile.LicenseNumber) ||
-            doctorProfile.LicenseExpiryDate is { } expiry && expiry <= DateTime.UtcNow)
+        // The reserved conference identity is NOT a licensed clinician. Its sole
+        // exception is scoped below to the fixed, verified fictional patient.
+        if (!isDemo && (doctorProfile is null || string.IsNullOrWhiteSpace(doctorProfile.LicenseNumber) ||
+            doctorProfile.LicenseExpiryDate is { } expiry && expiry <= DateTime.UtcNow))
             return StatusCode(StatusCodes.Status403Forbidden,
                 new { error = "A current verified medical license is required" });
 
         var normalizedToken = request.Token.Trim().Replace("piya-emergency:", "", StringComparison.OrdinalIgnoreCase);
         var hash = HashToken(normalizedToken);
         var now = DateTime.UtcNow;
-        var profile = await _db.EmergencyHealthProfiles
+        var profiles = _db.EmergencyHealthProfiles.AsQueryable();
+        if (isDemo)
+            profiles = profiles.Where(item => item.PatientId == ConferenceDoctorScope.PatientId);
+        var profile = await profiles
             .SingleOrDefaultAsync(item => item.ShareTokenHash == hash);
         if (profile is null || !profile.IsSharingEnabled || profile.ShareTokenExpiresAt is null || profile.ShareTokenExpiresAt <= now ||
             !await _db.Users.AsNoTracking().AnyAsync(u => u.Id == profile.PatientId && u.IsActive))
@@ -156,19 +163,26 @@ public class EmergencyAccessController(
             return Unauthorized(new { error = "This emergency share token is invalid, expired, or revoked" });
         }
 
+        if (isDemo && !await IsFictionalPatientAsync(profile.PatientId))
+        {
+            await AuditAccessAsync(CurrentUserId, null, false, "Conference emergency demo: fictional patient identity mismatch");
+            return Forbid();
+        }
+
         var grant = new EmergencyAccessGrant
         {
             Id = Guid.NewGuid(),
             PatientId = profile.PatientId,
             RequesterId = CurrentUserId,
-            Reason = request.Reason.Trim(),
+            Reason = isDemo ? "[FICTIONAL CONFERENCE DEMO] " + request.Reason.Trim() : request.Reason.Trim(),
             FacilityName = Clean(request.FacilityName),
             GrantedAt = now,
-            ExpiresAt = now.AddMinutes(30)
+            ExpiresAt = isDemo && profile.ShareTokenExpiresAt.Value < now.AddMinutes(30)
+                ? profile.ShareTokenExpiresAt.Value : now.AddMinutes(30)
         };
         _db.EmergencyAccessGrants.Add(grant);
         await _db.SaveChangesAsync();
-        await AuditAccessAsync(CurrentUserId, profile.PatientId, true, request.Reason);
+        await AuditAccessAsync(CurrentUserId, profile.PatientId, true, grant.Reason);
         await NotifyPatientAsync(profile.PatientId, requester, grant);
 
         return Ok(await BuildRecordAsync(profile, grant));
@@ -177,9 +191,19 @@ public class EmergencyAccessController(
     [HttpGet("grants/{grantId:guid}")]
     public async Task<ActionResult<EmergencyRecordResponse>> GetGrant(Guid grantId)
     {
-        var grant = await _db.EmergencyAccessGrants.AsNoTracking()
+        var isDemo = ConferenceDoctorScope.IsDoctor(CurrentUserId);
+        var grants = _db.EmergencyAccessGrants.AsNoTracking();
+        if (isDemo)
+            grants = grants.Where(item => item.PatientId == ConferenceDoctorScope.PatientId &&
+                item.RequesterId == CurrentUserId);
+        var grant = await grants
             .SingleOrDefaultAsync(item => item.Id == grantId);
-        if (grant is null) return NotFound(new { error = "Access grant not found" });
+        if (grant is null)
+        {
+            if (isDemo) await AuditAccessAsync(CurrentUserId, null, false, "Conference emergency demo: unavailable access grant");
+            return NotFound(new { error = "Access grant not found" });
+        }
+        if (isDemo && !await IsFictionalPatientAsync(grant.PatientId)) return Forbid();
         if (grant.PatientId != CurrentUserId && grant.RequesterId != CurrentUserId) return Forbid();
         if (!await _db.Users.AsNoTracking().AnyAsync(u => u.Id == grant.PatientId && u.IsActive) ||
             !await _db.Users.AsNoTracking().AnyAsync(u => u.Id == grant.RequesterId && u.IsActive && u.Role == UserRole.Doctor))
@@ -189,8 +213,16 @@ public class EmergencyAccessController(
 
         var profile = await _db.EmergencyHealthProfiles.AsNoTracking()
             .SingleAsync(item => item.PatientId == grant.PatientId);
+        if (isDemo && (!profile.IsSharingEnabled || profile.ShareTokenExpiresAt is null ||
+            profile.ShareTokenExpiresAt <= DateTime.UtcNow))
+            return StatusCode(StatusCodes.Status410Gone, new { error = "This emergency access window has ended" });
+        if (isDemo) await AuditAccessAsync(CurrentUserId, grant.PatientId, true, "Conference emergency demo: access grant read");
         return Ok(await BuildRecordAsync(profile, grant));
     }
+
+    private Task<bool> IsFictionalPatientAsync(Guid id) => _db.Users.AsNoTracking().AnyAsync(u =>
+        u.Id == id && u.Id == ConferenceDoctorScope.PatientId && u.IsActive && u.Role == UserRole.Patient &&
+        u.Username == "conference_patient" && u.Email == "conference.patient@example.invalid");
 
     [HttpGet("access-log")]
     [Authorize(Roles = "Patient")]
