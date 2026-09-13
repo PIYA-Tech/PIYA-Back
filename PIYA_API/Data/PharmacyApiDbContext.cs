@@ -40,6 +40,8 @@ namespace PIYA_API.Data
         public DbSet<DeviceToken> DeviceTokens { get; set; }
         public DbSet<EmergencyHealthProfile> EmergencyHealthProfiles { get; set; }
         public DbSet<EmergencyAccessGrant> EmergencyAccessGrants { get; set; }
+        public DbSet<ClinicalCase> ClinicalCases { get; set; }
+        public DbSet<ClinicalCaseEvent> ClinicalCaseEvents { get; set; }
         
         // Healthcare entities
         public DbSet<Hospital> Hospitals { get; set; }
@@ -113,6 +115,16 @@ namespace PIYA_API.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<ClinicalCase>().HasIndex(c => c.AdmissionGrantId).IsUnique();
+            modelBuilder.Entity<ClinicalCase>().HasIndex(c => new { c.PatientId, c.HospitalId })
+                .IsUnique().HasFilter("\"Status\" = 'Active'");
+            modelBuilder.Entity<ClinicalCase>().HasMany(c => c.Events).WithOne()
+                .HasForeignKey(e => e.ClinicalCaseId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<ClinicalCase>().HasOne<User>().WithMany().HasForeignKey(c => c.PatientId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<ClinicalCase>().HasOne<User>().WithMany().HasForeignKey(c => c.AttendingDoctorId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<ClinicalCase>().HasOne<Hospital>().WithMany().HasForeignKey(c => c.HospitalId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<ClinicalCase>().HasOne<EmergencyAccessGrant>().WithMany().HasForeignKey(c => c.AdmissionGrantId).OnDelete(DeleteBehavior.Restrict);
+            modelBuilder.Entity<ClinicalCaseEvent>().HasIndex(e => new { e.ClinicalCaseId, e.RecordedAt });
 
             modelBuilder.Entity<User>().Property(u => u.SecurityStamp).IsConcurrencyToken();
             modelBuilder.Entity<Token>().HasIndex(t => new { t.UserId, t.Family });

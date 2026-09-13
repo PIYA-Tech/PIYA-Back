@@ -53,6 +53,7 @@ public class UserPermission
 /// </summary>
 public static class Permissions
 {
+    public const string ClinicalCaseAdmit = "ClinicalCase.Admit";
     // Pharmacy Management
     public const string PharmacyCreate = "Pharmacy.Create";
     public const string PharmacyUpdate = "Pharmacy.Update";

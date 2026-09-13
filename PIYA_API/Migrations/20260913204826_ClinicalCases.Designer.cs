@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PIYA_API.Data;
@@ -12,9 +13,11 @@ using PIYA_API.Data;
 namespace PIYA_API.Migrations
 {
     [DbContext(typeof(PharmacyApiDbContext))]
-    partial class PharmacyApiDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913204826_ClinicalCases")]
+    partial class ClinicalCases
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
