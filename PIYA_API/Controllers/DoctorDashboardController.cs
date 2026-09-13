@@ -4,6 +4,7 @@ using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
 using System.Security.Claims;
+using PIYA_API.Middleware;
 
 namespace PIYA_API.Controllers;
 
@@ -173,7 +174,9 @@ public class DoctorDashboardController(
 
             var appointments = await _appointmentService.GetDoctorAppointmentsAsync(userId, date, parsedStatus);
 
-            return Ok(appointments.Select(AppointmentResponseDto.FromEntity));
+            return Ok(appointments
+                .Where(a => ConferenceDoctorScope.CanAccessPatient(userId, a.PatientId))
+                .Select(AppointmentResponseDto.FromEntity));
         }
         catch (Exception ex)
         {
@@ -352,7 +355,7 @@ public class DoctorDashboardController(
             }
 
             // Verify this appointment belongs to the doctor
-            if (appointment.DoctorId != userId)
+            if (appointment.DoctorId != userId || !ConferenceDoctorScope.CanAccessPatient(userId, appointment.PatientId))
             {
                 return Forbid();
             }
@@ -382,7 +385,7 @@ public class DoctorDashboardController(
                 return NotFound(new { error = "Appointment not found" });
             }
 
-            if (appointment.DoctorId != userId)
+            if (appointment.DoctorId != userId || !ConferenceDoctorScope.CanAccessPatient(userId, appointment.PatientId))
             {
                 return Forbid();
             }
@@ -417,7 +420,7 @@ public class DoctorDashboardController(
                 return NotFound(new { error = "Appointment not found" });
             }
 
-            if (appointment.DoctorId != userId)
+            if (appointment.DoctorId != userId || !ConferenceDoctorScope.CanAccessPatient(userId, appointment.PatientId))
             {
                 return Forbid();
             }
@@ -452,7 +455,7 @@ public class DoctorDashboardController(
                 return NotFound(new { error = "Appointment not found" });
             }
 
-            if (appointment.DoctorId != userId)
+            if (appointment.DoctorId != userId || !ConferenceDoctorScope.CanAccessPatient(userId, appointment.PatientId))
             {
                 return Forbid();
             }
@@ -559,6 +562,9 @@ public class DoctorDashboardController(
         {
             var userId = GetUserId();
             var prescriptions = await _prescriptionService.GetDoctorPrescriptionsAsync(userId);
+            if (ConferenceDoctorScope.IsDoctor(userId))
+                return Ok(prescriptions.Where(p => p.PatientId == ConferenceDoctorScope.PatientId)
+                    .Select(PrescriptionResponseDto.FromEntity));
             return Ok(prescriptions);
         }
         catch (Exception ex)
@@ -577,6 +583,8 @@ public class DoctorDashboardController(
         try
         {
             var userId = GetUserId();
+            if (!ConferenceDoctorScope.CanAccessPatient(userId, request.PatientId))
+                return Forbid();
             
             // Check permission
             var canCreate = await _permissionService.HasPermissionAsync(userId, Permissions.PrescriptionCreate);
@@ -622,6 +630,12 @@ public class DoctorDashboardController(
                 UpdatedAt = DateTime.UtcNow
             };
 
+            if (ConferenceDoctorScope.IsDoctor(userId))
+            {
+                prescription.Diagnosis = "FICTIONAL CONFERENCE DEMO — " + request.Diagnosis;
+                prescription.Instructions = "NOT A VALID CLINICAL PRESCRIPTION. Demonstration only. " + request.Instructions;
+            }
+
             // Populate items BEFORE save so EF Core persists them in the same transaction
             if (request.Items != null && request.Items.Any())
             {
@@ -643,6 +657,9 @@ public class DoctorDashboardController(
             }
 
             var created = await _prescriptionService.CreatePrescriptionAsync(prescription);
+            if (ConferenceDoctorScope.IsDoctor(userId))
+                return CreatedAtAction(nameof(GetPrescription), new { id = created.Id },
+                    PrescriptionResponseDto.FromEntity(created));
             
             return CreatedAtAction(nameof(GetPrescription), new { id = created.Id }, created);
         }
@@ -670,7 +687,7 @@ public class DoctorDashboardController(
             }
 
             // Verify this prescription belongs to the doctor
-            if (prescription.DoctorId != userId)
+            if (prescription.DoctorId != userId || !ConferenceDoctorScope.CanAccessPatient(userId, prescription.PatientId))
             {
                 return Forbid();
             }
@@ -721,6 +738,8 @@ public class DoctorDashboardController(
         try
         {
             var userId = GetUserId();
+            if (!ConferenceDoctorScope.CanAccessPatient(userId, patientId))
+                return Forbid();
 
             // Single DB EXISTS query for the access gate
             if (!await _appointmentService.HasDoctorPatientRelationshipAsync(userId, patientId))
@@ -747,7 +766,7 @@ public class DoctorDashboardController(
                     patientInfo.PhoneNumber,
                     patientInfo.DateOfBirth,
                 },
-                Prescriptions = prescriptions,
+                Prescriptions = prescriptions.Select(PrescriptionResponseDto.FromEntity),
                 AppointmentHistory = filteredAppointments.Select(a => new
                 {
                     a.Id,

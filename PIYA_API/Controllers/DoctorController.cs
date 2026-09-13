@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PIYA_API.DTOs;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
+using PIYA_API.Middleware;
 
 namespace PIYA_API.Controllers;
 
@@ -24,7 +25,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.SearchBySpecializationAsync(specialization);
-            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
+            return Ok(doctors.Where(d => !ConferenceDoctorScope.IsDoctor(d.UserId)).Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -43,7 +44,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.GetAvailableDoctorsAsync(specialization);
-            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
+            return Ok(doctors.Where(d => !ConferenceDoctorScope.IsDoctor(d.UserId)).Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {
@@ -63,7 +64,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctor = await _doctorProfileService.GetByIdAsync(id);
-            if (doctor == null)
+            if (doctor == null || ConferenceDoctorScope.IsDoctor(doctor.UserId))
             {
                 return NotFound(new { error = "Doctor profile not found" });
             }
@@ -88,7 +89,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctor = await _doctorProfileService.GetByUserIdAsync(doctorUserId);
-            if (doctor == null)
+            if (doctor == null || ConferenceDoctorScope.IsDoctor(doctor.UserId))
                 return NotFound(new { error = "Doctor profile not found" });
 
             return Ok(PublicDoctorProfileResponseDto.FromEntity(doctor));
@@ -110,7 +111,7 @@ public class DoctorController(IDoctorProfileService doctorProfileService, ILogge
         try
         {
             var doctors = await _doctorProfileService.GetDoctorsByHospitalAsync(hospitalId);
-            return Ok(doctors.Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
+            return Ok(doctors.Where(d => !ConferenceDoctorScope.IsDoctor(d.UserId)).Select(PublicDoctorProfileResponseDto.FromEntity).ToList());
         }
         catch (Exception ex)
         {

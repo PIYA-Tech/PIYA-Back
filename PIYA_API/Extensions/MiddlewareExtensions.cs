@@ -34,6 +34,7 @@ public static class MiddlewareExtensions
         // per-user versus anonymous-IP buckets. Authorization still runs after
         // those request guards and before endpoint execution.
         app.UseAuthentication();
+        app.UseMiddleware<PIYA_API.Middleware.ConferenceDoctorMiddleware>();
 
         // Rate limiting → security hardening → performance monitoring
         app.UseMiddleware<PIYA_API.Middleware.RateLimitingMiddleware>();
