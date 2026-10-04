@@ -116,6 +116,10 @@ namespace PIYA_API.Data
         {
             base.OnModelCreating(modelBuilder);
             modelBuilder.Entity<ClinicalCase>().HasIndex(c => c.AdmissionGrantId).IsUnique();
+            modelBuilder.Entity<ClinicalCase>().HasIndex(c => c.AdmissionAppointmentId).IsUnique();
+            modelBuilder.Entity<ClinicalCase>().ToTable(t => t.HasCheckConstraint("CK_ClinicalCases_AdmissionSource",
+                "(\"AdmissionGrantId\" IS NOT NULL AND \"AdmissionAppointmentId\" IS NULL) OR (\"AdmissionGrantId\" IS NULL AND \"AdmissionAppointmentId\" IS NOT NULL)"));
+            modelBuilder.Entity<ClinicalCase>().HasOne<Appointment>().WithMany().HasForeignKey(c => c.AdmissionAppointmentId).OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<ClinicalCase>().HasIndex(c => new { c.PatientId, c.HospitalId })
                 .IsUnique().HasFilter("\"Status\" = 'Active'");
             modelBuilder.Entity<ClinicalCase>().HasMany(c => c.Events).WithOne()

@@ -47,9 +47,18 @@ public sealed class ClinicalCasesController(PharmacyApiDbContext db, IAuditServi
     }
 
     [HttpGet]
-    public async Task<IActionResult> List()
+    public async Task<IActionResult> List(string? status = null, int page = 1, int pageSize = 100)
     {
-        var rows = await Assigned.AsNoTracking().OrderByDescending(c => c.AdmittedAt).Take(100).ToListAsync();
+        if (page < 1 || page > 100000 || pageSize < 1 || pageSize > 100 || status is not (null or "Active" or "Discharged"))
+            return BadRequest(new { error = "Use Active or Discharged, a positive page and pageSize between 1 and 100." });
+        var allowed = new List<Guid>();
+        foreach (var hospital in await Assigned.Select(c => c.HospitalId).Distinct().ToListAsync())
+            if (await StaffAllowed(hospital)) allowed.Add(hospital);
+        // Authorise before pagination: inaccessible rows must not hide accessible episodes.
+        var query = Assigned.AsNoTracking().Where(c => allowed.Contains(c.HospitalId));
+        if (status != null) query = query.Where(c => c.Status == status);
+        var rows = await query.OrderByDescending(c => c.AdmittedAt).ThenBy(c => c.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
         var result = new List<object>();
         foreach (var c in rows) if (await StaffAllowed(c.HospitalId)) result.Add(await Summary(c));
         return Ok(result);
@@ -90,17 +99,58 @@ public sealed class ClinicalCasesController(PharmacyApiDbContext db, IAuditServi
         return Ok(await Summary(c));
     }
 
+    [HttpPost("admit-from-visit")]
+    public Task<IActionResult> AdmitFromVisit(AdmitVisitRequest request) =>
+        db.Database.CreateExecutionStrategy().ExecuteAsync(() => AdmitFromVisitCore(request));
+
+    private async Task<IActionResult> AdmitFromVisitCore(AdmitVisitRequest request)
+    {
+        if (!request.AcceptResponsibility || string.IsNullOrWhiteSpace(request.Reason) || string.IsNullOrWhiteSpace(request.Department))
+            return BadRequest(new { error = "Confirm responsibility, department and admission reason." });
+        // Keep the source visit stable while authorising and creating the episode.
+        if (db.Database.IsRelational()) db.ChangeTracker.Clear();
+        await using var transaction = db.Database.IsRelational()
+            ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable) : null;
+        var visit = await db.Appointments.AsNoTracking().SingleOrDefaultAsync(a => a.Id == request.AppointmentId &&
+            a.DoctorId == Actor && (!Demo || a.PatientId == ConferenceDoctorScope.PatientId));
+        if (visit == null) return NotFound();
+        if (!await StaffAllowed(visit.HospitalId)) return Forbid();
+        if (visit.Status is not (AppointmentStatus.InProgress or AppointmentStatus.Completed) || visit.ScheduledAt > DateTime.UtcNow)
+            return BadRequest(new { error = "Start the consultation before admitting. Cancelled, missed, rescheduled and future visits cannot be used." });
+        if (!await db.Users.AnyAsync(u => u.Id == visit.PatientId && u.IsActive && u.Role == UserRole.Patient))
+            return BadRequest(new { error = "An active patient account is required." });
+        if (await db.ClinicalCases.AnyAsync(c => c.AdmissionAppointmentId == visit.Id ||
+            c.PatientId == visit.PatientId && c.HospitalId == visit.HospitalId && c.Status == "Active"))
+            return Conflict(new { error = "An admission already exists. Refresh your assigned cases." });
+        var c = new ClinicalCase { PatientId = visit.PatientId, AttendingDoctorId = Actor, HospitalId = visit.HospitalId,
+            AdmissionAppointmentId = visit.Id, Department = request.Department.Trim(), Bed = request.Bed?.Trim() ?? "",
+            AdmissionReason = request.Reason.Trim(), IsDemo = Demo };
+        c.Events.Add(Event(c, "Admission", "Admitted from consultation " + visit.Id + ". Attending responsibility explicitly accepted. " + c.AdmissionReason));
+        db.ClinicalCases.Add(c);
+        try {
+            await db.SaveChangesAsync();
+            if (transaction != null) await transaction.CommitAsync();
+        }
+        catch (DbUpdateException) { return Conflict(new { error = "Admission could not be saved. Refresh before trying again." }); }
+        catch (Npgsql.PostgresException e) when (e.SqlState is "40001" or "40P01") {
+            return Conflict(new { error = "The visit changed during admission. Refresh before trying again." });
+        }
+        return Ok(await Summary(c));
+    }
+
     [HttpPost("{id:guid}/events")]
     public async Task<IActionResult> AddEvent(Guid id, CaseActionRequest request)
     {
         var c = await Assigned.Include(c => c.Events).SingleOrDefaultAsync(c => c.Id == id);
         if (c == null || !await StaffAllowed(c.HospitalId)) return NotFound();
         if (c.Status != "Active" || c.Version != request.Version) return Conflict(new { error = "The case changed or is closed. Refresh before continuing." });
-        if (!new[] { "Note", "DemoReading", "DemoAlert", "Acknowledge", "Resolve", "Discharge" }.Contains(request.Action))
+        if (!new[] { "Note", "Correction", "DemoReading", "DemoAlert", "Acknowledge", "Resolve", "Discharge" }.Contains(request.Action))
             return BadRequest(new { error = "Unsupported case action." });
         if (request.Action.StartsWith("Demo") && !c.IsDemo) return Forbid();
-        if (new[] { "Note", "Resolve", "Discharge" }.Contains(request.Action) && string.IsNullOrWhiteSpace(request.Text))
+        if (new[] { "Note", "Correction", "Resolve", "Discharge" }.Contains(request.Action) && string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(new { error = "A note or outcome is required." });
+        if (request.Action == "Correction" && !c.Events.Any(e => e.Id == request.RelatedEventId && e.Kind == "Note" && e.AuthorId == Actor))
+            return BadRequest(new { error = "Select your original note in this case. Corrections append to the chart; they never replace it." });
         if (request.Action is "Acknowledge" or "Resolve") {
             var alert = c.Events.SingleOrDefault(e => e.Id == request.RelatedEventId && e.Kind == "DemoAlert");
             if (alert == null) return BadRequest(new { error = "Alert not found in this case." });
@@ -134,10 +184,13 @@ public sealed class ClinicalCasesController(PharmacyApiDbContext db, IAuditServi
         var hospital = await db.Hospitals.AsNoTracking().SingleAsync(h => h.Id == c.HospitalId);
         return new { c.Id, c.PatientId, PatientName = patient.FirstName + " " + patient.LastName, c.AttendingDoctorId,
             AttendingName = doctor.FirstName + " " + doctor.LastName, c.HospitalId, HospitalName = hospital.Name,
-            c.Department, c.Bed, c.AdmissionReason, c.Status, c.IsDemo, c.AdmittedAt, c.ClosedAt, c.Version };
+            c.Department, c.Bed, c.AdmissionReason, c.Status, c.IsDemo, c.AdmittedAt, c.ClosedAt, c.Version,
+            c.AdmissionAppointmentId, AdmissionSource = c.AdmissionAppointmentId.HasValue ? "Visit" : "EmergencyQR" };
     }
 }
 
 public sealed record AdmitCaseRequest(Guid GrantId, Guid HospitalId, [MaxLength(100)] string Department,
     [MaxLength(80)] string Bed, [MaxLength(1000)] string Reason, bool AcceptResponsibility);
 public sealed record CaseActionRequest(int Version, [MaxLength(40)] string Action, [MaxLength(4000)] string Text, Guid? RelatedEventId = null);
+public sealed record AdmitVisitRequest(Guid AppointmentId, [MaxLength(100)] string Department,
+    [MaxLength(80)] string? Bed, [MaxLength(1000)] string Reason, bool AcceptResponsibility);

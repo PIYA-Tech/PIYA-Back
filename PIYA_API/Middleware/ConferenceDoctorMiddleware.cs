@@ -26,7 +26,7 @@ public static class ConferenceDoctorScope
             ("EmergencyAccess", "RequestAccess", "POST") => true,
             ("EmergencyAccess", "GetGrant", "GET") => true,
             ("ClinicalCases", "Facilities" or "List" or "Get", "GET") => true,
-            ("ClinicalCases", "Admit" or "AddEvent", "POST") => true,
+            ("ClinicalCases", "Admit" or "AdmitFromVisit" or "AddEvent", "POST") => true,
             ("Medication", "GetAll" or "Search" or "GetById", "GET") => true,
             ("DoctorDashboard", "GetMyProfile" or "GetMyAppointments" or
                 "GetMyPrescriptions" or "GetPatientRecords" or "GetPrescription", "GET") => true,

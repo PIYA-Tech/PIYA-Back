@@ -9,7 +9,8 @@ public sealed class ClinicalCase
     public Guid PatientId { get; set; }
     public Guid AttendingDoctorId { get; set; }
     public Guid HospitalId { get; set; }
-    public Guid AdmissionGrantId { get; set; }
+    public Guid? AdmissionGrantId { get; set; }
+    public Guid? AdmissionAppointmentId { get; set; }
     [MaxLength(100)] public string Department { get; set; } = "";
     [MaxLength(80)] public string Bed { get; set; } = "";
     [MaxLength(1000)] public string AdmissionReason { get; set; } = "";
