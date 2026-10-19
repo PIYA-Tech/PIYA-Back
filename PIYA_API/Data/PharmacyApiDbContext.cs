@@ -115,6 +115,15 @@ namespace PIYA_API.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<PharmacyInventory>().ToTable(t => {
+                t.HasCheckConstraint("CK_Inventory_Quantity_Nonnegative", "\"QuantityInStock\" >= 0");
+                t.HasCheckConstraint("CK_Inventory_Reported_Nonnegative", "\"ReportedQuantity\" IS NULL OR \"ReportedQuantity\" >= 0");
+            });
+            modelBuilder.Entity<InventoryBatch>().ToTable(t =>
+                t.HasCheckConstraint("CK_InventoryBatch_Quantity_Nonnegative", "\"Quantity\" >= 0"));
+            modelBuilder.Entity<InventorySyncSource>().HasKey(x => new { x.PharmacyId, x.SourceId });
+            modelBuilder.Entity<InventorySyncReceipt>().HasKey(x => new { x.PharmacyId, x.RequestId });
+            modelBuilder.Entity<InventorySyncReceipt>().Property(x => x.PayloadHash).HasMaxLength(64);
             modelBuilder.Entity<ClinicalCase>().HasIndex(c => c.AdmissionGrantId).IsUnique();
             modelBuilder.Entity<ClinicalCase>().HasIndex(c => c.AdmissionAppointmentId).IsUnique();
             modelBuilder.Entity<ClinicalCase>().ToTable(t => t.HasCheckConstraint("CK_ClinicalCases_AdmissionSource",

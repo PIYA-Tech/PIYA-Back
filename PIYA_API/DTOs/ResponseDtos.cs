@@ -289,6 +289,10 @@ public class InventoryResponseDto
     public Guid MedicationId { get; set; }
     public string? MedicationName { get; set; }
     public int QuantityInStock { get; set; }
+    public int? ReportedQuantity { get; set; }
+    public DateTime? ReportedAt { get; set; }
+    public bool RequiresReconciliation { get; set; }
+    public long Version { get; set; }
     public int MinimumStockLevel { get; set; }
     public int ReorderQuantity { get; set; }
     public decimal Price { get; set; }
@@ -308,6 +312,10 @@ public class InventoryResponseDto
         MedicationId = i.MedicationId,
         MedicationName = i.Medication?.BrandName,
         QuantityInStock = i.QuantityInStock,
+        ReportedQuantity = i.ReportedQuantity,
+        ReportedAt = i.ReportedAt,
+        RequiresReconciliation = i.RequiresReconciliation,
+        Version = i.Version,
         MinimumStockLevel = i.MinimumStockLevel,
         ReorderQuantity = i.ReorderQuantity,
         Price = i.Price,

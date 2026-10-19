@@ -91,6 +91,7 @@ public class PharmacyInventoryController(
             var inventory = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
             return Ok(inventory.Select(InventoryResponseDto.FromEntity));
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving inventory for pharmacy {PharmacyId}", pharmacyId);
@@ -118,6 +119,7 @@ public class PharmacyInventoryController(
 
             return Ok(InventoryResponseDto.FromEntity(inventory));
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving inventory item {InventoryId}", id);
@@ -155,6 +157,7 @@ public class PharmacyInventoryController(
                 .SendAsync("InventoryAdded", result);
             return CreatedAtAction(nameof(GetInventoryItem), new { id = result.Id }, result);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error adding/updating inventory");
@@ -190,6 +193,7 @@ public class PharmacyInventoryController(
 
             return NoContent();
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting inventory item {InventoryId}", id);
@@ -232,6 +236,7 @@ public class PharmacyInventoryController(
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating stock for inventory {InventoryId}", id);
@@ -269,6 +274,7 @@ public class PharmacyInventoryController(
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error restocking inventory");
@@ -307,6 +313,7 @@ public class PharmacyInventoryController(
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error decreasing stock");
@@ -347,18 +354,42 @@ public class PharmacyInventoryController(
                 Notes = request.Notes
             };
 
-            var result = await _inventoryService.AddBatchAsync(batch);
+            var result = await _inventoryService.AddBatchAsync(batch, GetUserId());
+            var updated = await _inventoryService.GetByIdAsync(request.InventoryId);
+            if (updated != null) await _inventoryHub.Clients.Group($"inventory:{updated.PharmacyId}")
+                .SendAsync("InventoryUpdated", InventoryResponseDto.FromEntity(updated));
             return CreatedAtAction(nameof(GetBatches), new { inventoryId = result.PharmacyInventoryId }, result);
         }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error adding batch");
             return StatusCode(500, new { error = "Failed to add batch" });
         }
+    }
+
+    [HttpPut("batch/{batchId:guid}")]
+    [Authorize(Roles = InventoryManagementRoles)]
+    public async Task<ActionResult<InventoryBatch>> CorrectBatch(Guid batchId, [FromBody] InventoryBatchCorrection request)
+    {
+        var batch = await _inventoryService.GetBatchByIdAsync(batchId);
+        if (batch == null) return NotFound();
+        var pharmacyId = batch.PharmacyInventory.PharmacyId;
+        if (!await CanManagePharmacyInventory(pharmacyId)) return Forbid();
+        try
+        {
+            var result = await _inventoryService.CorrectBatchAsync(batchId, request, GetUserId());
+            var updated = await _inventoryService.GetByIdAsync(batch.PharmacyInventoryId);
+            if (updated != null) await _inventoryHub.Clients.Group($"inventory:{pharmacyId}")
+                .SendAsync("InventoryUpdated", InventoryResponseDto.FromEntity(updated));
+            return Ok(result);
+        }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { error = ex.Message }); }
     }
 
     /// <summary>
@@ -382,6 +413,7 @@ public class PharmacyInventoryController(
             var batches = await _inventoryService.GetBatchesAsync(inventoryId, activeOnly);
             return Ok(batches);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving batches for inventory {InventoryId}", inventoryId);
@@ -412,6 +444,7 @@ public class PharmacyInventoryController(
 
             return Ok(batches);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving expiring batches");
@@ -433,6 +466,7 @@ public class PharmacyInventoryController(
             
             return Ok(new { success = removed, message = removed ? "Expired batches removed" : "No expired batches found" });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error removing expired batches");
@@ -467,6 +501,7 @@ public class PharmacyInventoryController(
             var history = await _inventoryService.GetStockHistoryAsync(inventoryId, startDate, endDate, transactionType);
             return Ok(history);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving stock history for inventory {InventoryId}", inventoryId);
@@ -491,6 +526,7 @@ public class PharmacyInventoryController(
             var history = await _inventoryService.GetPharmacyStockHistoryAsync(pharmacyId, startDate, endDate);
             return Ok(history);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving stock history for pharmacy {PharmacyId}", pharmacyId);
@@ -516,6 +552,7 @@ public class PharmacyInventoryController(
             var items = await _inventoryService.GetLowStockItemsAsync(pharmacyId);
             return Ok(items);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving low stock items for pharmacy {PharmacyId}", pharmacyId);
@@ -539,6 +576,7 @@ public class PharmacyInventoryController(
             var items = await _inventoryService.GetExpiringItemsAsync(pharmacyId, days);
             return Ok(items);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving expiring items for pharmacy {PharmacyId}", pharmacyId);
@@ -560,6 +598,7 @@ public class PharmacyInventoryController(
             var suggestions = await _inventoryService.GetReorderSuggestionsAsync(pharmacyId);
             return Ok(suggestions);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving reorder suggestions for pharmacy {PharmacyId}", pharmacyId);
@@ -585,6 +624,7 @@ public class PharmacyInventoryController(
             var pharmacies = await _inventoryService.GetPharmaciesWithMedicationAsync(medicationId, minimumQuantity);
             return Ok(pharmacies);
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error finding pharmacies with medication {MedicationId}", medicationId);
@@ -616,6 +656,7 @@ public class PharmacyInventoryController(
                 RequestedQuantity = quantity
             });
         }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking stock");

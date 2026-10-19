@@ -1,4 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using System.Text.Json;
+using System.Globalization;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -54,7 +57,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
                 appointment.UpdatedAt = DateTime.UtcNow;
 
                 _context.Appointments.Add(appointment);
-                await _context.SaveChangesAsync();
+                await SaveAppointmentChangesAsync();
 
                 // Audit log is inside the transaction so a logging failure rolls back
                 // the booking rather than leaving a booked-but-unaudited appointment.
@@ -68,9 +71,10 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
                 await tx.CommitAsync();
             }
-            catch
+            catch (Exception ex)
             {
                 await tx.RollbackAsync();
+                if (IsSchedulingConflict(ex)) throw new InvalidOperationException("The schedule changed. Refresh availability and try again.", ex);
                 throw;
             }
 
@@ -101,6 +105,52 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         if (!profile.AcceptingNewPatients && !await _context.Appointments.AnyAsync(a =>
                 a.DoctorId == appointment.DoctorId && a.PatientId == appointment.PatientId && a.Status == AppointmentStatus.Completed))
             throw new InvalidOperationException("The doctor is not accepting new patients.");
+    }
+
+    private static bool IsSchedulingConflict(Exception error) => error is DbUpdateConcurrencyException
+        || error is PostgresException { SqlState: "40001" or "40P01" }
+        || (error.InnerException is not null && IsSchedulingConflict(error.InnerException));
+
+    private async Task SaveAppointmentChangesAsync()
+    {
+        try { await _context.SaveChangesAsync(); }
+        catch (Exception ex) when (IsSchedulingConflict(ex))
+        { throw new InvalidOperationException("The appointment changed. Refresh and try again.", ex); }
+    }
+
+    private static void ValidateTransition(AppointmentStatus current, AppointmentStatus next)
+    {
+        var allowed = current switch {
+            AppointmentStatus.Scheduled => next is AppointmentStatus.Confirmed or AppointmentStatus.InProgress or AppointmentStatus.Cancelled or AppointmentStatus.NoShow,
+            AppointmentStatus.Confirmed => next is AppointmentStatus.InProgress or AppointmentStatus.Cancelled or AppointmentStatus.NoShow,
+            AppointmentStatus.InProgress => next is AppointmentStatus.Completed,
+            _ => false,
+        };
+        if (!allowed) throw new InvalidOperationException($"Cannot change a {current} appointment to {next}.");
+    }
+
+    private async Task<bool> IsWithinWorkingHoursAsync(Guid doctorId, DateTime scheduledAt, int durationMinutes)
+    {
+        if (durationMinutes is < 5 or > 240) return false;
+        var profile = await _context.DoctorProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == doctorId);
+        if (profile is null) return false;
+        // Unconfigured legacy profiles retain their existing booking behavior. An
+        // explicitly configured empty schedule means there are no available shifts.
+        if (string.IsNullOrWhiteSpace(profile.WorkingHours)) return true;
+        List<WorkingHoursSlot>? hours;
+        try { hours = JsonSerializer.Deserialize<List<WorkingHoursSlot>>(profile.WorkingHours,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch (JsonException) { return false; }
+        if (hours is null) return false;
+        var utc = scheduledAt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(scheduledAt, DateTimeKind.Utc) : scheduledAt.ToUniversalTime();
+        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, TimeZoneInfo.FindSystemTimeZoneById("Asia/Baku"));
+        var end = local.AddMinutes(durationMinutes);
+        if (end.Date != local.Date) return false;
+        return hours.Where(day => string.Equals(day.DayOfWeek, local.DayOfWeek.ToString(), StringComparison.OrdinalIgnoreCase))
+            .SelectMany(day => day.Slots ?? [])
+            .Any(slot => TimeOnly.TryParseExact(slot.Start, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var start)
+                && TimeOnly.TryParseExact(slot.End, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var finish)
+                && start < finish && TimeOnly.FromDateTime(local) >= start && TimeOnly.FromDateTime(end) <= finish);
     }
 
     public async Task<Appointment?> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -161,13 +211,14 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
     public async Task<bool> IsDoctorAvailableAsync(Guid doctorId, DateTime scheduledAt, int durationMinutes = 30)
     {
+        if (!await IsWithinWorkingHoursAsync(doctorId, scheduledAt, durationMinutes)) return false;
         var endTime = scheduledAt.AddMinutes(durationMinutes);
 
         var conflict = await _context.Appointments
             .Where(a => a.DoctorId == doctorId)
             .Where(a => a.Status == AppointmentStatus.Scheduled
                      || a.Status == AppointmentStatus.Confirmed
-                     || a.Status == AppointmentStatus.Rescheduled)
+                     || a.Status == AppointmentStatus.InProgress)
             .Where(a =>
                 (a.ScheduledAt < endTime && a.ScheduledAt.AddMinutes(a.DurationMinutes) > scheduledAt)
             )
@@ -179,6 +230,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<Appointment> UpdateStatusAsync(Guid id, AppointmentStatus status, string? reason = null)
     {
         var appointment = await GetTrackedByIdAsync(id);
+        ValidateTransition(appointment.Status, status);
         appointment.Status = status;
         appointment.UpdatedAt = DateTime.UtcNow;
 
@@ -191,7 +243,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             appointment.ActualEndTime = DateTime.UtcNow;
         }
 
-        await _context.SaveChangesAsync();
+        await SaveAppointmentChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "UpdateAppointmentStatus",
@@ -207,13 +259,14 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<Appointment> CancelAppointmentAsync(Guid id, Guid cancelledBy, string? reason)
     {
         var appointment = await GetTrackedByIdAsync(id);
+        ValidateTransition(appointment.Status, AppointmentStatus.Cancelled);
         appointment.Status = AppointmentStatus.Cancelled;
         appointment.CancellationReason = reason;
         appointment.CancelledBy = cancelledBy;
         appointment.CancelledAt = DateTime.UtcNow;
         appointment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await SaveAppointmentChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "CancelAppointment",
@@ -258,15 +311,27 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         if (newScheduledAt < DateTime.UtcNow.AddMinutes(-1))
             throw new ArgumentException("Cannot reschedule an appointment to a time in the past.");
 
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () => {
+            try { return await RescheduleCoreAsync(id, newScheduledAt); }
+            catch (Exception ex) when (IsSchedulingConflict(ex))
+            { throw new InvalidOperationException("The schedule changed. Refresh availability and try again.", ex); }
+        });
+    }
+
+    private async Task<Appointment> RescheduleCoreAsync(Guid id, DateTime newScheduledAt)
+    {
+        await using var tx = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         var appointment = await GetTrackedByIdAsync(id);
 
-        // Cannot reschedule appointments that are already finished or cancelled
-        if (appointment.Status == AppointmentStatus.Cancelled ||
-            appointment.Status == AppointmentStatus.Completed ||
-            appointment.Status == AppointmentStatus.NoShow)
-        {
+        if (appointment.Status is not (AppointmentStatus.Scheduled or AppointmentStatus.Confirmed) || appointment.RescheduledToId.HasValue)
             throw new InvalidOperationException($"Cannot reschedule a {appointment.Status} appointment");
-        }
+
+        await ValidateBookingParticipantsAsync(new Appointment {
+            PatientId = appointment.PatientId, DoctorId = appointment.DoctorId, HospitalId = appointment.HospitalId,
+            ScheduledAt = newScheduledAt, DurationMinutes = appointment.DurationMinutes });
+        if (!await IsWithinWorkingHoursAsync(appointment.DoctorId, newScheduledAt, appointment.DurationMinutes))
+            throw new InvalidOperationException("The requested time is outside the doctor's configured working hours.");
 
         // Check if new time is available (exclude this appointment from its own conflict check)
         var endTime = newScheduledAt.AddMinutes(appointment.DurationMinutes);
@@ -274,7 +339,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             .Where(a => a.DoctorId == appointment.DoctorId && a.Id != id)
             .Where(a => a.Status == AppointmentStatus.Scheduled
                      || a.Status == AppointmentStatus.Confirmed
-                     || a.Status == AppointmentStatus.Rescheduled)
+                     || a.Status == AppointmentStatus.InProgress)
             .Where(a => a.ScheduledAt < endTime && a.ScheduledAt.AddMinutes(a.DurationMinutes) > newScheduledAt)
             .AnyAsync();
 
@@ -310,7 +375,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
         appointment.RescheduledToId = newAppointment.Id;
         appointment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await SaveAppointmentChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "RescheduleAppointment",
@@ -320,7 +385,9 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
             $"Rescheduled from {oldTime} to {newScheduledAt}; new appointment id={newAppointment.Id}"
         );
 
-        // Notify the patient by email
+        await tx.CommitAsync();
+
+        // Notify only after committing, so rolled-back bookings never send mail.
         try
         {
             if (appointment.Patient?.Email != null)
@@ -351,12 +418,13 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
     public async Task<Appointment> CompleteAppointmentAsync(Guid id, string? doctorNotes)
     {
         var appointment = await GetTrackedByIdAsync(id);
+        ValidateTransition(appointment.Status, AppointmentStatus.Completed);
         appointment.Status = AppointmentStatus.Completed;
         appointment.AppointmentNotes = doctorNotes;
         appointment.ActualEndTime = DateTime.UtcNow;
         appointment.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        await SaveAppointmentChangesAsync();
 
         await _auditService.LogEntityActionAsync(
             "CompleteAppointment",
@@ -442,7 +510,7 @@ public class AppointmentService(PharmacyApiDbContext context, IAuditService audi
 
         // Single round-trip: pull only upcoming + today appointments for this doctor.
         // We avoid loading cancelled/completed appointments entirely.
-        var activeStatuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed, AppointmentStatus.Rescheduled };
+        var activeStatuses = new[] { AppointmentStatus.Scheduled, AppointmentStatus.Confirmed, AppointmentStatus.InProgress };
 
         var relevant = await _context.Appointments
             .AsNoTracking()

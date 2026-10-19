@@ -26,19 +26,27 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="9.0.18" />
+    <!-- Override the Redis backplane's 2.5.302 floor with the compatible fix
+         for GHSA-qhrr-8q5h-9q3h; keep the existing MessagePack major version. -->
+    <PackageReference Include="MessagePack" Version="2.5.303" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.18" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
-    <PackageReference Include="PdfSharpCore" Version="1.3.67" />
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <!-- Override PDFsharp's vulnerable PKCS 8.0.1 floor on our .NET 9 patch line. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
-    <!-- PdfSharpCore's 1.0.4 floor is vulnerable; 2.1.13 is its closest
-         API-compatible maintained ImageSharp line and overrides that transitive floor. -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="8.1.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.2" />
     <PackageReference Include="Twilio" Version="7.14.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embed licensed fonts so PDF exports work without host-installed fonts. -->
+    <EmbeddedResource Include="Assets/Fonts/LiberationSans-*.ttf" />
+    <None Update="Assets/Fonts/LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

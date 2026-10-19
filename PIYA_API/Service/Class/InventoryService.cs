@@ -5,7 +5,7 @@ using PIYA_API.Service.Interface;
 
 namespace PIYA_API.Service.Class;
 
-public class InventoryService(
+public partial class InventoryService(
     PharmacyApiDbContext context,
     IAuditService auditService,
     ILogger<InventoryService> logger) : IInventoryService
@@ -16,96 +16,70 @@ public class InventoryService(
 
     #region Core Inventory Management
 
-    public async Task<PharmacyInventory> AddOrUpdateInventoryAsync(PharmacyInventory inventory)
+    public Task<PharmacyInventory> AddOrUpdateInventoryAsync(PharmacyInventory inventory)
     {
-        var existing = await _context.PharmacyInventories
-            .FirstOrDefaultAsync(i => 
-                i.PharmacyId == inventory.PharmacyId && 
-                i.MedicationId == inventory.MedicationId);
-
-        if (existing != null)
+        var reported = inventory.ReportedQuantity ?? inventory.QuantityInStock;
+        if (reported < 0 || inventory.Price < 0 || inventory.MinimumStockLevel < 0 || inventory.ReorderQuantity < 0)
+            throw new ArgumentException("Inventory quantities and prices must be non-negative.");
+        return AtomicAsync(async () =>
         {
-            // Update existing inventory
-            existing.QuantityInStock = inventory.QuantityInStock;
+            await LockPharmacyAsync(inventory.PharmacyId);
+            var existing = await _context.PharmacyInventories.SingleOrDefaultAsync(i =>
+                i.PharmacyId == inventory.PharmacyId && i.MedicationId == inventory.MedicationId);
+            if (existing is null)
+            {
+                existing = new PharmacyInventory { Id = Guid.NewGuid(), PharmacyId = inventory.PharmacyId,
+                    MedicationId = inventory.MedicationId };
+                _context.PharmacyInventories.Add(existing);
+            }
+            else existing = await LockInventoryAsync(existing.Id);
             existing.MinimumStockLevel = inventory.MinimumStockLevel;
             existing.ReorderQuantity = inventory.ReorderQuantity;
             existing.Price = inventory.Price;
             existing.Currency = inventory.Currency;
             existing.IsAvailable = inventory.IsAvailable;
-            existing.LastRestockedAt = DateTime.UtcNow;
-            existing.UpdatedAt = DateTime.UtcNow;
-            
-            await _context.SaveChangesAsync();
-            await CheckAndTriggerLowStockAlertAsync(existing);
+            await SetReportAsync(existing, reported, null, DateTime.UtcNow, null, "Reported stock updated; no batch movement");
             return existing;
-        }
-        else
-        {
-            // Create new inventory record
-            inventory.Id = Guid.NewGuid();
-            inventory.LastRestockedAt = DateTime.UtcNow;
-            inventory.UpdatedAt = DateTime.UtcNow;
-            
-            _context.PharmacyInventories.Add(inventory);
-            await _context.SaveChangesAsync();
-
-            await _auditService.LogEntityActionAsync(
-                "INVENTORY_CREATED",
-                "PharmacyInventory",
-                inventory.Id.ToString(),
-                null,
-                $"Created inventory for medication {inventory.MedicationId} at pharmacy {inventory.PharmacyId}"
-            );
-
-            return inventory;
-        }
+        });
     }
 
     public async Task<List<PharmacyInventory>> GetPharmacyInventoryAsync(Guid pharmacyId)
     {
-        return await _context.PharmacyInventories
-            .Include(i => i.Medication)
-            .Include(i => i.Pharmacy)
-            .Include(i => i.Batches.Where(b => b.IsActive))
-            .Where(i => i.PharmacyId == pharmacyId)
-            .OrderBy(i => i.Medication.BrandName)
-            .ToListAsync();
+        var rows = await _context.PharmacyInventories.AsNoTracking().Include(i => i.Medication)
+            .Include(i => i.Pharmacy).Include(i => i.Batches).Where(i => i.PharmacyId == pharmacyId)
+            .OrderBy(i => i.Medication.BrandName).ToListAsync();
+        foreach (var row in rows) InventoryStock.Refresh(row, DateTime.UtcNow);
+        return rows;
     }
 
     public async Task<List<PharmacyInventory>> GetPharmaciesWithMedicationAsync(Guid medicationId, int minimumQuantity = 1)
     {
-        return await _context.PharmacyInventories
-            .Include(i => i.Medication)
-            .Include(i => i.Pharmacy)
-                .ThenInclude(p => p.Coordinates)
-            .Where(i => i.MedicationId == medicationId)
-            .Where(i => i.QuantityInStock >= minimumQuantity)
-            .Where(i => i.IsAvailable)
+        if (minimumQuantity < 1) throw new ArgumentException("Minimum quantity must be positive.");
+        var rows = await _context.PharmacyInventories.AsNoTracking().Include(i => i.Medication)
+            .Include(i => i.Pharmacy).ThenInclude(p => p.Coordinates).Include(i => i.Batches)
+            .Where(i => i.MedicationId == medicationId && i.IsAvailable && i.Pharmacy.IsActive && i.Medication.IsAvailable)
             .ToListAsync();
+        foreach (var row in rows) InventoryStock.Refresh(row, DateTime.UtcNow);
+        return rows.Where(i => i.QuantityInStock >= minimumQuantity).ToList();
     }
 
     public async Task<bool> IsInStockAsync(Guid pharmacyId, Guid medicationId, int requiredQuantity = 1)
     {
-        var totalStock = await _context.PharmacyInventories
-            .Where(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId)
-            .Where(i => i.IsAvailable)
-            .SumAsync(i => i.QuantityInStock);
-
-        return totalStock >= requiredQuantity;
+        if (requiredQuantity < 1) throw new ArgumentException("Required quantity must be positive.");
+        return await GetAvailableStockAsync(pharmacyId, medicationId) >= requiredQuantity;
     }
 
     public async Task<PharmacyInventory?> GetByIdAsync(Guid id)
     {
-        return await _context.PharmacyInventories
-            .Include(i => i.Medication)
-            .Include(i => i.Pharmacy)
-            .Include(i => i.Batches.OrderBy(b => b.ExpirationDate))
-            .FirstOrDefaultAsync(i => i.Id == id);
+        var row = await _context.PharmacyInventories.AsNoTracking().Include(i => i.Medication)
+            .Include(i => i.Pharmacy).Include(i => i.Batches).FirstOrDefaultAsync(i => i.Id == id);
+        if (row != null) InventoryStock.Refresh(row, DateTime.UtcNow);
+        return row;
     }
 
     public async Task<bool> DeleteAsync(Guid id)
     {
-        var inventory = await GetByIdAsync(id);
+        var inventory = await _context.PharmacyInventories.FindAsync(id);
         if (inventory == null)
         {
             return false;
@@ -129,102 +103,25 @@ public class InventoryService(
 
     #region Real-time Stock Tracking
 
-    public async Task<PharmacyInventory> UpdateStockAsync(
-        Guid inventoryId, 
-        int newQuantity, 
-        Guid? userId = null,
-        string? notes = null)
+    public Task<PharmacyInventory> UpdateStockAsync(Guid inventoryId, int newQuantity,
+        Guid? userId = null, string? notes = null)
     {
-        if (newQuantity < 0)
-            throw new ArgumentException("Stock quantity cannot be negative", nameof(newQuantity));
-
-        await using var tx = await _context.Database.BeginTransactionAsync(
-            System.Data.IsolationLevel.RepeatableRead);
-        try
+        if (newQuantity < 0) throw new ArgumentException("Reported quantity cannot be negative.");
+        return AtomicAsync(async () =>
         {
-            var inventory = await _context.PharmacyInventories.FindAsync(inventoryId)
-                ?? throw new InvalidOperationException("Inventory item not found");
-
-            int oldQuantity = inventory.QuantityInStock;
-            int quantityChanged = newQuantity - oldQuantity;
-
-            inventory.QuantityInStock = newQuantity;
-            inventory.UpdatedAt = DateTime.UtcNow;
-
-            if (newQuantity > oldQuantity)
-            {
-                inventory.LastRestockedAt = DateTime.UtcNow;
-            }
-
-            // Record history
-            await RecordInventoryHistoryAsync(
-                inventory.Id,
-                null,
-                InventoryTransactionType.Adjustment,
-                quantityChanged,
-                oldQuantity,
-                newQuantity,
-                userId,
-                notes: notes ?? $"Manual stock adjustment from {oldQuantity} to {newQuantity}"
-            );
-
-            await _context.SaveChangesAsync();
-            await tx.CommitAsync();
-            await CheckAndTriggerLowStockAlertAsync(inventory);
-
+            var inventory = await LockInventoryAsync(inventoryId);
+            await SetReportAsync(inventory, newQuantity, null, DateTime.UtcNow, userId,
+                notes ?? "Reported stock adjustment; no batch movement");
             return inventory;
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
+        });
     }
 
-    public async Task<PharmacyInventory> DecreaseStockAsync(
-        Guid pharmacyId, 
-        Guid medicationId, 
-        int quantity,
-        Guid? userId = null,
-        Guid? prescriptionId = null,
-        string? referenceNumber = null)
+    public Task<PharmacyInventory> DecreaseStockAsync(Guid pharmacyId, Guid medicationId, int quantity,
+        Guid? userId = null, Guid? prescriptionId = null, string? referenceNumber = null)
     {
-        if (quantity <= 0)
-        {
-            throw new ArgumentException("Quantity must be positive", nameof(quantity));
-        }
-
-        if (_context.Database.CurrentTransaction != null)
-        {
-            return await DecreaseStockCoreAsync(
-                pharmacyId,
-                medicationId,
-                quantity,
-                userId,
-                prescriptionId,
-                referenceNumber);
-        }
-
-        await using var tx = await _context.Database.BeginTransactionAsync(
-            System.Data.IsolationLevel.RepeatableRead);
-        try
-        {
-            var inventory = await DecreaseStockCoreAsync(
-                pharmacyId,
-                medicationId,
-                quantity,
-                userId,
-                prescriptionId,
-                referenceNumber);
-
-            await tx.CommitAsync();
-            return inventory;
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
+        if (quantity <= 0) throw new ArgumentException("Quantity must be positive.");
+        return AtomicAsync(() => DecreaseStockCoreAsync(pharmacyId, medicationId, quantity,
+            userId, prescriptionId, referenceNumber));
     }
 
     private async Task<PharmacyInventory> DecreaseStockCoreAsync(
@@ -235,18 +132,23 @@ public class InventoryService(
         Guid? prescriptionId,
         string? referenceNumber)
     {
-        var inventory = await _context.PharmacyInventories
-            .Include(i => i.Batches.Where(b => b.IsActive))
-            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found");
-
-        // FIFO - use oldest batches first
-        var batches = inventory.Batches
-            .Where(b => b.IsActive && b.Quantity > 0 && (!b.ExpirationDate.HasValue || b.ExpirationDate > DateTime.UtcNow))
-            .OrderBy(b => b.ExpirationDate ?? DateTime.MaxValue)
-            .ToList();
-
-        int remainingToDecrease = quantity;
-        int oldStock = inventory.QuantityInStock;
+        var inventoryId = await _context.PharmacyInventories
+            .Where(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId)
+            .Select(i => (Guid?)i.Id).SingleOrDefaultAsync()
+            ?? throw new InvalidOperationException("Inventory item not found");
+        var inventory = await LockInventoryAsync(inventoryId);
+        if (!inventory.IsAvailable) throw new InvalidOperationException("Inventory is unavailable for dispensing.");
+        if (!await _context.Pharmacies.AnyAsync(p => p.Id == pharmacyId && p.IsActive) ||
+            !await _context.Medications.AnyAsync(m => m.Id == medicationId && m.IsAvailable))
+            throw new InvalidOperationException("The pharmacy or medication is unavailable for dispensing.");
+        var now = DateTime.UtcNow;
+        InventoryStock.Refresh(inventory, now);
+        var batches = inventory.Batches.Where(b => InventoryStock.IsEligible(b, now))
+            .OrderBy(b => b.ExpirationDate).ThenBy(b => b.Id).ToList();
+        var oldStock = inventory.QuantityInStock;
+        if (oldStock < quantity)
+            throw new InvalidOperationException($"Insufficient eligible batch stock. Required: {quantity}, Available: {oldStock}");
+        var remainingToDecrease = quantity;
 
         foreach (var batch in batches)
         {
@@ -271,8 +173,9 @@ public class InventoryService(
                 $"Insufficient stock. Required: {quantity}, Available: {oldStock}");
         }
 
-        inventory.QuantityInStock -= quantity;
-        inventory.UpdatedAt = DateTime.UtcNow;
+        InventoryStock.Refresh(inventory, now);
+        inventory.UpdatedAt = now;
+        inventory.Version++;
 
         // Record history
         await RecordInventoryHistoryAsync(
@@ -288,100 +191,63 @@ public class InventoryService(
             $"Stock decreased by {quantity}"
         );
 
-        await _context.SaveChangesAsync();
         await CheckAndTriggerLowStockAlertAsync(inventory);
+        await _context.SaveChangesAsync();
 
         return inventory;
     }
 
-    public async Task<PharmacyInventory> IncreaseStockAsync(
-        Guid pharmacyId, 
-        Guid medicationId, 
-        int quantity,
-        Guid? userId = null,
-        string? referenceNumber = null)
+    public Task<PharmacyInventory> IncreaseStockAsync(Guid pharmacyId, Guid medicationId, int quantity,
+        Guid? userId = null, string? referenceNumber = null)
     {
-        if (quantity <= 0)
+        if (quantity <= 0) throw new ArgumentException("Quantity must be positive.");
+        return AtomicAsync(async () =>
         {
-            throw new ArgumentException("Quantity must be positive", nameof(quantity));
-        }
-
-        var inventory = await _context.PharmacyInventories
-            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId) ?? throw new InvalidOperationException("Inventory item not found. Use AddOrUpdateInventoryAsync to create new inventory.");
-        int oldStock = inventory.QuantityInStock;
-        inventory.QuantityInStock += quantity;
-        inventory.LastRestockedAt = DateTime.UtcNow;
-        inventory.UpdatedAt = DateTime.UtcNow;
-
-        // Record history
-        await RecordInventoryHistoryAsync(
-            inventory.Id,
-            null,
-            InventoryTransactionType.Restock,
-            quantity,
-            oldStock,
-            inventory.QuantityInStock,
-            userId,
-            referenceNumber: referenceNumber,
-            notes: $"Stock increased by {quantity}"
-        );
-
-        await _context.SaveChangesAsync();
-        await CheckAndTriggerLowStockAlertAsync(inventory);
-
-        return inventory;
+            var id = await _context.PharmacyInventories.Where(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId)
+                .Select(i => (Guid?)i.Id).SingleOrDefaultAsync() ?? throw new InvalidOperationException("Inventory item not found");
+            var inventory = await LockInventoryAsync(id);
+            await SetReportAsync(inventory, checked((inventory.ReportedQuantity ?? 0) + quantity), null,
+                DateTime.UtcNow, userId, "Reported restock; batch details are required for dispensing");
+            return inventory;
+        });
     }
 
     #endregion
 
     #region Batch Management
 
-    public async Task<InventoryBatch> AddBatchAsync(InventoryBatch batch)
+    public Task<InventoryBatch> AddBatchAsync(InventoryBatch batch) => AddBatchCoreAsync(batch, null);
+    public Task<InventoryBatch> AddBatchAsync(InventoryBatch batch, Guid userId) => AddBatchCoreAsync(batch, userId);
+    private Task<InventoryBatch> AddBatchCoreAsync(InventoryBatch batch, Guid? userId)
     {
-        var inventory = await _context.PharmacyInventories.FindAsync(batch.PharmacyInventoryId) ?? throw new InvalidOperationException("Inventory item not found");
-        batch.Id = Guid.NewGuid();
-        batch.OriginalQuantity = batch.Quantity;
-        batch.IsActive = true;
-        batch.ReceivedAt = DateTime.UtcNow;
-        batch.CreatedAt = DateTime.UtcNow;
-        batch.UpdatedAt = DateTime.UtcNow;
-
-        _context.InventoryBatches.Add(batch);
-
-        // Update inventory stock
-        int oldStock = inventory.QuantityInStock;
-        inventory.QuantityInStock += batch.Quantity;
-        inventory.LastRestockedAt = DateTime.UtcNow;
-        inventory.UpdatedAt = DateTime.UtcNow;
-
-        // Update nearest expiration date
-        if (batch.ExpirationDate.HasValue)
+        if (batch.Quantity <= 0 || string.IsNullOrWhiteSpace(batch.BatchNumber) || batch.BatchNumber.Length > 100 ||
+            !batch.ExpirationDate.HasValue || batch.ExpirationDate <= DateTime.UtcNow || batch.CostPerUnit < 0 ||
+            batch.ManufacturingDate > DateTime.UtcNow || batch.ManufacturingDate >= batch.ExpirationDate)
+            throw new ArgumentException("A positive quantity, named batch, known future expiry and valid dates/cost are required.");
+        return AtomicAsync(async () =>
         {
-            if (!inventory.ExpirationDate.HasValue || batch.ExpirationDate < inventory.ExpirationDate)
-            {
-                inventory.ExpirationDate = batch.ExpirationDate;
-            }
-        }
-
-        // Record history
-        await RecordInventoryHistoryAsync(
-            inventory.Id,
-            batch.Id,
-            InventoryTransactionType.Restock,
-            batch.Quantity,
-            oldStock,
-            inventory.QuantityInStock,
-            null,
-            referenceNumber: batch.BatchNumber,
-            notes: $"Added batch {batch.BatchNumber} with {batch.Quantity} units"
-        );
-
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Added batch {BatchNumber} for inventory {InventoryId}", 
-            batch.BatchNumber, inventory.Id);
-
-        return batch;
+            var inventory = await LockInventoryAsync(batch.PharmacyInventoryId);
+            batch.BatchNumber = batch.BatchNumber.Trim();
+            if (inventory.Batches.Any(b => b.BatchNumber == batch.BatchNumber))
+                throw new InvalidOperationException("This batch number already exists. Review the recorded lot before adding stock.");
+            InventoryStock.Refresh(inventory, DateTime.UtcNow);
+            var oldStock = inventory.QuantityInStock;
+            batch.Id = Guid.NewGuid();
+            batch.OriginalQuantity = batch.Quantity;
+            batch.IsActive = true;
+            batch.ReceivedAt = batch.CreatedAt = batch.UpdatedAt = DateTime.UtcNow;
+            inventory.Batches.Add(batch);
+            _context.InventoryBatches.Add(batch);
+            InventoryStock.Refresh(inventory, DateTime.UtcNow);
+            inventory.LastRestockedAt = inventory.UpdatedAt = DateTime.UtcNow;
+            inventory.Version++;
+            await RecordInventoryHistoryAsync(inventory.Id, batch.Id, InventoryTransactionType.Restock,
+                batch.Quantity, oldStock, inventory.QuantityInStock, userId,
+                referenceNumber: batch.BatchNumber, notes: "Recorded verified batch stock. " + batch.Notes);
+            await CheckAndTriggerLowStockAlertAsync(inventory);
+            await _context.SaveChangesAsync();
+            return batch;
+        });
     }
 
     public async Task<List<InventoryBatch>> GetBatchesAsync(Guid inventoryId, bool activeOnly = true)
@@ -420,46 +286,30 @@ public class InventoryService(
             .ToListAsync();
     }
 
-    public async Task<bool> RemoveExpiredBatchesAsync(Guid? userId = null)
+    public Task<bool> RemoveExpiredBatchesAsync(Guid? userId = null) => AtomicAsync(async () =>
     {
-        var expiredBatches = await _context.InventoryBatches
-            .Include(b => b.PharmacyInventory)
-            .Where(b => b.IsActive && b.ExpirationDate.HasValue && b.ExpirationDate < DateTime.UtcNow)
-            .ToListAsync();
-
-        if (!expiredBatches.Any())
+        var now = DateTime.UtcNow;
+        var ids = await _context.InventoryBatches.Where(b => b.IsActive && b.ExpirationDate <= now)
+            .Select(b => b.PharmacyInventoryId).Distinct().OrderBy(id => id).ToListAsync();
+        foreach (var id in ids)
         {
-            return false;
+            var inventory = await LockInventoryAsync(id);
+            InventoryStock.Refresh(inventory, now);
+            foreach (var batch in inventory.Batches.Where(b => b.IsActive && b.ExpirationDate <= now))
+            {
+                batch.IsActive = false;
+                batch.UpdatedAt = now;
+                await RecordInventoryHistoryAsync(id, batch.Id, InventoryTransactionType.Expired, -batch.Quantity,
+                    inventory.QuantityInStock, inventory.QuantityInStock, userId,
+                    notes: "Expired lot retired; already excluded from dispensable quantity");
+            }
+            inventory.Version++;
+            inventory.UpdatedAt = now;
+            await CheckAndTriggerLowStockAlertAsync(inventory);
         }
-
-        foreach (var batch in expiredBatches)
-        {
-            int oldStock = batch.PharmacyInventory.QuantityInStock;
-            
-            // Remove quantity from inventory
-            batch.PharmacyInventory.QuantityInStock -= batch.Quantity;
-            batch.IsActive = false;
-            batch.UpdatedAt = DateTime.UtcNow;
-
-            // Record history
-            await RecordInventoryHistoryAsync(
-                batch.PharmacyInventoryId,
-                batch.Id,
-                InventoryTransactionType.Expired,
-                -batch.Quantity,
-                oldStock,
-                batch.PharmacyInventory.QuantityInStock,
-                userId,
-                notes: $"Removed expired batch {batch.BatchNumber}"
-            );
-
-            _logger.LogWarning("Removed expired batch {BatchNumber} with {Quantity} units", 
-                batch.BatchNumber, batch.Quantity);
-        }
-
         await _context.SaveChangesAsync();
-        return true;
-    }
+        return ids.Count > 0;
+    });
 
     #endregion
 
@@ -555,31 +405,13 @@ public class InventoryService(
 
     #region Low Stock Alerts
 
-    public async Task<List<PharmacyInventory>> GetLowStockItemsAsync(Guid pharmacyId)
-    {
-        return await _context.PharmacyInventories
-            .Include(i => i.Medication)
-            .Where(i => i.PharmacyId == pharmacyId)
-            .Where(i => i.QuantityInStock <= i.MinimumStockLevel)
-            .OrderBy(i => i.QuantityInStock)
-            .ToListAsync();
-    }
+    public async Task<List<PharmacyInventory>> GetLowStockItemsAsync(Guid pharmacyId) =>
+        (await GetPharmacyInventoryAsync(pharmacyId)).Where(i => i.QuantityInStock <= i.MinimumStockLevel)
+            .OrderBy(i => i.QuantityInStock).ToList();
 
-    public async Task<List<PharmacyInventory>> GetExpiringItemsAsync(Guid pharmacyId, int daysThreshold = 30)
-    {
-        var thresholdDate = DateTime.UtcNow.AddDays(daysThreshold);
-
-        return await _context.PharmacyInventories
-            .Include(i => i.Medication)
-            .Include(i => i.Batches.Where(b => b.IsActive))
-            .Where(i => i.PharmacyId == pharmacyId)
-            .Where(i => i.Batches.Any(b => b.IsActive && 
-                                          b.ExpirationDate.HasValue && 
-                                          b.ExpirationDate.Value <= thresholdDate &&
-                                          b.ExpirationDate.Value > DateTime.UtcNow))
-            .OrderBy(i => i.ExpirationDate)
-            .ToListAsync();
-    }
+    public async Task<List<PharmacyInventory>> GetExpiringItemsAsync(Guid pharmacyId, int daysThreshold = 30) =>
+        (await GetPharmacyInventoryAsync(pharmacyId)).Where(i => i.ExpirationDate <= DateTime.UtcNow.AddDays(daysThreshold))
+            .OrderBy(i => i.ExpirationDate).ToList();
 
     public async Task<bool> CheckAndTriggerLowStockAlertAsync(PharmacyInventory inventory)
     {
@@ -648,11 +480,12 @@ public class InventoryService(
 
     public async Task<int> GetAvailableStockAsync(Guid pharmacyId, Guid medicationId)
     {
-        var inventory = await _context.PharmacyInventories
-            .AsNoTracking()
-            .FirstOrDefaultAsync(i => i.PharmacyId == pharmacyId && i.MedicationId == medicationId);
-
-        return inventory?.QuantityInStock ?? 0;
+        var now = DateTime.UtcNow;
+        return await _context.InventoryBatches.Where(b => b.PharmacyInventory.PharmacyId == pharmacyId &&
+            b.PharmacyInventory.MedicationId == medicationId && b.PharmacyInventory.IsAvailable &&
+            b.PharmacyInventory.Pharmacy.IsActive && b.PharmacyInventory.Medication.IsAvailable &&
+            b.IsActive && b.Quantity > 0 && b.BatchNumber.Trim() != "" && b.ExpirationDate > now)
+            .SumAsync(b => b.Quantity);
     }
 
     #endregion

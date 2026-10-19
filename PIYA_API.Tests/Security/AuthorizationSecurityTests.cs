@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Xunit;
+using PIYA_API.Model;
 
 namespace PIYA_API.Tests.Security;
 
@@ -15,40 +16,16 @@ namespace PIYA_API.Tests.Security;
 public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactory>
 {
     private readonly HttpClient _client;
+    private readonly PiyaWebApplicationFactory _factory;
 
     public AuthorizationSecurityTests(PiyaWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
-    private async Task<string> RegisterAndLoginAsync(string role)
-    {
-        var email = $"authz-{role.ToLower()}-{Guid.NewGuid()}@test.com";
-        const string password = "Test@Password123";
-
-        await _client.PostAsJsonAsync("/api/auth/register", new
-        {
-            email,
-            password,
-            firstName = role,
-            lastName = "TestUser",
-            phoneNumber = "+994501234567",
-            dateOfBirth = "1990-01-01",
-            role,
-            username = $"{role.ToLower()}_{Guid.NewGuid():N}"
-        });
-
-        var loginResp = await _client.PostAsJsonAsync("/api/auth/login", new
-        {
-            identifier = email,
-            password
-        });
-
-        if (loginResp.StatusCode != HttpStatusCode.OK) return string.Empty;
-        var body = await loginResp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.TryGetProperty("accessToken", out var t) ? t.GetString() ?? string.Empty : string.Empty;
-    }
+    private Task<string> RegisterAndLoginAsync(string role = "Patient") =>
+        TestIdentity.CreateAndLoginAsync(_factory, _client, Enum.Parse<UserRole>(role));
 
     // ── Doctor-only endpoints ─────────────────────────────────
 
@@ -56,19 +33,17 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
     public async Task DoctorDashboard_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/doctor/profile");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task CreatePrescription_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.PostAsJsonAsync("/api/prescription", new
@@ -78,7 +53,7 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
             expiresAt = DateTime.UtcNow.AddDays(30)
         });
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized, HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── Admin-only endpoints ──────────────────────────────────
@@ -87,36 +62,33 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
     public async Task AdminUsers_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/v1/userslist");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task AdminUsers_AsDoctor_Returns403()
     {
         var token = await RegisterAndLoginAsync("Doctor");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/v1/userslist");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task AuditLogs_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/audit/all");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── Pharmacy-only endpoints ───────────────────────────────
@@ -125,12 +97,11 @@ public class AuthorizationSecurityTests : IClassFixture<PiyaWebApplicationFactor
     public async Task PharmacyManager_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await _client.GetAsync("/api/pharmacy-manager/my-pharmacy");
+        var response = await _client.GetAsync($"/api/pharmacymanager/{Guid.NewGuid()}/dashboard");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── Unauthenticated access ────────────────────────────────

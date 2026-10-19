@@ -175,8 +175,11 @@ public class SearchService(
             var medIdSet = medicationIds.ToHashSet();
             var allInventory = await _dbContext.PharmacyInventories
                 .AsNoTracking()
-                .Where(i => medIdSet.Contains(i.MedicationId) && i.QuantityInStock > 0)
+                .Include(i => i.Batches)
+                .Where(i => medIdSet.Contains(i.MedicationId) && i.IsAvailable && i.Pharmacy.IsActive && i.Medication.IsAvailable)
                 .ToListAsync();
+            foreach (var inventory in allInventory) InventoryStock.Refresh(inventory, DateTime.UtcNow);
+            allInventory = allInventory.Where(i => i.QuantityInStock > 0).ToList();
 
             // Index: pharmacyId → (medicationId → inventory row)
             var inventoryByPharmacy = allInventory
@@ -272,11 +275,12 @@ public class SearchService(
             var prescription = await _prescriptionService.GetByIdAsync(prescriptionId)
                 ?? throw new InvalidOperationException($"Prescription {prescriptionId} not found");
 
-            var medicationIds = await _dbContext.PrescriptionItems
-                .AsNoTracking()
-                .Where(pi => pi.PrescriptionId == prescriptionId)
-                .Select(pi => pi.MedicationId)
-                .ToListAsync();
+            var required = await _dbContext.PrescriptionItems.AsNoTracking()
+                .Where(pi => pi.PrescriptionId == prescriptionId && !pi.IsFulfilled)
+                .GroupBy(pi => pi.MedicationId)
+                .Select(g => new { MedicationId = g.Key, Quantity = g.Sum(i => i.Quantity) })
+                .ToDictionaryAsync(i => i.MedicationId, i => i.Quantity);
+            var medicationIds = required.Keys.ToList();
 
             if (medicationIds.Count == 0)
             {
@@ -285,7 +289,8 @@ public class SearchService(
             }
 
             var allResults = await SearchByMultipleMedicationsAsync(medicationIds, userLocation, radiusKm);
-            var fullStock = allResults.Where(r => r.CanFulfillCompletely).ToList();
+            var fullStock = allResults.Where(r => r.CanFulfillCompletely &&
+                r.AvailableMedications.All(m => m.QuantityAvailable >= required[m.MedicationId])).ToList();
 
             _logger.LogInformation("Found {Count} pharmacies with full prescription stock", fullStock.Count);
             return fullStock;

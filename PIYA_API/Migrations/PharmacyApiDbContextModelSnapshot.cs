@@ -75,6 +75,7 @@ namespace PIYA_API.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Status")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("UpdatedAt")
@@ -1589,6 +1590,9 @@ namespace PIYA_API.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("LegacyQuantity")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("ManufacturingDate")
                         .HasColumnType("timestamp with time zone");
 
@@ -1620,7 +1624,10 @@ namespace PIYA_API.Migrations
 
                     b.HasIndex("PharmacyInventoryId");
 
-                    b.ToTable("InventoryBatches");
+                    b.ToTable("InventoryBatches", t =>
+                        {
+                            t.HasCheckConstraint("CK_InventoryBatch_Quantity_Nonnegative", "\"Quantity\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("PIYA_API.Model.InventoryHistory", b =>
@@ -1682,6 +1689,56 @@ namespace PIYA_API.Migrations
                     b.HasIndex("PrescriptionId");
 
                     b.ToTable("InventoryHistories");
+                });
+
+            modelBuilder.Entity("PIYA_API.Model.InventorySyncReceipt", b =>
+                {
+                    b.Property<Guid>("PharmacyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PharmacyId", "RequestId");
+
+                    b.ToTable("InventorySyncReceipt");
+                });
+
+            modelBuilder.Entity("PIYA_API.Model.InventorySyncSource", b =>
+                {
+                    b.Property<Guid>("PharmacyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CapturedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PharmacyId", "SourceId");
+
+                    b.ToTable("InventorySyncSource");
                 });
 
             modelBuilder.Entity("PIYA_API.Model.MedicalDocument", b =>
@@ -2684,6 +2741,9 @@ namespace PIYA_API.Migrations
                     b.Property<DateTime>("LastRestockedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("LegacyQuantityInStock")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("LowStockAlertTriggered")
                         .HasColumnType("boolean");
 
@@ -2705,8 +2765,24 @@ namespace PIYA_API.Migrations
                     b.Property<int>("ReorderQuantity")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("ReportedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("ReportedQuantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ReportedSourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("RequiresReconciliation")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
 
                     b.HasKey("Id");
 
@@ -2714,7 +2790,12 @@ namespace PIYA_API.Migrations
 
                     b.HasIndex("PharmacyId");
 
-                    b.ToTable("PharmacyInventories");
+                    b.ToTable("PharmacyInventories", t =>
+                        {
+                            t.HasCheckConstraint("CK_Inventory_Quantity_Nonnegative", "\"QuantityInStock\" >= 0");
+
+                            t.HasCheckConstraint("CK_Inventory_Reported_Nonnegative", "\"ReportedQuantity\" IS NULL OR \"ReportedQuantity\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("PIYA_API.Model.PharmacyPickup", b =>

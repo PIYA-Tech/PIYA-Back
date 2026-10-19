@@ -289,12 +289,15 @@ public static class InfrastructureExtensions
 
             options.AddPolicy("Development", policy =>
             {
-                policy.WithOrigins(
+                var developmentOrigins = config.GetSection("Cors:DevelopmentAllowedOrigins").Get<string[]>() ?? [
                         "https://piya.life",
+                        "http://localhost",
                         "http://localhost:4200",
                         "http://localhost:5173",
                         "http://localhost:8080",
-                        "https://localhost:5173")
+                        "https://localhost:5173"];
+                // Browser Origin omits default ports, including the Compose port 80.
+                policy.WithOrigins(developmentOrigins.Select(origin => new Uri(origin).GetLeftPart(UriPartial.Authority)).ToArray())
                       .AllowAnyMethod()
                       .AllowAnyHeader()
                       .AllowCredentials()

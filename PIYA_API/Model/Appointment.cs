@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace PIYA_API.Model;
 
 /// <summary>
@@ -52,6 +54,7 @@ public class Appointment
     /// <summary>
     /// Appointment status
     /// </summary>
+    [ConcurrencyCheck]
     public AppointmentStatus Status { get; set; } = AppointmentStatus.Scheduled;
     
     /// <summary>

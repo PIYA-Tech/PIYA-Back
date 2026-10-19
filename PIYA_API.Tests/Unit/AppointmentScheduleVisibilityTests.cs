@@ -15,11 +15,11 @@ public sealed class AppointmentScheduleVisibilityTests
     [Theory]
     [InlineData(AppointmentStatus.Scheduled, true)]
     [InlineData(AppointmentStatus.Confirmed, true)]
-    [InlineData(AppointmentStatus.Rescheduled, true)]
+    [InlineData(AppointmentStatus.Rescheduled, false)]
     [InlineData(AppointmentStatus.Cancelled, false)]
     [InlineData(AppointmentStatus.Completed, false)]
     [InlineData(AppointmentStatus.NoShow, false)]
-    [InlineData(AppointmentStatus.InProgress, false)]
+    [InlineData(AppointmentStatus.InProgress, true)]
     public async Task Schedule_OnlyIncludesStatusesThatBlockAvailability(AppointmentStatus status, bool expected)
     {
         var appointment = MakeAppointment(status);

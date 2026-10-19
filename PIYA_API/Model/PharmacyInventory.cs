@@ -11,7 +11,8 @@ public enum InventoryTransactionType
     Return = 4,            // Customer return
     Expired = 5,           // Removed due to expiration
     Damaged = 6,           // Removed due to damage
-    Transfer = 7           // Transferred to another pharmacy
+    Transfer = 7,          // Transferred to another pharmacy
+    Report = 8            // External/manual reported quantity; no physical movement
 }
 
 /// <summary>
@@ -34,9 +35,17 @@ public class PharmacyInventory
     public Medication Medication { get; set; } = null!;
     
     /// <summary>
-    /// Current quantity in stock (sum of all active batches)
+    /// Cached eligible batch quantity. Reads recompute this because lots expire with time.
     /// </summary>
     public int QuantityInStock { get; set; }
+    public int? ReportedQuantity { get; set; }
+    public DateTime? ReportedAt { get; set; }
+    public Guid? ReportedSourceId { get; set; }
+    /// <summary>Original pre-separation total, retained verbatim for reconciliation.</summary>
+    public int? LegacyQuantityInStock { get; set; }
+    public bool RequiresReconciliation { get; set; }
+    [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
+    public long Version { get; set; }
     
     /// <summary>
     /// Minimum stock level (for low stock alerts)
@@ -133,6 +142,8 @@ public class InventoryBatch
     /// Quantity in this specific batch
     /// </summary>
     public int Quantity { get; set; }
+    /// <summary>Preserves invalid legacy counts when migration quarantines a lot.</summary>
+    public int? LegacyQuantity { get; set; }
     
     /// <summary>
     /// Original quantity when batch was created

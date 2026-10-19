@@ -24,7 +24,7 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
         var email = $"inv-{Guid.NewGuid()}@test.com";
         var password = "Test@Password123";
 
-        await _client.PostAsJsonAsync("/api/auth/register", new
+        var registration = await _client.PostAsJsonAsync("/api/auth/register", new
         {
             email,
             password,
@@ -36,13 +36,14 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
             username = $"inv_{Guid.NewGuid():N}"
         });
 
+        registration.StatusCode.Should().Be(HttpStatusCode.OK, await registration.Content.ReadAsStringAsync());
         var resp = await _client.PostAsJsonAsync("/api/auth/login", new
         {
             identifier = email,
             password
         });
 
-        if (resp.StatusCode != HttpStatusCode.OK) return string.Empty;
+        resp.StatusCode.Should().Be(HttpStatusCode.OK, await resp.Content.ReadAsStringAsync());
         var body = await resp.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
         return doc.RootElement.TryGetProperty("accessToken", out var t) ? t.GetString() ?? string.Empty : string.Empty;
@@ -60,13 +61,13 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
     public async Task GetPharmacyInventory_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
+        token.Should().NotBeNullOrWhiteSpace();
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync($"/api/PharmacyInventory/pharmacy/{Guid.NewGuid()}");
 
         // Patient should not access inventory management
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
         var response = await _client.GetAsync("/api/medication/search?query=para");
 
         // Public endpoint — no auth required
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -83,6 +84,6 @@ public class InventoryIntegrationTests : IClassFixture<PiyaWebApplicationFactory
     {
         var response = await _client.GetAsync("/api/pharmacy?city=Baku");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

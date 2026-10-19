@@ -221,8 +221,9 @@ public class BatchRequestValidator : AbstractValidator<BatchRequest>
             .GreaterThanOrEqualTo(0).WithMessage("CostPerUnit must be non-negative.");
 
         RuleFor(x => x.ExpirationDate)
-            .GreaterThan(DateTime.UtcNow).WithMessage("Expiration date must be in the future.")
-            .When(x => x.ExpirationDate.HasValue);
+            .NotNull().WithMessage("A known expiry is required for dispensable stock.")
+            .Must(value => value.HasValue && value.Value > DateTime.UtcNow)
+            .WithMessage("Expiration date must be in the future.");
 
         RuleFor(x => x.Supplier)
             .MaximumLength(200).WithMessage("Supplier must not exceed 200 characters.")

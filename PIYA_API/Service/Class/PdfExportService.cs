@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using PdfSharpCore.Drawing;
-using PdfSharpCore.Pdf;
+using PdfSharp.Drawing;
+using PdfSharp.Pdf;
 using PIYA_API.Data;
 using PIYA_API.Model;
 using PIYA_API.Service.Interface;
@@ -9,6 +9,8 @@ namespace PIYA_API.Service.Class;
 
 public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportService> logger) : IPdfExportService
 {
+    static PdfExportService() => PiyaPdfFontResolver.EnsureConfigured();
+
     private readonly PharmacyApiDbContext _context = context;
     private readonly ILogger<PdfExportService> _logger = logger;
 
@@ -28,56 +30,56 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         document.Info.Title = "Medical Prescription";
         var page = document.AddPage();
         var gfx = XGraphics.FromPdfPage(page);
-        
-        var titleFont = new XFont("Arial", 20, XFontStyle.Bold);
-        var headerFont = new XFont("Arial", 14, XFontStyle.Bold);
-        var regularFont = new XFont("Arial", 11, XFontStyle.Regular);
-        var smallFont = new XFont("Arial", 9, XFontStyle.Regular);
-        
+
+        var titleFont = new XFont(PiyaPdfFontResolver.Family, 20, XFontStyleEx.Bold);
+        var headerFont = new XFont(PiyaPdfFontResolver.Family, 14, XFontStyleEx.Bold);
+        var regularFont = new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Regular);
+        var smallFont = new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Regular);
+
         double yPos = 40;
         double leftMargin = 40;
-        double pageWidth = page.Width - 80;
+        double pageWidth = page.Width.Point - 80;
 
         // Title
-        gfx.DrawString("MEDICAL PRESCRIPTION", titleFont, XBrushes.DarkBlue, 
+        gfx.DrawString("MEDICAL PRESCRIPTION", titleFont, XBrushes.DarkBlue,
             new XRect(leftMargin, yPos, pageWidth, 30), XStringFormats.TopCenter);
         yPos += 50;
 
         // Prescription Info
         DrawSectionHeader(gfx, "Prescription Information", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Prescription #: {prescription.Id.ToString().Substring(0, 8).ToUpper()}", 
+        gfx.DrawString($"Prescription #: {prescription.Id.ToString().Substring(0, 8).ToUpper()}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Issue Date: {prescription.IssuedAt:MMMM dd, yyyy}", 
+        gfx.DrawString($"Issue Date: {prescription.IssuedAt:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
-        gfx.DrawString($"Expires: {prescription.ExpiresAt:MMMM dd, yyyy}", 
+        gfx.DrawString($"Expires: {prescription.ExpiresAt:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin + 300, yPos);
         yPos += 20;
-        gfx.DrawString($"Status: {prescription.Status}", 
-            regularFont, prescription.Status == PrescriptionStatus.Active ? XBrushes.Green : XBrushes.Gray, 
+        gfx.DrawString($"Status: {prescription.Status}",
+            regularFont, prescription.Status == PrescriptionStatus.Active ? XBrushes.Green : XBrushes.Gray,
             leftMargin, yPos);
         yPos += 30;
 
         // Patient Information
         DrawSectionHeader(gfx, "Patient Information", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Name: {prescription.Patient.FirstName} {prescription.Patient.LastName}", 
+        gfx.DrawString($"Name: {prescription.Patient.FirstName} {prescription.Patient.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Date of Birth: {prescription.Patient.DateOfBirth:MM/dd/yyyy}", 
+        gfx.DrawString($"Date of Birth: {prescription.Patient.DateOfBirth:MM/dd/yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 30;
 
         // Doctor Information
         DrawSectionHeader(gfx, "Prescribing Physician", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Dr. {prescription.Doctor.FirstName} {prescription.Doctor.LastName}", 
+        gfx.DrawString($"Dr. {prescription.Doctor.FirstName} {prescription.Doctor.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
         if (doctorProfile != null)
         {
-            gfx.DrawString($"License #: {doctorProfile.LicenseNumber}", 
+            gfx.DrawString($"License #: {doctorProfile.LicenseNumber}",
                 regularFont, XBrushes.Black, leftMargin, yPos);
             yPos += 20;
-            gfx.DrawString($"Specialization: {doctorProfile.Specialization}", 
+            gfx.DrawString($"Specialization: {doctorProfile.Specialization}",
                 regularFont, XBrushes.Black, leftMargin, yPos);
             yPos += 20;
         }
@@ -87,7 +89,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         DrawSectionHeader(gfx, "Medications", headerFont, leftMargin, ref yPos);
         foreach (var item in prescription.Items)
         {
-            if (yPos > page.Height - 100)
+            if (yPos > page.Height.Point - 100)
             {
                 page = document.AddPage();
                 gfx = XGraphics.FromPdfPage(page);
@@ -96,24 +98,24 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
 
             gfx.DrawRectangle(XPens.LightGray, leftMargin, yPos, pageWidth, 2);
             yPos += 10;
-            
-            gfx.DrawString($"{item.Medication.BrandName} ({item.Medication.GenericName})", 
-                new XFont("Arial", 11, XFontStyle.Bold), XBrushes.Black, leftMargin, yPos);
+
+            gfx.DrawString($"{item.Medication.BrandName} ({item.Medication.GenericName})",
+                new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Bold), XBrushes.Black, leftMargin, yPos);
             yPos += 18;
-            gfx.DrawString($"Strength: {item.Medication.Strength} | Form: {item.Medication.Form}", 
+            gfx.DrawString($"Strength: {item.Medication.Strength} | Form: {item.Medication.Form}",
                 regularFont, XBrushes.Black, leftMargin + 10, yPos);
             yPos += 18;
-            gfx.DrawString($"Quantity: {item.Quantity} | Dosage: {item.Dosage}", 
+            gfx.DrawString($"Quantity: {item.Quantity} | Dosage: {item.Dosage}",
                 regularFont, XBrushes.Black, leftMargin + 10, yPos);
             yPos += 18;
-            gfx.DrawString($"Frequency: {item.Frequency} | Duration: {item.Duration}", 
+            gfx.DrawString($"Frequency: {item.Frequency} | Duration: {item.Duration}",
                 regularFont, XBrushes.Black, leftMargin + 10, yPos);
             yPos += 18;
-            
+
             if (!string.IsNullOrEmpty(item.Instructions))
             {
-                gfx.DrawString($"Instructions: {item.Instructions}", 
-                    new XFont("Arial", 10, XFontStyle.Italic), XBrushes.DarkGray, 
+                gfx.DrawString($"Instructions: {item.Instructions}",
+                    new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Italic), XBrushes.DarkGray,
                     leftMargin + 10, yPos);
                 yPos += 18;
             }
@@ -138,8 +140,8 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         }
 
         // Footer
-        gfx.DrawString($"Generated on: {DateTime.Now:MMMM dd, yyyy HH:mm} | PIYA Healthcare Platform", 
-            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height - 30, pageWidth, 20), 
+        gfx.DrawString($"Generated on: {DateTime.Now:MMMM dd, yyyy HH:mm} | PIYA Healthcare Platform",
+            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height.Point - 30, pageWidth, 20),
             XStringFormats.Center);
 
         using var stream = new MemoryStream();
@@ -160,45 +162,45 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         document.Info.Title = "Medical Certificate";
         var page = document.AddPage();
         var gfx = XGraphics.FromPdfPage(page);
-        
-        var titleFont = new XFont("Arial", 20, XFontStyle.Bold);
-        var headerFont = new XFont("Arial", 14, XFontStyle.Bold);
-        var regularFont = new XFont("Arial", 11, XFontStyle.Regular);
-        var smallFont = new XFont("Arial", 9, XFontStyle.Regular);
-        
+
+        var titleFont = new XFont(PiyaPdfFontResolver.Family, 20, XFontStyleEx.Bold);
+        var headerFont = new XFont(PiyaPdfFontResolver.Family, 14, XFontStyleEx.Bold);
+        var regularFont = new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Regular);
+        var smallFont = new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Regular);
+
         double yPos = 40;
         double leftMargin = 40;
-        double pageWidth = page.Width - 80;
+        double pageWidth = page.Width.Point - 80;
 
         // Title
-        gfx.DrawString("MEDICAL CERTIFICATE", titleFont, XBrushes.DarkBlue, 
+        gfx.DrawString("MEDICAL CERTIFICATE", titleFont, XBrushes.DarkBlue,
             new XRect(leftMargin, yPos, pageWidth, 30), XStringFormats.TopCenter);
         yPos += 40;
-        gfx.DrawString($"Certificate #: {doctorNote.Id.ToString().Substring(0, 8).ToUpper()}", 
+        gfx.DrawString($"Certificate #: {doctorNote.Id.ToString().Substring(0, 8).ToUpper()}",
             smallFont, XBrushes.Gray, new XRect(leftMargin, yPos, pageWidth, 20), XStringFormats.TopCenter);
         yPos += 40;
 
         // Patient Information
         DrawSectionHeader(gfx, "Patient Information", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Name: {doctorNote.Patient.FirstName} {doctorNote.Patient.LastName}", 
+        gfx.DrawString($"Name: {doctorNote.Patient.FirstName} {doctorNote.Patient.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Date of Birth: {doctorNote.Patient.DateOfBirth:MMMM dd, yyyy}", 
+        gfx.DrawString($"Date of Birth: {doctorNote.Patient.DateOfBirth:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 30;
 
         // Certificate Details
         DrawSectionHeader(gfx, "Certificate Details", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Issue Date: {doctorNote.IssuedAt:MMMM dd, yyyy}", 
+        gfx.DrawString($"Issue Date: {doctorNote.IssuedAt:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Valid From: {doctorNote.ValidFrom:MMMM dd, yyyy}", 
+        gfx.DrawString($"Valid From: {doctorNote.ValidFrom:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Valid To: {doctorNote.ValidTo:MMMM dd, yyyy}", 
+        gfx.DrawString($"Valid To: {doctorNote.ValidTo:MMMM dd, yyyy}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Note Number: {doctorNote.NoteNumber}", 
+        gfx.DrawString($"Note Number: {doctorNote.NoteNumber}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 30;
 
@@ -210,22 +212,22 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         }
         else
         {
-            DrawWrappedText(gfx, "This patient has been under medical care. Details are confidential as per patient privacy regulations.", 
-                new XFont("Arial", 11, XFontStyle.Italic), leftMargin, ref yPos, pageWidth);
+            DrawWrappedText(gfx, "This patient has been under medical care. Details are confidential as per patient privacy regulations.",
+                new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Italic), leftMargin, ref yPos, pageWidth);
         }
         yPos += 30;
 
         // Doctor Information
         DrawSectionHeader(gfx, "Certifying Physician", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Dr. {doctorNote.Doctor.FirstName} {doctorNote.Doctor.LastName}", 
+        gfx.DrawString($"Dr. {doctorNote.Doctor.FirstName} {doctorNote.Doctor.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
         if (doctorProfile != null)
         {
-            gfx.DrawString($"License #: {doctorProfile.LicenseNumber}", 
+            gfx.DrawString($"License #: {doctorProfile.LicenseNumber}",
                 regularFont, XBrushes.Black, leftMargin, yPos);
             yPos += 20;
-            gfx.DrawString($"Specialization: {doctorProfile.Specialization}", 
+            gfx.DrawString($"Specialization: {doctorProfile.Specialization}",
                 regularFont, XBrushes.Black, leftMargin, yPos);
             yPos += 20;
         }
@@ -235,24 +237,24 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         gfx.DrawLine(XPens.Black, leftMargin, yPos, leftMargin + 200, yPos);
         gfx.DrawLine(XPens.Black, leftMargin + 280, yPos, leftMargin + 480, yPos);
         yPos += 5;
-        gfx.DrawString("Doctor's Signature", new XFont("Arial", 9, XFontStyle.Italic), 
+        gfx.DrawString("Doctor's Signature", new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Italic),
             XBrushes.Gray, leftMargin, yPos);
-        gfx.DrawString("Date", new XFont("Arial", 9, XFontStyle.Italic), 
+        gfx.DrawString("Date", new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Italic),
             XBrushes.Gray, leftMargin + 280, yPos);
         yPos += 40;
 
         // Verification
-        gfx.DrawString($"Note Number: {doctorNote.NoteNumber}", 
-            new XFont("Arial", 10, XFontStyle.Bold), XBrushes.DarkGray, 
+        gfx.DrawString($"Note Number: {doctorNote.NoteNumber}",
+            new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Bold), XBrushes.DarkGray,
             new XRect(leftMargin, yPos, pageWidth, 20), XStringFormats.Center);
         yPos += 15;
-        gfx.DrawString("This number can be used to verify the authenticity of this document", 
-            new XFont("Arial", 8, XFontStyle.Italic), XBrushes.Gray, 
+        gfx.DrawString("This number can be used to verify the authenticity of this document",
+            new XFont(PiyaPdfFontResolver.Family, 8, XFontStyleEx.Italic), XBrushes.Gray,
             new XRect(leftMargin, yPos, pageWidth, 20), XStringFormats.Center);
 
         // Footer
-        gfx.DrawString($"Certificate #: {doctorNote.Id.ToString().Substring(0, 8).ToUpper()} | Generated: {DateTime.Now:MMMM dd, yyyy}", 
-            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height - 30, pageWidth, 20), 
+        gfx.DrawString($"Certificate #: {doctorNote.Id.ToString().Substring(0, 8).ToUpper()} | Generated: {DateTime.Now:MMMM dd, yyyy}",
+            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height.Point - 30, pageWidth, 20),
             XStringFormats.Center);
 
         using var stream = new MemoryStream();
@@ -274,54 +276,54 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         document.Info.Title = "Appointment Confirmation";
         var page = document.AddPage();
         var gfx = XGraphics.FromPdfPage(page);
-        
-        var titleFont = new XFont("Arial", 20, XFontStyle.Bold);
-        var headerFont = new XFont("Arial", 14, XFontStyle.Bold);
-        var regularFont = new XFont("Arial", 11, XFontStyle.Regular);
-        var smallFont = new XFont("Arial", 9, XFontStyle.Regular);
-        
+
+        var titleFont = new XFont(PiyaPdfFontResolver.Family, 20, XFontStyleEx.Bold);
+        var headerFont = new XFont(PiyaPdfFontResolver.Family, 14, XFontStyleEx.Bold);
+        var regularFont = new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Regular);
+        var smallFont = new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Regular);
+
         double yPos = 40;
         double leftMargin = 40;
-        double pageWidth = page.Width - 80;
+        double pageWidth = page.Width.Point - 80;
 
         // Title
-        gfx.DrawString("APPOINTMENT CONFIRMATION", titleFont, XBrushes.DarkBlue, 
+        gfx.DrawString("APPOINTMENT CONFIRMATION", titleFont, XBrushes.DarkBlue,
             new XRect(leftMargin, yPos, pageWidth, 30), XStringFormats.TopCenter);
         yPos += 60;
 
         // Appointment Details (Highlighted Box)
         gfx.DrawRectangle(new XPen(XColors.DarkBlue, 2), XBrushes.LightBlue, leftMargin, yPos, pageWidth, 80);
         yPos += 15;
-        gfx.DrawString("Appointment Details", new XFont("Arial", 14, XFontStyle.Bold), 
+        gfx.DrawString("Appointment Details", new XFont(PiyaPdfFontResolver.Family, 14, XFontStyleEx.Bold),
             XBrushes.DarkBlue, leftMargin + 10, yPos);
         yPos += 25;
-        gfx.DrawString($"Date & Time: {appointment.ScheduledAt:MMMM dd, yyyy HH:mm}", 
-            new XFont("Arial", 12, XFontStyle.Bold), XBrushes.Black, leftMargin + 10, yPos);
+        gfx.DrawString($"Date & Time: {appointment.ScheduledAt:MMMM dd, yyyy HH:mm}",
+            new XFont(PiyaPdfFontResolver.Family, 12, XFontStyleEx.Bold), XBrushes.Black, leftMargin + 10, yPos);
         yPos += 20;
-        gfx.DrawString($"Duration: {appointment.DurationMinutes} minutes | Status: {appointment.Status}", 
+        gfx.DrawString($"Duration: {appointment.DurationMinutes} minutes | Status: {appointment.Status}",
             regularFont, XBrushes.Black, leftMargin + 10, yPos);
         yPos += 40;
 
         // Patient Information
         DrawSectionHeader(gfx, "Patient Information", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Name: {appointment.Patient.FirstName} {appointment.Patient.LastName}", 
+        gfx.DrawString($"Name: {appointment.Patient.FirstName} {appointment.Patient.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Phone: {appointment.Patient.PhoneNumber}", 
+        gfx.DrawString($"Phone: {appointment.Patient.PhoneNumber}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
-        gfx.DrawString($"Email: {appointment.Patient.Email}", 
+        gfx.DrawString($"Email: {appointment.Patient.Email}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 30;
 
         // Doctor Information
         DrawSectionHeader(gfx, "Doctor", headerFont, leftMargin, ref yPos);
-        gfx.DrawString($"Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}", 
+        gfx.DrawString($"Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}",
             regularFont, XBrushes.Black, leftMargin, yPos);
         yPos += 20;
         if (doctorProfile != null)
         {
-            gfx.DrawString($"Specialization: {doctorProfile.Specialization}", 
+            gfx.DrawString($"Specialization: {doctorProfile.Specialization}",
                 regularFont, XBrushes.Black, leftMargin, yPos);
             yPos += 20;
         }
@@ -329,7 +331,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
 
         // Hospital Information
         DrawSectionHeader(gfx, "Location", headerFont, leftMargin, ref yPos);
-        gfx.DrawString(appointment.Hospital.Name, new XFont("Arial", 11, XFontStyle.Bold), 
+        gfx.DrawString(appointment.Hospital.Name, new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Bold),
             XBrushes.Black, leftMargin, yPos);
         yPos += 20;
         gfx.DrawString(appointment.Hospital.Address, regularFont, XBrushes.Black, leftMargin, yPos);
@@ -349,21 +351,21 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         yPos += 10;
         gfx.DrawRectangle(new XPen(XColors.Orange, 1), XBrushes.LightYellow, leftMargin, yPos, pageWidth, 90);
         yPos += 15;
-        gfx.DrawString("Important Notes", new XFont("Arial", 12, XFontStyle.Bold), 
+        gfx.DrawString("Important Notes", new XFont(PiyaPdfFontResolver.Family, 12, XFontStyleEx.Bold),
             XBrushes.DarkOrange, leftMargin + 10, yPos);
         yPos += 20;
-        gfx.DrawString("• Please arrive 15 minutes before your scheduled appointment", 
+        gfx.DrawString("• Please arrive 15 minutes before your scheduled appointment",
             regularFont, XBrushes.Black, leftMargin + 10, yPos);
         yPos += 18;
-        gfx.DrawString("• Bring a valid ID and insurance card", 
+        gfx.DrawString("• Bring a valid ID and insurance card",
             regularFont, XBrushes.Black, leftMargin + 10, yPos);
         yPos += 18;
-        gfx.DrawString("• If you need to cancel or reschedule, please notify us at least 24 hours in advance", 
+        gfx.DrawString("• If you need to cancel or reschedule, please notify us at least 24 hours in advance",
             regularFont, XBrushes.Black, leftMargin + 10, yPos);
 
         // Footer
-        gfx.DrawString($"Confirmation #: {appointment.Id.ToString().Substring(0, 8).ToUpper()} | Generated: {DateTime.Now:MMMM dd, yyyy HH:mm}", 
-            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height - 30, pageWidth, 20), 
+        gfx.DrawString($"Confirmation #: {appointment.Id.ToString().Substring(0, 8).ToUpper()} | Generated: {DateTime.Now:MMMM dd, yyyy HH:mm}",
+            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height.Point - 30, pageWidth, 20),
             XStringFormats.Center);
 
         using var stream = new MemoryStream();
@@ -405,21 +407,21 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         document.Info.Title = "Patient Medical Summary";
         var page = document.AddPage();
         var gfx = XGraphics.FromPdfPage(page);
-        
-        var titleFont = new XFont("Arial", 18, XFontStyle.Bold);
-        var headerFont = new XFont("Arial", 12, XFontStyle.Bold);
-        var regularFont = new XFont("Arial", 10, XFontStyle.Regular);
-        var smallFont = new XFont("Arial", 8, XFontStyle.Regular);
-        
+
+        var titleFont = new XFont(PiyaPdfFontResolver.Family, 18, XFontStyleEx.Bold);
+        var headerFont = new XFont(PiyaPdfFontResolver.Family, 12, XFontStyleEx.Bold);
+        var regularFont = new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Regular);
+        var smallFont = new XFont(PiyaPdfFontResolver.Family, 8, XFontStyleEx.Regular);
+
         double yPos = 40;
         double leftMargin = 40;
-        double pageWidth = page.Width - 80;
+        double pageWidth = page.Width.Point - 80;
 
         // Title
-        gfx.DrawString("PATIENT MEDICAL SUMMARY", titleFont, XBrushes.DarkBlue, 
+        gfx.DrawString("PATIENT MEDICAL SUMMARY", titleFont, XBrushes.DarkBlue,
             new XRect(leftMargin, yPos, pageWidth, 25), XStringFormats.TopCenter);
         yPos += 35;
-        gfx.DrawString($"Generated: {DateTime.Now:MMMM dd, yyyy}", smallFont, XBrushes.Gray, 
+        gfx.DrawString($"Generated: {DateTime.Now:MMMM dd, yyyy}", smallFont, XBrushes.Gray,
             new XRect(leftMargin, yPos, pageWidth, 15), XStringFormats.TopCenter);
         yPos += 35;
 
@@ -438,12 +440,12 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
 
         // Recent Appointments
         DrawSectionHeader(gfx, "Recent Appointments (Last 10)", headerFont, leftMargin, ref yPos);
-        
+
         if (appointments.Any())
         {
             foreach (var appointment in appointments)
             {
-                if (yPos > page.Height - 120)
+                if (yPos > page.Height.Point - 120)
                 {
                     page = document.AddPage();
                     gfx = XGraphics.FromPdfPage(page);
@@ -451,36 +453,36 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
                 }
 
                 var doctorProfile = appointmentDoctorProfiles.GetValueOrDefault(appointment.DoctorId);
-                
+
                 gfx.DrawRectangle(XPens.LightGray, leftMargin, yPos, pageWidth, 65);
                 yPos += 12;
-                gfx.DrawString($"{appointment.ScheduledAt:MMMM dd, yyyy HH:mm}", 
-                    new XFont("Arial", 10, XFontStyle.Bold), XBrushes.Black, leftMargin + 5, yPos);
+                gfx.DrawString($"{appointment.ScheduledAt:MMMM dd, yyyy HH:mm}",
+                    new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Bold), XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 15;
-                gfx.DrawString($"Doctor: Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}", 
+                gfx.DrawString($"Doctor: Dr. {appointment.Doctor.FirstName} {appointment.Doctor.LastName}",
                     regularFont, XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 13;
                 if (doctorProfile != null)
                 {
-                    gfx.DrawString($"Specialization: {doctorProfile.Specialization}", 
+                    gfx.DrawString($"Specialization: {doctorProfile.Specialization}",
                         regularFont, XBrushes.Black, leftMargin + 5, yPos);
                     yPos += 13;
                 }
-                gfx.DrawString($"Hospital: {appointment.Hospital.Name} | Status: {appointment.Status}", 
+                gfx.DrawString($"Hospital: {appointment.Hospital.Name} | Status: {appointment.Status}",
                     regularFont, XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 20;
             }
         }
         else
         {
-            gfx.DrawString("No appointments found", new XFont("Arial", 10, XFontStyle.Italic), 
+            gfx.DrawString("No appointments found", new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Italic),
                 XBrushes.Gray, leftMargin, yPos);
             yPos += 20;
         }
         yPos += 15;
 
         // Check if we need a new page
-        if (yPos > page.Height - 200)
+        if (yPos > page.Height.Point - 200)
         {
             page = document.AddPage();
             gfx = XGraphics.FromPdfPage(page);
@@ -489,12 +491,12 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
 
         // Recent Prescriptions
         DrawSectionHeader(gfx, "Recent Prescriptions (Last 10)", headerFont, leftMargin, ref yPos);
-        
+
         if (prescriptions.Any())
         {
             foreach (var prescription in prescriptions)
             {
-                if (yPos > page.Height - 140)
+                if (yPos > page.Height.Point - 140)
                 {
                     page = document.AddPage();
                     gfx = XGraphics.FromPdfPage(page);
@@ -502,34 +504,34 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
                 }
 
                 var doctorProfile = prescriptionDoctorProfiles.GetValueOrDefault(prescription.DoctorId);
-                
+
                 var boxHeight = 70 + (prescription.Items.Count * 13);
                 gfx.DrawRectangle(XPens.LightGray, leftMargin, yPos, pageWidth, boxHeight);
                 yPos += 12;
-                gfx.DrawString($"Issued: {prescription.IssuedAt:MMMM dd, yyyy}", 
-                    new XFont("Arial", 10, XFontStyle.Bold), XBrushes.Black, leftMargin + 5, yPos);
+                gfx.DrawString($"Issued: {prescription.IssuedAt:MMMM dd, yyyy}",
+                    new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Bold), XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 15;
-                gfx.DrawString($"Doctor: Dr. {prescription.Doctor.FirstName} {prescription.Doctor.LastName}", 
+                gfx.DrawString($"Doctor: Dr. {prescription.Doctor.FirstName} {prescription.Doctor.LastName}",
                     regularFont, XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 13;
                 if (doctorProfile != null)
                 {
-                    gfx.DrawString($"Specialization: {doctorProfile.Specialization}", 
+                    gfx.DrawString($"Specialization: {doctorProfile.Specialization}",
                         regularFont, XBrushes.Black, leftMargin + 5, yPos);
                     yPos += 13;
                 }
-                gfx.DrawString($"Status: {prescription.Status} | Medications: {prescription.Items.Count}", 
+                gfx.DrawString($"Status: {prescription.Status} | Medications: {prescription.Items.Count}",
                     regularFont, XBrushes.Black, leftMargin + 5, yPos);
                 yPos += 15;
-                
+
                 if (prescription.Items.Any())
                 {
-                    gfx.DrawString("Medications:", new XFont("Arial", 9, XFontStyle.Italic), 
+                    gfx.DrawString("Medications:", new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Italic),
                         XBrushes.DarkGray, leftMargin + 5, yPos);
                     yPos += 13;
                     foreach (var item in prescription.Items)
                     {
-                        gfx.DrawString($"• {item.Medication.BrandName} ({item.Dosage}, {item.Frequency})", 
+                        gfx.DrawString($"• {item.Medication.BrandName} ({item.Dosage}, {item.Frequency})",
                             regularFont, XBrushes.Black, leftMargin + 15, yPos);
                         yPos += 13;
                     }
@@ -539,32 +541,32 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         }
         else
         {
-            gfx.DrawString("No prescriptions found", new XFont("Arial", 10, XFontStyle.Italic), 
+            gfx.DrawString("No prescriptions found", new XFont(PiyaPdfFontResolver.Family, 10, XFontStyleEx.Italic),
                 XBrushes.Gray, leftMargin, yPos);
             yPos += 20;
         }
 
         // Confidentiality Notice
         yPos += 20;
-        if (yPos > page.Height - 80)
+        if (yPos > page.Height.Point - 80)
         {
             page = document.AddPage();
             gfx = XGraphics.FromPdfPage(page);
             yPos = 40;
         }
-        
+
         gfx.DrawRectangle(new XPen(XColors.Red, 1), XBrushes.LightPink, leftMargin, yPos, pageWidth, 50);
         yPos += 12;
-        gfx.DrawString("CONFIDENTIALITY NOTICE", new XFont("Arial", 11, XFontStyle.Bold), 
+        gfx.DrawString("CONFIDENTIALITY NOTICE", new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Bold),
             XBrushes.DarkRed, new XRect(leftMargin, yPos, pageWidth, 20), XStringFormats.TopCenter);
         yPos += 20;
-        gfx.DrawString("This document contains confidential medical information.", 
-            new XFont("Arial", 9, XFontStyle.Italic), XBrushes.Black, 
+        gfx.DrawString("This document contains confidential medical information.",
+            new XFont(PiyaPdfFontResolver.Family, 9, XFontStyleEx.Italic), XBrushes.Black,
             new XRect(leftMargin + 10, yPos, pageWidth - 20, 30), XStringFormats.TopCenter);
 
         // Footer
-        gfx.DrawString($"Generated: {DateTime.Now:MMMM dd, yyyy HH:mm} | PIYA Healthcare Platform", 
-            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height - 30, pageWidth, 20), 
+        gfx.DrawString($"Generated: {DateTime.Now:MMMM dd, yyyy HH:mm} | PIYA Healthcare Platform",
+            smallFont, XBrushes.Gray, new XRect(leftMargin, page.Height.Point - 30, pageWidth, 20),
             XStringFormats.Center);
 
         using var stream = new MemoryStream();
@@ -586,12 +588,12 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
     {
         var words = text.Split(' ');
         var line = "";
-        
+
         foreach (var word in words)
         {
             var testLine = string.IsNullOrEmpty(line) ? word : $"{line} {word}";
             var size = gfx.MeasureString(testLine, font);
-            
+
             if (size.Width > maxWidth && !string.IsNullOrEmpty(line))
             {
                 gfx.DrawString(line, font, XBrushes.Black, x, y);
@@ -603,7 +605,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
                 line = testLine;
             }
         }
-        
+
         if (!string.IsNullOrEmpty(line))
         {
             gfx.DrawString(line, font, XBrushes.Black, x, y);
@@ -635,15 +637,15 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         var page = document.AddPage();
         var gfx = XGraphics.FromPdfPage(page);
 
-        var titleFont   = new XFont("Arial", 18, XFontStyle.Bold);
-        var headerFont  = new XFont("Arial", 13, XFontStyle.Bold);
-        var regularFont = new XFont("Arial", 11, XFontStyle.Regular);
-        var smallFont   = new XFont("Arial", 9,  XFontStyle.Regular);
-        var boldFont    = new XFont("Arial", 11, XFontStyle.Bold);
+        var titleFont   = new XFont(PiyaPdfFontResolver.Family, 18, XFontStyleEx.Bold);
+        var headerFont  = new XFont(PiyaPdfFontResolver.Family, 13, XFontStyleEx.Bold);
+        var regularFont = new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Regular);
+        var smallFont   = new XFont(PiyaPdfFontResolver.Family, 9,  XFontStyleEx.Regular);
+        var boldFont    = new XFont(PiyaPdfFontResolver.Family, 11, XFontStyleEx.Bold);
 
         double y = 40;
         const double L = 40;
-        double W = page.Width - 80;
+        double W = page.Width.Point - 80;
 
         // Title
         gfx.DrawString("MEDICAL REFERRAL LETTER", titleFont, XBrushes.DarkBlue,
@@ -738,7 +740,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         // Results section (populated after completion)
         if (referral.Status == ReferralStatus.Completed && !string.IsNullOrWhiteSpace(referral.ResultNotes))
         {
-            if (y > page.Height - 150)
+            if (y > page.Height.Point - 150)
             {
                 page = document.AddPage();
                 gfx = XGraphics.FromPdfPage(page);
@@ -752,7 +754,7 @@ public class PdfExportService(PharmacyApiDbContext context, ILogger<PdfExportSer
         }
 
         // Footer
-        y = page.Height - 60;
+        y = page.Height.Point - 60;
         gfx.DrawLine(XPens.LightGray, L, y, L + W, y);
         y += 10;
         gfx.DrawString("This document was generated by PIYA Healthcare Platform and is intended for medical use only.",

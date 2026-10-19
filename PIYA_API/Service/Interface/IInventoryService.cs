@@ -7,6 +7,12 @@ namespace PIYA_API.Service.Interface;
 /// </summary>
 public interface IInventoryService
 {
+    Task<InventorySyncResult> SyncReportedStockAsync(Guid pharmacyId, IReadOnlyList<InventoryReportItem> items,
+        Guid userId, InventorySyncMetadata? metadata = null);
+    Task<InventoryBatch> AddBatchAsync(InventoryBatch batch, Guid userId);
+    Task<InventoryBatch> CorrectBatchAsync(Guid batchId, InventoryBatchCorrection correction, Guid userId);
+    Task<InventoryBatch?> GetBatchByIdAsync(Guid batchId);
+    Task<PharmacyInventory> AcknowledgeReconciliationAsync(Guid inventoryId, long expectedVersion, string reason, Guid userId);
     #region Core Inventory Management
     
     /// <summary>

@@ -264,7 +264,7 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
             var slots = appointments
                 .Where(a => a.Status == AppointmentStatus.Scheduled
                          || a.Status == AppointmentStatus.Confirmed
-                         || a.Status == AppointmentStatus.Rescheduled)
+                         || a.Status == AppointmentStatus.InProgress)
                 .Select(a => new
             {
                 a.ScheduledAt,
@@ -371,6 +371,10 @@ public class AppointmentController(IAppointmentService appointmentService, IUser
 
             var rescheduled = await _appointmentService.RescheduleAppointmentAsync(id, request.NewScheduledAt);
             return Ok(AppointmentResponseDto.FromEntity(rescheduled));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { error = ex.Message });
         }
         catch (ArgumentException ex)
         {

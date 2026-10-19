@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Xunit;
+using PIYA_API.Model;
 
 namespace PIYA_API.Tests.Integration;
 
@@ -14,44 +15,19 @@ namespace PIYA_API.Tests.Integration;
 public class PrescriptionIntegrationTests : IClassFixture<PiyaWebApplicationFactory>
 {
     private readonly HttpClient _client;
+    private readonly PiyaWebApplicationFactory _factory;
 
     public PrescriptionIntegrationTests(PiyaWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
     // ── helpers ──────────────────────────────────────────────
 
-    private async Task<string> RegisterAndLoginAsync(string role = "Patient")
-    {
-        var email = $"prx-{Guid.NewGuid()}@test.com";
-        var password = "Test@Password123";
+    private Task<string> RegisterAndLoginAsync(string role = "Patient") =>
+        TestIdentity.CreateAndLoginAsync(_factory, _client, Enum.Parse<UserRole>(role));
 
-        await _client.PostAsJsonAsync("/api/auth/register", new
-        {
-            email,
-            password,
-            firstName = "Test",
-            lastName = "User",
-            phoneNumber = "+994501234567",
-            dateOfBirth = "1990-01-01",
-            role,
-            username = $"usr_{Guid.NewGuid():N}"
-        });
-
-        var loginResp = await _client.PostAsJsonAsync("/api/auth/login", new
-        {
-            identifier = email,
-            password
-        });
-
-        if (loginResp.StatusCode != HttpStatusCode.OK)
-            return string.Empty;
-
-        var body = await loginResp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.TryGetProperty("accessToken", out var t) ? t.GetString() ?? string.Empty : string.Empty;
-    }
 
     [Fact]
     public async Task GetMyPrescriptions_Unauthenticated_Returns401()
@@ -65,11 +41,6 @@ public class PrescriptionIntegrationTests : IClassFixture<PiyaWebApplicationFact
     public async Task GetMyPrescriptions_AuthenticatedPatient_Returns200()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token))
-        {
-            // Skip if auth didn't complete (2FA required, etc.)
-            return;
-        }
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/prescription/my-prescriptions");
@@ -81,19 +52,17 @@ public class PrescriptionIntegrationTests : IClassFixture<PiyaWebApplicationFact
     public async Task GetAllPrescriptions_AsPatient_Returns403()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync("/api/prescription/all");
 
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Forbidden, HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task GetPrescriptionById_NonExistentId_Returns404()
     {
         var token = await RegisterAndLoginAsync("Patient");
-        if (string.IsNullOrEmpty(token)) return;
 
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.GetAsync($"/api/prescription/{Guid.NewGuid()}");

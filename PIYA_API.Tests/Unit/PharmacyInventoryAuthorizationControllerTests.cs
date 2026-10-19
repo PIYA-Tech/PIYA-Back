@@ -142,7 +142,7 @@ public class PharmacyInventoryAuthorizationControllerTests
 
         result.Result.Should().BeOfType<ForbidResult>();
         inventory.Verify(
-            service => service.AddBatchAsync(It.IsAny<InventoryBatch>()),
+            service => service.AddBatchAsync(It.IsAny<InventoryBatch>(), It.IsAny<Guid>()),
             Times.Never);
         staff.Verify(
             service => service.IsManagerAtPharmacyAsync(
@@ -165,8 +165,8 @@ public class PharmacyInventoryAuthorizationControllerTests
                 PharmacyId = pharmacyId,
                 MedicationId = Guid.NewGuid()
             });
-        inventory.Setup(service => service.AddBatchAsync(It.IsAny<InventoryBatch>()))
-            .ReturnsAsync((InventoryBatch batch) =>
+        inventory.Setup(service => service.AddBatchAsync(It.IsAny<InventoryBatch>(), It.IsAny<Guid>()))
+            .ReturnsAsync((InventoryBatch batch, Guid actor) =>
             {
                 batch.Id = Guid.NewGuid();
                 return batch;
@@ -187,7 +187,7 @@ public class PharmacyInventoryAuthorizationControllerTests
         result.Result.Should().BeOfType<CreatedAtActionResult>();
         inventory.Verify(
             service => service.AddBatchAsync(It.Is<InventoryBatch>(
-                batch => batch.PharmacyInventoryId == inventoryId)),
+                batch => batch.PharmacyInventoryId == inventoryId), managerId),
             Times.Once);
     }
 
@@ -302,7 +302,7 @@ public class PharmacyInventoryAuthorizationControllerTests
         new(
             inventory.Object,
             staff.Object,
-            Mock.Of<IHubContext<InventoryHub>>(),
+            new Mock<IHubContext<InventoryHub>> { DefaultValue = DefaultValue.Mock }.Object,
             Mock.Of<ILogger<PharmacyInventoryController>>());
 
     private static void SetUser(

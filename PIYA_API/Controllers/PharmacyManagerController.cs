@@ -81,10 +81,10 @@ public class PharmacyManagerController(
                 ReorderSuggestions   = reorder.Select(r => new ReorderSuggestionDto
                 {
                     InventoryId    = r.Key,
-                    MedicationId   = inventory.FirstOrDefault(i => i.Id == r.Key)?.MedicationId ?? Guid.Empty,
-                    MedicationName = inventory.FirstOrDefault(i => i.Id == r.Key)?.Medication?.BrandName ?? "Unknown",
-                    CurrentStock   = inventory.FirstOrDefault(i => i.Id == r.Key)?.QuantityInStock ?? 0,
-                    MinimumLevel   = inventory.FirstOrDefault(i => i.Id == r.Key)?.MinimumStockLevel ?? 0,
+                    MedicationId   = inventory.FirstOrDefault(i => i.MedicationId == r.Key)?.MedicationId ?? Guid.Empty,
+                    MedicationName = inventory.FirstOrDefault(i => i.MedicationId == r.Key)?.Medication?.BrandName ?? "Unknown",
+                    CurrentStock   = inventory.FirstOrDefault(i => i.MedicationId == r.Key)?.QuantityInStock ?? 0,
+                    MinimumLevel   = inventory.FirstOrDefault(i => i.MedicationId == r.Key)?.MinimumStockLevel ?? 0,
                     SuggestedQty   = r.Value,
                 }).ToList(),
                 RecentActivity = history.Select(h => new StockActivityDto
@@ -220,14 +220,14 @@ public class PharmacyManagerController(
         {
             var suggestions = await _inventoryService.GetReorderSuggestionsAsync(pharmacyId);
             var inventory   = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
-            var inventoryMap = inventory.ToDictionary(i => i.Id);
+            var inventoryMap = inventory.ToDictionary(i => i.MedicationId);
 
             var result = suggestions.Select(s =>
             {
                 inventoryMap.TryGetValue(s.Key, out var item);
                 return new ReorderSuggestionDto
                 {
-                    InventoryId    = s.Key,
+                    InventoryId    = item?.Id ?? Guid.Empty,
                     MedicationId   = item?.MedicationId ?? Guid.Empty,
                     MedicationName = item?.Medication?.BrandName ?? "Unknown",
                     CurrentStock   = item?.QuantityInStock ?? 0,
@@ -245,17 +245,48 @@ public class PharmacyManagerController(
         }
     }
 
+    [HttpGet("{pharmacyId:guid}/inventory/reconciliation")]
+    public async Task<IActionResult> Reconciliation(Guid pharmacyId)
+    {
+        if (!await CanManagePharmacy(pharmacyId)) return Forbid();
+        var rows = await _inventoryService.GetPharmacyInventoryAsync(pharmacyId);
+        var duplicateIds = rows.GroupBy(i => i.MedicationId).Where(group => group.Count() > 1)
+            .ToDictionary(group => group.Key, group => group.Select(i => i.Id).OrderBy(id => id).ToArray());
+        return Ok(rows.Where(i => i.RequiresReconciliation || i.ReportedQuantity != i.QuantityInStock || duplicateIds.ContainsKey(i.MedicationId))
+            .Select(i => new { i.Id, i.MedicationId, i.LegacyQuantityInStock, i.ReportedQuantity,
+                i.ReportedAt, EligibleBatchQuantity = i.QuantityInStock,
+                RequiresReconciliation = i.RequiresReconciliation || duplicateIds.ContainsKey(i.MedicationId), i.Version,
+                DuplicateInventoryIds = duplicateIds.GetValueOrDefault(i.MedicationId, []),
+                InvalidBatches = i.Batches.Where(b => b.LegacyQuantity.HasValue || b.IsActive &&
+                    (!b.ExpirationDate.HasValue || string.IsNullOrWhiteSpace(b.BatchNumber))).Select(b =>
+                    new { b.Id, b.BatchNumber, b.Quantity, b.LegacyQuantity, b.ExpirationDate }) }));
+    }
+
+    [HttpPost("{pharmacyId:guid}/inventory/{inventoryId:guid}/reconcile")]
+    public async Task<IActionResult> Reconcile(Guid pharmacyId, Guid inventoryId, [FromBody] InventoryReconciliationRequest request)
+    {
+        if (!await CanManagePharmacy(pharmacyId)) return Forbid();
+        var inventory = await _inventoryService.GetByIdAsync(inventoryId);
+        if (inventory == null || inventory.PharmacyId != pharmacyId) return NotFound();
+        try
+        {
+            var result = await _inventoryService.AcknowledgeReconciliationAsync(inventoryId, request.ExpectedVersion, request.Reason, GetUserId());
+            return Ok(PIYA_API.DTOs.InventoryResponseDto.FromEntity(result));
+        }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { error = ex.Message }); }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Bulk inventory sync  (used by the desktop app)
     // POST /api/pharmacymanager/{pharmacyId}/inventory/sync
     // ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Accepts a batch of stock-level updates from the desktop sync app.
-    /// Each entry: { medicationId, quantityInStock, price?, minimumStockLevel? }
-    /// Items that don't exist in the pharmacy's inventory are created.
-    /// Items with quantity = -1 are skipped (use as sentinel for "no data").
-    /// Returns a summary: { updated, created, skipped, errors }.
+    /// Atomically records reported counts without creating dispensable stock.
+    /// Each entry: { medicationId, quantityInStock, price?, minimumStockLevel? }.
+    /// Supply all four X-PIYA-Sync-* headers for ordered, idempotent receipts.
+    /// Invalid rows reject the whole request; negative quantities are not accepted.
     /// </summary>
     [HttpPost("{pharmacyId:guid}/inventory/sync")]
     public async Task<IActionResult> SyncInventory(Guid pharmacyId, [FromBody] List<InventorySyncItem> items)
@@ -264,61 +295,35 @@ public class PharmacyManagerController(
         if (items == null || items.Count == 0)
             return BadRequest(new { error = "No items provided" });
 
-        var callerId = GetUserId();
-        int updated = 0, created = 0, skipped = 0;
-        var errors = new List<string>();
-
-        // Load the full inventory once — avoids an O(n) DB round-trip per item
-        var existingInventory = (await _inventoryService.GetPharmacyInventoryAsync(pharmacyId))
-            .ToDictionary(i => i.MedicationId);
-
-        foreach (var item in items)
+        InventorySyncMetadata? metadata = null;
+        var names = new[] { "X-PIYA-Sync-Request-Id", "X-PIYA-Sync-Source-Id", "X-PIYA-Sync-Revision", "X-PIYA-Sync-Captured-At" };
+        if (names.Any(n => Request.Headers.ContainsKey(n)))
         {
-            if (item.QuantityInStock < 0) { skipped++; continue; }
-
-            try
-            {
-                existingInventory.TryGetValue(item.MedicationId, out var existing);
-
-                if (existing is null)
-                {
-                    // Create new inventory entry
-                    var newEntry = new PharmacyInventory
-                    {
-                        PharmacyId        = pharmacyId,
-                        MedicationId      = item.MedicationId,
-                        QuantityInStock   = item.QuantityInStock,
-                        MinimumStockLevel = item.MinimumStockLevel ?? 10,
-                        ReorderQuantity   = item.ReorderQuantity   ?? 50,
-                        Price             = item.Price             ?? 0,
-                        Currency          = item.Currency          ?? "AZN",
-                        IsAvailable       = item.QuantityInStock   > 0,
-                    };
-                    await _inventoryService.AddOrUpdateInventoryAsync(newEntry);
-                    created++;
-                }
-                else
-                {
-                    // Update stock level
-                    await _inventoryService.UpdateStockAsync(existing.Id, item.QuantityInStock, callerId,
-                        $"Desktop sync @ {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC");
-                    if (item.Price.HasValue)
-                    {
-                        existing.Price = item.Price.Value;
-                        await _inventoryService.AddOrUpdateInventoryAsync(existing);
-                    }
-                    updated++;
-                }
-            }
-            catch (Exception ex)
-            {
-                errors.Add($"{item.MedicationId}: {ex.Message}");
-                _logger.LogWarning(ex, "Sync error for medication {MedId} in pharmacy {PharmId}",
-                    item.MedicationId, pharmacyId);
-            }
+            if (names.Any(n => Request.Headers[n].Count != 1) ||
+                !Guid.TryParse(Request.Headers[names[0]], out var requestId) ||
+                !Guid.TryParse(Request.Headers[names[1]], out var sourceId) ||
+                !long.TryParse(Request.Headers[names[2]], out var revision) ||
+                !DateTimeOffset.TryParse(Request.Headers[names[3]], System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var capturedAt))
+                return BadRequest(new { error = "Provide all four valid sync identity headers." });
+            metadata = new(requestId, sourceId, revision, capturedAt.UtcDateTime);
         }
+        try
+        {
+            var result = await _inventoryService.SyncReportedStockAsync(pharmacyId, items.Select(i =>
+                new InventoryReportItem(i.MedicationId, i.QuantityInStock, i.Price, i.MinimumStockLevel, i.ReorderQuantity, i.Currency)).ToList(), GetUserId(), metadata);
+            return Ok(result);
+        }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { error = ex.Message }); }
 
-        return Ok(new { updated, created, skipped, errors });
+    }
+
+    [HttpGet("{pharmacyId:guid}/inventory/sync/capabilities")]
+    public async Task<IActionResult> SyncCapabilities(Guid pharmacyId)
+    {
+        if (!await CanManagePharmacy(pharmacyId)) return Forbid();
+        return Ok(new { syncProtocolVersion = 1, reportedStockOnly = true });
     }
 }
 
